@@ -698,8 +698,8 @@ const store = { get: (k) => { try {
     catch (_a) { } } };
 // ── SUPABASE SYNC (for Telegram /today check-ins) ──────────
 // Replace with your own project URL + anon public key from Supabase Settings > API.
-const SUPABASE_URL = "YOUR_SUPABASE_URL";
-const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+const SUPABASE_URL = "https://qzripzgbstvxkfobzhyv.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
 async function syncToSupabase(dateStr, log) {
     if (!SUPABASE_URL || SUPABASE_URL === "YOUR_SUPABASE_URL" || !SUPABASE_ANON_KEY) return;
     try {
