@@ -1,4 +1,7 @@
 {
+  "rewrites": [
+    { "source": "/", "destination": "/JeetOS.html" }
+  ],
   "crons": [
     { "path": "/api/telegram-checkin?type=morning", "schedule": "30 1 * * *" },
     { "path": "/api/telegram-checkin?type=night", "schedule": "30 15 * * *" },
