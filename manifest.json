@@ -1,0 +1,16 @@
+{
+  "name": "JeetOS \u2014 Ronaldo Mode",
+  "short_name": "JeetOS",
+  "description": "Personal discipline OS with CR7 coaching, gamification, and daily tracking.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#04040A",
+  "theme_color": "#04040A",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
