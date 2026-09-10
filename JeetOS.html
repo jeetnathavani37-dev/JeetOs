@@ -804,96 +804,32 @@ function scheduleAllNotifs() {
         catch (e) { } }, t.getTime() - now.getTime());
     });
 }
-const API = "https://api.anthropic.com/v1/messages";
-async function ai(sys, msgs, max) {
-    try {
-        const r = await fetch(API, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "anthropic-version": "2023-06-01",
-                "anthropic-dangerous-direct-browser-access": "true"
-            },
-            body: JSON.stringify({
-                model: "claude-sonnet-4-6",
-                max_tokens: max || 1000,
-                system: sys,
-                messages: msgs.map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : String(m.content) }))
-            })
-        });
-        const text = await r.text();
-        let d;
-        try {
-            d = JSON.parse(text);
-        }
-        catch (_a) {
-            return "Parse error. Please try again.";
-        }
-        if (!r.ok) {
-            const msg = (d && d.error && d.error.message) || r.status;
-            throw new Error("API " + r.status + ": " + msg);
-        }
-        if (d.content && Array.isArray(d.content) && d.content[0] && d.content[0].text)
-            return d.content[0].text;
-        throw new Error("Empty response from API");
-    }
-    catch (e) {
-        throw e;
-    }
-}
-// Groq API — free, fast, browser CORS allowed
-const GROQ_KEY = "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";
-async function groq(sys, msgs, max) {
-    var _a, _b, _c, _d;
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+// All AI calls go through our own /api/ai serverless function — provider keys
+// live server-side as Vercel env vars, never in this client bundle.
+async function callBackendAI(sys, msgs, max, provider) {
+    const r = await fetch("/api/ai", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + GROQ_KEY },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-            model: "llama-3.3-70b-versatile",
-            max_tokens: max || 800,
-            temperature: 0.85,
-            messages: [{ role: "system", content: sys }, ...msgs.map(m => ({ role: m.role, content: String(m.content) }))],
+            system: sys,
+            messages: msgs.map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : String(m.content) })),
+            max,
+            provider,
         })
     });
-    if (!r.ok) {
-        const e = await r.json().catch(() => ({}));
-        throw new Error("Groq " + r.status + ": " + (((_a = e === null || e === void 0 ? void 0 : e.error) === null || _a === void 0 ? void 0 : _a.message) || r.status));
-    }
-    const d = await r.json();
-    const t = (_d = (_c = (_b = d === null || d === void 0 ? void 0 : d.choices) === null || _b === void 0 ? void 0 : _b[0]) === null || _c === void 0 ? void 0 : _c.message) === null || _d === void 0 ? void 0 : _d.content;
-    if (!t)
-        throw new Error("No response");
-    return t;
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.text)
+        throw new Error((d && d.error) || ("AI backend " + r.status));
+    return d.text;
 }
-// Gemini API — free tier, 1500 req/day
-const GEMINI_KEY = "AQ.Ab8RN6IGFo8mtyN7ufiDqS7TUrUERq-8lUX0xqluGkP7AM9GJg";
+async function ai(sys, msgs, max) {
+    return callBackendAI(sys, msgs, max, "claude");
+}
+async function groq(sys, msgs, max) {
+    return callBackendAI(sys, msgs, max, "groq");
+}
 async function gemini(sys, msgs, max) {
-    var _a, _b, _c, _d, _e, _f;
-    try {
-        const history = msgs.slice(0, -1).map(m => ({
-            role: m.role === "assistant" ? "model" : "user",
-            parts: [{ text: String(m.content) }]
-        }));
-        const last = msgs[msgs.length - 1];
-        const body = {
-            system_instruction: { parts: [{ text: sys }] },
-            contents: [...history, { role: "user", parts: [{ text: String(last.content) }] }],
-            generationConfig: { maxOutputTokens: max || 1000, temperature: 0.85 }
-        };
-        const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        if (!r.ok) {
-            const err = await r.json().catch(() => ({}));
-            throw new Error("Gemini " + r.status + ": " + (((_a = err === null || err === void 0 ? void 0 : err.error) === null || _a === void 0 ? void 0 : _a.message) || r.status));
-        }
-        const d = await r.json();
-        const text = (_f = (_e = (_d = (_c = (_b = d === null || d === void 0 ? void 0 : d.candidates) === null || _b === void 0 ? void 0 : _b[0]) === null || _c === void 0 ? void 0 : _c.content) === null || _d === void 0 ? void 0 : _d.parts) === null || _e === void 0 ? void 0 : _e[0]) === null || _f === void 0 ? void 0 : _f.text;
-        if (!text)
-            throw new Error("Empty response");
-        return text;
-    }
-    catch (e) {
-        throw e;
-    }
+    return callBackendAI(sys, msgs, max, "gemini");
 }
 const COACHES = [
     {
