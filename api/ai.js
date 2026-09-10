@@ -8,15 +8,15 @@
 // even if only one key is configured.
 //
 // Claude is tried first by default (the coaches are meant to be answered by
-// Claude) — set ANTHROPIC_API_KEY in Vercel → Settings → Environment
-// Variables. GROQ_API_KEY / GEMINI_API_KEY are optional fallbacks used only
-// if the Claude call fails or ANTHROPIC_API_KEY isn't set.
+// Claude) — set ANTHROPIC_API_KEY (or CLAUDE_KEY) in Vercel → Settings →
+// Environment Variables. GROQ_API_KEY / GEMINI_API_KEY are optional
+// fallbacks used only if the Claude call fails or no Claude key is set.
 
 const PROVIDER_ORDER = ["claude", "groq", "gemini"];
 
 async function callClaude(system, messages, max) {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error("ANTHROPIC_API_KEY not configured");
+  const key = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY;
+  if (!key) throw new Error("ANTHROPIC_API_KEY (or CLAUDE_KEY) not configured");
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
