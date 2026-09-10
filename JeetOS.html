@@ -3422,7 +3422,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W }) {
         setCH(up1);
         setInp("");
         setThinking(true);
-        // Rich context for Groq
+        // Rich context for the AI coach
         const split = ({ Monday: "Push", Tuesday: "Pull", Wednesday: "Legs", Thursday: "Push", Friday: "Pull", Saturday: "Legs", Sunday: "Rest" })[viewDay] || "Rest";
         const w7 = W.slice(-7);
         const avgSl = w7.length ? +(w7.reduce((s, d) => s + (d.sleepHours || 0), 0) / w7.length).toFixed(1) : 0;
@@ -3431,7 +3431,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W }) {
         const ctx = "JEET'S LIVE DATA — use these numbers in your response:\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nThis week: " + gymDays7 + "/7 gym days | Avg sleep: " + avgSl + "h | Avg protein: " + avgProt7 + "g\nBe direct, specific, reference his actual numbers. Max 4-5 sentences.";
         const fullSys = coach.sys + "\n\n" + ctx;
         try {
-            const response = await groq(fullSys, newHistUser.slice(-10), 800);
+            const response = await ai(fullSys, newHistUser.slice(-10), 800);
             const assistantMsg = { role: "assistant", content: response };
             const newHist = [...newHistUser, assistantMsg];
             const up2 = Object.assign({}, CH, { [id]: newHist });

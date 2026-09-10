@@ -7,10 +7,12 @@
 // falling through to the next one on failure — so the app keeps working
 // even if only one key is configured.
 //
-// Required env vars (set whichever you have in Vercel → Settings → Environment
-// Variables): ANTHROPIC_API_KEY, GROQ_API_KEY, GEMINI_API_KEY.
+// Claude is tried first by default (the coaches are meant to be answered by
+// Claude) — set ANTHROPIC_API_KEY in Vercel → Settings → Environment
+// Variables. GROQ_API_KEY / GEMINI_API_KEY are optional fallbacks used only
+// if the Claude call fails or ANTHROPIC_API_KEY isn't set.
 
-const PROVIDER_ORDER = ["groq", "claude", "gemini"];
+const PROVIDER_ORDER = ["claude", "groq", "gemini"];
 
 async function callClaude(system, messages, max) {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -23,7 +25,7 @@ async function callClaude(system, messages, max) {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-5",
+      model: "claude-sonnet-5",
       max_tokens: max || 1000,
       system,
       messages: messages.map(m => ({ role: m.role, content: String(m.content) })),
