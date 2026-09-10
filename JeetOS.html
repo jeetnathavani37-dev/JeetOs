@@ -1982,6 +1982,15 @@ function BodyMeasurements({ T }) {
             return null;
         return Math.round((l - p) * 10) / 10;
     };
+    const firstEntry = entries[entries.length - 1] || {};
+    const daysSinceFirst = firstEntry.date ? Math.max(0, Math.floor((new Date() - new Date(firstEntry.date)) / 86400000)) : 0;
+    const getDiffFromFirst = (id) => {
+        const l = parseFloat(latest[id] || 0);
+        const f = parseFloat(firstEntry[id] || 0);
+        if (!l || !f || entries.length < 2)
+            return null;
+        return Math.round((l - f) * 10) / 10;
+    };
     // Date-windowed averages for real week/month % change comparison
     const now = new Date();
     const inLastNDays = (dateStr, n) => { const d = new Date(dateStr); const diff = Math.floor((now - d) / (24 * 3600 * 1000)); return diff >= 0 && diff < n; };
@@ -2073,7 +2082,18 @@ function BodyMeasurements({ T }) {
                                     pc > 0 ? "+" : "",
                                     pc,
                                     "%")) : React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, fontFamily: "DM Sans,system-ui,sans-serif" } }, "\u2014");
+                            })()),
+                        React.createElement("div", { style: { flex: 1, textAlign: "center" } },
+                            React.createElement("div", { style: { fontSize: 7, color: "#FF5555", letterSpacing: ".1em", textTransform: "uppercase", fontFamily: "DM Sans,system-ui,sans-serif", marginBottom: 3 } }, "\ud83d\udc10 Day 1"),
+                            (() => {
+                                const dd = getDiffFromFirst(m.id);
+                                return dd !== null ? (React.createElement("div", { style: { fontFamily: "Cormorant Garamond,Georgia,serif", fontSize: 16, color: dd < 0 ? T.green : dd > 0 ? T.red : T.ivoryD, fontWeight: 400 } },
+                                    dd > 0 ? "+" : "",
+                                    dd,
+                                    m.unit)) : React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, fontFamily: "DM Sans,system-ui,sans-serif" } }, "\u2014");
                             })())),
+                    daysSinceFirst > 0 && getDiffFromFirst(m.id) !== null && React.createElement("div", { style: { marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,.06)", fontSize: 10, color: T.ivoryM, fontFamily: "Cormorant Garamond,Georgia,serif", fontStyle: "italic", lineHeight: 1.5, textAlign: "center" } },
+                        daysSinceFirst + " days into the transformation. CR7 didn't build his physique in a week either \u2014 keep stacking days."),
                     React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 6, height: 70, marginBottom: 6 } }, chartData.map((d, i) => {
                         const mn = Math.min(...chartData.map(x => x.val));
                         const mx = Math.max(...chartData.map(x => x.val));
@@ -2196,6 +2216,9 @@ function FaceTracker({ T }) {
     const entries = data.entries || [];
     const latest = entries[0] || {};
     const prev = entries[1] || {};
+    const firstEntry = entries[entries.length - 1] || {};
+    const daysSinceFirst = firstEntry.date ? Math.max(0, Math.floor((new Date() - new Date(firstEntry.date)) / 86400000)) : 0;
+    const firstToLatestDiff = (latest.overall && firstEntry.overall && entries.length >= 2) ? Math.round((latest.overall - firstEntry.overall) * 10) / 10 : null;
     const getWeeklyChange = (id) => {
         const l = latest.scores && latest.scores[id];
         const p = prev.scores && prev.scores[id];
@@ -2302,6 +2325,26 @@ function FaceTracker({ T }) {
                             " ",
                             Math.abs(Math.round((monthAvgOverall - prevMonthAvgOverall) * 10)),
                             "% vs last mo")) : React.createElement("div", { style: { fontSize: 8, color: T.ivoryD, fontFamily: "DM Sans,system-ui,sans-serif", marginTop: 4 } }, "No prior month"))) : React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, fontFamily: "DM Sans,system-ui,sans-serif" } }, "No entries this month"))),
+            entries.length >= 2 && (React.createElement("div", { style: { background: "linear-gradient(135deg,#1A1113,#12100C)", border: "1px solid rgba(255,59,59,.25)", borderRadius: 16, padding: 16, marginBottom: 12 } },
+                React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 } },
+                    React.createElement("div", { style: { fontSize: 9, color: "#FF5555", letterSpacing: ".14em", textTransform: "uppercase", fontFamily: "DM Sans,system-ui,sans-serif", fontWeight: 700 } }, "🐐 Your Transformation"),
+                    React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: "DM Sans,system-ui,sans-serif" } }, daysSinceFirst + " days")),
+                React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: firstToLatestDiff !== null ? 12 : 0 } },
+                    React.createElement("div", { style: { flex: 1 } },
+                        React.createElement("div", { style: { position: "relative", borderRadius: 12, overflow: "hidden", background: "rgba(255,255,255,.04)", aspectRatio: "1" } },
+                            firstEntry.photo ? React.createElement("img", { src: firstEntry.photo, alt: "Day 1", style: { width: "100%", height: "100%", objectFit: "cover", display: "block" } }) : React.createElement("div", { style: { width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 } }, "📸"),
+                            React.createElement("div", { style: { position: "absolute", bottom: 0, left: 0, right: 0, padding: "4px 8px", background: "rgba(0,0,0,.6)", fontSize: 8, color: T.ivory, fontFamily: "DM Sans,system-ui,sans-serif", fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase" } }, "Day 1")),
+                        React.createElement("div", { style: { fontSize: 8, color: T.ivoryD, fontFamily: "DM Sans,system-ui,sans-serif", marginTop: 4, textAlign: "center" } }, firstEntry.dateShort || "")),
+                    React.createElement("div", { style: { flex: 1 } },
+                        React.createElement("div", { style: { position: "relative", borderRadius: 12, overflow: "hidden", background: "rgba(255,255,255,.04)", aspectRatio: "1", border: "1px solid rgba(212,168,83,.4)" } },
+                            latest.photo ? React.createElement("img", { src: latest.photo, alt: "Now", style: { width: "100%", height: "100%", objectFit: "cover", display: "block" } }) : React.createElement("div", { style: { width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 } }, "📸"),
+                            React.createElement("div", { style: { position: "absolute", bottom: 0, left: 0, right: 0, padding: "4px 8px", background: "rgba(212,168,83,.85)", fontSize: 8, color: "#0A0800", fontFamily: "DM Sans,system-ui,sans-serif", fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase" } }, "Now")),
+                        React.createElement("div", { style: { fontSize: 8, color: T.gold, fontFamily: "DM Sans,system-ui,sans-serif", marginTop: 4, textAlign: "center", fontWeight: 600 } }, latest.dateShort || ""))),
+                firstToLatestDiff !== null && React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,.08)" } },
+                    React.createElement("span", { style: { fontFamily: "Cormorant Garamond,Georgia,serif", fontSize: 20, color: firstToLatestDiff > 0 ? T.green : firstToLatestDiff < 0 ? T.red : T.ivoryD, fontWeight: 400 } },
+                        firstToLatestDiff > 0 ? "+" : "",
+                        firstToLatestDiff),
+                    React.createElement("span", { style: { fontSize: 10, color: T.ivoryM, fontFamily: "DM Sans,system-ui,sans-serif" } }, "skin score since Day 1 — " + (firstToLatestDiff > 0 ? "that's the standard rising." : firstToLatestDiff < 0 ? "log it, don't hide from it." : "steady — consistency is the work."))))),
             entries.length >= 2 && (React.createElement("div", { style: { background: "linear-gradient(135deg,#0D0C10,#131118)", border: "1px solid rgba(212,168,83,.2)", borderRadius: 14, padding: 16, marginBottom: 12 } },
                 React.createElement("div", { style: { fontSize: 9, color: T.gold, letterSpacing: ".14em", textTransform: "uppercase", fontFamily: "DM Sans,system-ui,sans-serif", fontWeight: 600, marginBottom: 10 } }, "Overall Score Trend"),
                 React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 4, height: 60, marginBottom: 6 } }, entries.slice(0, 14).reverse().map((e, i) => {
@@ -4667,6 +4710,21 @@ function JeetOS() {
                             React.createElement("span", { style: { fontSize: 11, color: onStandard ? T.green : "#FF8A8A", fontFamily: "DM Sans,system-ui,sans-serif", fontWeight: 500 } }, onStandard ? "On the Ronaldo standard today." : "Not the standard yet \u2014 gym, 7h+ sleep, or protein still short."));
                     })(),
                     React.createElement("button", { onClick: () => { setActiveCoach("ronaldo"); setScreen("coach"); }, style: { width: "100%", padding: "11px", background: "linear-gradient(135deg,#FF3B3B,#C42A2A)", border: "none", borderRadius: 10, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "DM Sans,system-ui,sans-serif", letterSpacing: ".04em", textTransform: "uppercase" } }, "Talk to Ronaldo"))),
+            React.createElement("div", { style: { padding: "0 20px", marginBottom: 14 } },
+                React.createElement("div", { className: "jos-tap", onClick: () => { setTab("analytics"); setStatsTab("overview"); }, role: "button", tabIndex: 0, onKeyDown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setTab("analytics"); setStatsTab("overview"); } }, style: { background: "linear-gradient(135deg,#12100C,#0D0C10)", border: "1px solid rgba(212,168,83,.25)", borderRadius: 16, padding: 16, cursor: "pointer" } },
+                    (() => {
+                        const face = store.get("jos_face") || {};
+                        const body = store.get("jos_measurements") || {};
+                        const allDates = [...(face.entries || []), ...(body.entries || [])].map(e => e.date).filter(Boolean);
+                        const hasEntries = allDates.length > 0;
+                        const firstDate = hasEntries ? allDates.reduce((a, b) => new Date(a) < new Date(b) ? a : b) : null;
+                        const days = firstDate ? Math.max(0, Math.floor((new Date() - new Date(firstDate)) / 86400000)) : 0;
+                        return React.createElement(React.Fragment, null,
+                            React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 } },
+                                React.createElement("div", { style: { fontSize: 9, color: T.gold, fontFamily: "DM Sans,system-ui,sans-serif", fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase" } }, "🐐 The Transformation"),
+                                React.createElement("span", { style: { fontSize: 14, color: T.ivoryD } }, "→")),
+                            React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, fontFamily: "Cormorant Garamond,Georgia,serif", fontStyle: "italic", lineHeight: 1.4 } }, hasEntries ? days + " days into it. Tap to see how far you've come — photos, weight, the full record." : "Log your first photo and measurements — start the record CR7-style."));
+                    })())),
             React.createElement("div", { style: { padding: "0 20px" } },
                 React.createElement("div", { style: { background: "linear-gradient(135deg,#0C1420,#080E18)", border: "1px solid " + (L.sleepHours >= 7 ? "rgba(74,122,90,.3)" : "rgba(74,122,176,.3)"), borderRadius: 16, padding: 16, marginBottom: 14 } },
                     React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 } },
@@ -5331,6 +5389,10 @@ function JeetOS() {
                     ].map((m, i) => (React.createElement("div", { key: i, style: { background: T.card, border: "1px solid " + (m.good ? "rgba(58,158,102,.2)" : T.border), borderRadius: 12, padding: "10px 10px" } },
                         React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: "DM Sans,system-ui,sans-serif", marginBottom: 4 } }, m.label),
                         React.createElement("div", { style: { fontFamily: "Cormorant Garamond,Georgia,serif", fontSize: 18, color: m.color, fontWeight: 300 } }, m.value))))),
+                    React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, margin: "22px 0 12px" } },
+                        React.createElement("div", { style: { flex: 1, height: 1, background: "linear-gradient(90deg,transparent,rgba(255,59,59,.3))" } }),
+                        React.createElement("div", { style: { fontSize: 10, color: "#FF5555", fontFamily: "DM Sans,system-ui,sans-serif", fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", whiteSpace: "nowrap" } }, "🐐 The Transformation"),
+                        React.createElement("div", { style: { flex: 1, height: 1, background: "linear-gradient(90deg,rgba(255,59,59,.3),transparent)" } })),
                     React.createElement(FaceTracker, { T: T }),
                     React.createElement(BodyMeasurements, { T: T })));
             })(),
