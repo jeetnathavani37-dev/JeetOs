@@ -43,6 +43,9 @@ input[type=time]::-webkit-calendar-picker-indicator{filter:invert(1);opacity:.5;
 @keyframes celebDrop{0%{transform:translate(-50%,-120%) scale(.8);opacity:0}40%{transform:translate(-50%,-50%) scale(1.1);opacity:1}55%{transform:translate(-50%,-45%) scale(.9);opacity:1}100%{transform:translate(-50%,-50%) scale(1);opacity:0}}
 @keyframes celebGlow{0%{transform:translate(-50%,-50%) scale(.7);opacity:0}40%{transform:translate(-50%,-50%) scale(1.05);opacity:1}70%{transform:translate(-50%,-50%) scale(1);opacity:1}100%{transform:translate(-50%,-50%) scale(1);opacity:0}}
 @keyframes josFadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes muscleGlow{0%,100%{opacity:.5;filter:saturate(.6) brightness(1)}50%{opacity:.85;filter:saturate(.95) brightness(1.2)}}
+@keyframes dotPulse{0%,100%{box-shadow:0 0 0 0 var(--dotc,rgba(212,175,55,.5))}50%{box-shadow:0 0 0 4px var(--dotc,rgba(212,175,55,0))}}
+@keyframes checkPop{0%{transform:scale(.4);opacity:0}60%{transform:scale(1.2);opacity:1}100%{transform:scale(1);opacity:1}}
 @keyframes josToastIn{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
 button{transition:transform .13s ease,opacity .13s ease;}
 button:active{transform:scale(.96);}
@@ -1531,7 +1534,7 @@ function ExerciseSetCard({ ex, exIdx, done, onToggle, altShown, onAltToggle, set
     const avgMMI = completedSets > 0 ? Math.round(allSets.filter(s => s.mmi).reduce((a, s) => a + parseFloat(s.mmi || 0), 0) / Math.max(1, allSets.filter(s => s.mmi).length)) : 0;
     return (React.createElement("div", { style: { background: T.card, borderRadius: 14, marginBottom: 10, overflow: "hidden", border: "1px solid " + (done ? "rgba(74,122,90,.4)" : open ? bp : T.border) } },
         React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer" }, onClick: () => !editingName && setOpen(o => !o) },
-            React.createElement("div", { onClick: e => { e.stopPropagation(); onToggle(); }, style: { width: 24, height: 24, borderRadius: "50%", border: "2px solid " + (done ? "rgba(74,122,90,.8)" : T.border2), background: done ? "rgba(74,122,90,.2)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" } }, done && React.createElement("svg", { width: "10", height: "10", viewBox: "0 0 12 12" },
+            React.createElement("div", { onClick: e => { e.stopPropagation(); onToggle(); }, style: { width: 24, height: 24, borderRadius: "50%", border: "2px solid " + (done ? "rgba(74,122,90,.8)" : T.border2), background: done ? "rgba(74,122,90,.2)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer", transition: "border-color .2s ease, background .2s ease" } }, done && React.createElement("svg", { width: "10", height: "10", viewBox: "0 0 12 12", style: { animation: "checkPop .3s ease" } },
                 React.createElement("path", { d: "M2 6l3 3 5-5", stroke: "#4A7A5A", strokeWidth: "2.5", fill: "none", strokeLinecap: "round" }))),
             React.createElement("div", { style: { flex: 1, minWidth: 0 } },
                 editingName ? (React.createElement("div", { style: { display: "flex", gap: 6 }, onClick: e => e.stopPropagation() },
@@ -1545,7 +1548,7 @@ function ExerciseSetCard({ ex, exIdx, done, onToggle, altShown, onAltToggle, set
                     displayName,
                     customName && React.createElement("span", { style: { fontSize: 9, color: T.gold, marginLeft: 4 } }, "(custom)"))),
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" } },
-                    React.createElement("div", { style: { width: 6, height: 6, borderRadius: "50%", background: bp, flexShrink: 0 } }),
+                    React.createElement("div", { style: { width: 6, height: 6, borderRadius: "50%", background: bp, flexShrink: 0, animation: "dotPulse 2s ease-in-out infinite", "--dotc": bp + "80" } }),
                     React.createElement("div", { style: { fontSize: 9, color: bp, textTransform: "uppercase", letterSpacing: ".04em", fontFamily: "Inter,system-ui,sans-serif" } }, muscleInfo.name),
                     ex.hit && React.createElement("div", { style: { fontSize: 9, color: T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 400, background: "rgba(255,255,255,.06)", padding: "1px 7px", borderRadius: 8 } }, "Hits: " + ex.hit))),
             React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, flexShrink: 0 } },
@@ -1556,10 +1559,10 @@ function ExerciseSetCard({ ex, exIdx, done, onToggle, altShown, onAltToggle, set
             React.createElement("div", { style: { display: "flex", gap: 4, flexShrink: 0 } },
                 React.createElement("button", { onClick: e => { e.stopPropagation(); onAltToggle(); }, style: { fontSize: 8, color: altShown ? T.gold : T.ivoryD, background: "rgba(255,255,255,.03)", border: "1px solid " + (altShown ? "rgba(201,162,74,.25)" : T.border2), borderRadius: 6, padding: "3px 7px", cursor: "pointer", fontFamily: "Inter,system-ui,sans-serif", whiteSpace: "nowrap" } }, altShown ? "Original" : "Alt"),
                 React.createElement("button", { onClick: e => { e.stopPropagation(); setNameInput(displayName); setEditingName(true); setOpen(true); }, style: { fontSize: 8, color: T.ivoryD, background: "rgba(255,255,255,.03)", border: "1px solid " + T.border2, borderRadius: 6, padding: "3px 7px", cursor: "pointer", fontFamily: "Inter,system-ui,sans-serif", whiteSpace: "nowrap" } }, "Edit"))),
-        open && (React.createElement("div", { style: { borderTop: "1px solid " + T.border } },
+        open && (React.createElement("div", { style: { borderTop: "1px solid " + T.border, animation: "josFadeIn .22s ease" } },
             muscleInfo.svg && (React.createElement("div", { style: { padding: "12px 14px", background: "rgba(255,255,255,.01)", borderBottom: "1px solid " + T.border } },
                 React.createElement("div", { style: { display: "flex", gap: 12, alignItems: "flex-start" } },
-                    React.createElement("div", { style: { width: 90, height: 68, flexShrink: 0, opacity: 0.55, filter: "saturate(0.6)" }, dangerouslySetInnerHTML: { __html: muscleInfo.svg } }),
+                    React.createElement("div", { style: { width: 90, height: 68, flexShrink: 0, opacity: 0.55, filter: "saturate(0.6)", animation: "muscleGlow 3.2s ease-in-out infinite" }, dangerouslySetInnerHTML: { __html: muscleInfo.svg } }),
                     React.createElement("div", { style: { flex: 1 } },
                         React.createElement("div", { style: { fontSize: 9, color: bp, letterSpacing: ".1em", textTransform: "uppercase", fontFamily: "Inter,system-ui,sans-serif", marginBottom: 4 } }, muscleInfo.name),
                         ex.hit && React.createElement("div", { style: { fontSize: 11, color: T.gold, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 600, marginBottom: 8, lineHeight: 1.4 } }, "Targets: " + ex.hit),
@@ -1568,7 +1571,7 @@ function ExerciseSetCard({ ex, exIdx, done, onToggle, altShown, onAltToggle, set
                             const matched = muscleInfo.parts.filter(p => targetParts.some(t => p.name.toLowerCase().includes(t.toLowerCase()) || t.toLowerCase().includes(p.name.toLowerCase().split(" (")[0].toLowerCase())));
                             const showParts = matched.length > 0 ? matched : muscleInfo.parts;
                             return showParts.map((p, pi) => (React.createElement("div", { key: pi, style: { display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 5, padding: "4px 8px", background: "rgba(255,255,255,.03)", borderRadius: 8, border: "1px solid " + p.color + "33" } },
-                                React.createElement("div", { style: { width: 7, height: 7, borderRadius: "50%", background: p.color, flexShrink: 0, marginTop: 3, boxShadow: "0 0 5px " + p.color + "99" } }),
+                                React.createElement("div", { style: { width: 7, height: 7, borderRadius: "50%", background: p.color, flexShrink: 0, marginTop: 3, boxShadow: "0 0 5px " + p.color + "99", animation: "dotPulse 2.2s ease-in-out infinite", "--dotc": p.color + "80" } }),
                                 React.createElement("div", null,
                                     React.createElement("div", { style: { fontSize: 10, color: T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500 } }, p.name),
                                     React.createElement("div", { style: { fontSize: 8, color: T.ivoryD, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300, lineHeight: 1.4 } }, p.tip)))));
