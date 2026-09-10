@@ -1399,11 +1399,12 @@ function FoodMacros({ food, qty, calc, T }) {
 }
 function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onClear, viewDay }) {
     const [cTab, setCTab] = React.useState("guide");
+    const [pendingAsk, setPendingAsk] = React.useState(null);
     const coach = COACHES.find(c => c.id === id) || {};
     const tips = { skin: ["SPF every morning. #1 anti-aging step.", "Niacinamide and Vit C not at same time. One AM one PM.", "Moisturizer on damp skin — locks hydration.", "Retinol at night only — start 2x per week.", "If skin tight after cleanser it is too harsh."], hair: ["Wash 2-3x per week max — overwashing strips oils.", "Condition ends only, never scalp.", "Pat dry, never rub — use microfiber towel.", "Oil on lengths only, not scalp — 30 min before wash.", "Hairstyle should match face shape."], fitness: ["Progressive overload — lift more every week.", "Protein 2g per kg bodyweight every day.", "Rest day is not lazy — muscle grows during rest.", "Sleep 7-8h is part of training. Non-negotiable.", "Compounds first — squat deadlift bench row."], nutrition: ["One glass water first thing in morning.", "Protein in every meal — full and builds muscle.", "Never skip breakfast on training mornings.", "Caffeine after 2pm ruins sleep even if fine.", "Carbs around workout — before energy after recovery."], sleep: ["Same bedtime every night including weekends.", "No screens 1 hour before sleep — melatonin blocked.", "Cool dark room — 18-20 degrees for best sleep.", "Caffeine half-life 6 hours. Last by 2-3pm.", "Cannot sleep? Get up and do something calm."], style: ["Fit beats price — well-fitted cheap wins.", "Capsule: 3 tees 2 jeans 1 chino 2 shirts 2 shoes.", "Shoes and belt same tone — always.", "One statement piece max per outfit.", "Grooming completes the outfit."], grooming: ["Bath every day — non-negotiable.", "Beard oil after shower on slightly damp beard.", "Neckline trim separates sharp from sloppy.", "Fresh clothes daily.", "Oral: 2 min brush tongue scraper floss at night."], ronaldo: ["Train like it's session one, not session five thousand — intensity doesn't get to fade.", "Extra reps after the set ends is where the gap between good and great gets made.", "Discipline in food is discipline everywhere else — protect it even on the hard days.", "Protect your sleep like it's part of training, because it is.", "Review your own day harder than anyone else would — that's how standards rise."] };
     const coachTips = tips[id] || [];
     const quickAsks = { skin: ["Rate my routine", "Any ingredient conflicts?", "What active to add next?"], hair: ["Should I wash today?", "Oiling check", "Best style for face shape"], fitness: ["Design today workout", "Am I recovered enough?", "How to break plateau?"], nutrition: ["Did I hit protein today?", "Analyze my diet", "What to eat next?"], sleep: ["Why am I tired?", "Optimize tonight", "Fix sleep debt"], style: ["What to wear today?", "Wardrobe gaps?", "Rate my style"], grooming: ["Overdue for trim?", "Rate grooming", "Product to add?"], ronaldo: ["Rate my day like CR7 would", "Give me today's discipline tip", "Motivate me right now"] };
-    return (React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", minHeight: "100vh", background: T.ink, fontFamily: "DM Sans,system-ui,sans-serif", display: "flex", flexDirection: "column" } },
+    return (React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", height: "100vh", background: T.ink, fontFamily: "DM Sans,system-ui,sans-serif", display: "flex", flexDirection: "column", overflow: "hidden" } },
         React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "16px 20px 12px", flexShrink: 0, borderBottom: "1px solid " + T.border } },
             React.createElement("button", { onClick: onBack, style: { width: 34, height: 34, borderRadius: "50%", border: "1px solid " + T.border2, background: T.card, color: T.ivory, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 } }, "\u2190"),
             coach.id === "ronaldo" ? React.createElement("div", { style: { width: 32, height: 32, borderRadius: "50%", overflow: "hidden", border: "1.5px solid " + coach.color, flexShrink: 0 } }, React.createElement("img", { src: CR7_IMG_3, alt: "Ronaldo", style: { width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 15%" } })) : React.createElement("div", { style: { fontSize: 20, flexShrink: 0 } }, coach.icon),
@@ -1420,12 +1421,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
                     React.createElement("div", { style: { fontSize: 8, letterSpacing: ".18em", textTransform: "uppercase", color: coach.color, fontFamily: "DM Sans,system-ui,sans-serif", fontWeight: 500, marginBottom: 8 } }, "Today Status"),
                     React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, fontWeight: 300, lineHeight: 1.7, fontFamily: "DM Sans,system-ui,sans-serif" } }, id === "skin" ? L.skincareDone ? "Skin routine done today." : "Skin routine pending. Do AM now — cleanser to SPF." : id === "fitness" ? L.gymDone ? "Session logged. Recovery starts now." : gymDay === "Rest" ? "Rest day. Focus on protein and sleep." : "Not trained yet. Best window 4-9pm." : id === "nutrition" ? "Water: " + L.water + " glasses. Target 170g protein. Breakfast 38g + Lunch 42g + Dinner 32g = 112g base." : id === "sleep" ? L.sleepHours >= 7 ? "Good sleep. Body recovered well." : "Short on sleep. Prioritize tonight — aim 8 hours." : id === "ronaldo" ? (L.gymDone ? "Trained today — that's the standard, not the exception." : "Not trained yet today. I don't wait for the mood to be right.") : "Ask me anything about your " + coach.name.toLowerCase() + " routine.")),
                 React.createElement("div", { style: { fontSize: 8, letterSpacing: ".18em", textTransform: "uppercase", color: coach.color, fontFamily: "DM Sans,system-ui,sans-serif", fontWeight: 500, marginBottom: 8 } }, "Quick Asks"),
-                React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7 } }, (quickAsks[id] || []).map(p => (React.createElement("button", { key: p, onClick: () => { setCTab("ask"); const ua = { role: "user", content: p }; const qa = COACH_QA[id] || {}; const m = p.toLowerCase(); let resp = qa["default"] || "Ask me anything."; for (const k of Object.keys(qa)) {
-                        if (k !== "default" && m.includes(k)) {
-                            resp = qa[k];
-                            break;
-                        }
-                    } const aa = { role: "assistant", content: resp }; const nh = [...(CH[id] || []), ua, aa]; const up = Object.assign({}, CH, { [id]: nh }); setCH(up); store.set("jos_ch", up); }, style: { padding: "10px 14px", background: T.card, border: "1px solid " + T.border, borderRadius: 10, color: T.ivory, fontSize: 11, cursor: "pointer", textAlign: "left", fontFamily: "DM Sans,system-ui,sans-serif", fontWeight: 300, display: "flex", alignItems: "center", justifyContent: "space-between" } },
+                React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7 } }, (quickAsks[id] || []).map(p => (React.createElement("button", { key: p, onClick: () => { setCTab("ask"); setPendingAsk(p); }, style: { padding: "10px 14px", background: T.card, border: "1px solid " + T.border, borderRadius: 10, color: T.ivory, fontSize: 11, cursor: "pointer", textAlign: "left", fontFamily: "DM Sans,system-ui,sans-serif", fontWeight: 300, display: "flex", alignItems: "center", justifyContent: "space-between" } },
                     p,
                     React.createElement("span", { style: { color: coach.color, fontSize: 12 } }, "->"))))))),
             cTab === "tips" && (React.createElement("div", { style: { padding: "16px 20px" } },
@@ -1433,7 +1429,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
                 coachTips.map((tip, i) => (React.createElement("div", { key: i, style: { display: "flex", gap: 12, padding: "12px", background: T.card, border: "1px solid " + T.border, borderRadius: 12, marginBottom: 8 } },
                     React.createElement("div", { style: { width: 24, height: 24, borderRadius: "50%", border: "1px solid " + coach.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: coach.color, flexShrink: 0, fontFamily: "Cormorant Garamond,Georgia,serif" } }, i + 1),
                     React.createElement("div", { style: { fontSize: 12, color: T.ivory, lineHeight: 1.7, fontWeight: 300, fontFamily: "DM Sans,system-ui,sans-serif" } }, tip)))))),
-            cTab === "ask" && React.createElement(SmartChat, { id: id, coach: coach, CH: CH, setCH: setCH, T: T, viewDay: viewDay, L: L, W: W }))));
+            cTab === "ask" && React.createElement(SmartChat, { id: id, coach: coach, CH: CH, setCH: setCH, T: T, viewDay: viewDay, L: L, W: W, pendingAsk: pendingAsk, onConsumePendingAsk: () => setPendingAsk(null) }))));
 }
 // Body part data with muscle group descriptions
 const MUSCLE_INFO = {
@@ -3068,7 +3064,7 @@ function VoiceNoteBubble({ text, color, T }) {
             React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: "DM Sans,system-ui,sans-serif", flexShrink: 0 } }, mm + ":" + String(ss).padStart(2, "0"))),
         React.createElement("div", { style: { fontSize: 11, color: T.ivoryM, lineHeight: 1.6, fontFamily: "DM Sans,system-ui,sans-serif", fontWeight: 300, fontStyle: "italic", padding: "0 4px" } }, text)));
 }
-function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W }) {
+function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsumePendingAsk }) {
 
     const [inp, setInp] = React.useState("");
     const endRef = React.useRef(null);
@@ -3457,6 +3453,13 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W }) {
             setThinking(false);
         }
     };
+    React.useEffect(() => {
+        if (pendingAsk) {
+            send(pendingAsk);
+            if (onConsumePendingAsk)
+                onConsumePendingAsk();
+        }
+    }, [pendingAsk]);
     const prompts = {
         skin: ["Rate my routine", "Vitamin C tips", "Acne help", "Dark spots"],
         hair: ["Should I wash today?", "Oiling check", "Sunday routine", "Argan oil"],
@@ -3468,7 +3471,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W }) {
         ronaldo: ["Rate my day", "Give me a tip", "Motivate me", "Am I disciplined enough?"],
     };
     const ps = prompts[id] || [];
-    return (React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "calc(100vh - 200px)" } },
+    return (React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } },
         React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: "12px 20px", overflowY: "auto", scrollbarWidth: "none" } },
             hist.length === 0 && (React.createElement("div", { style: { maxWidth: "90%", padding: "12px 16px", borderRadius: 14, fontSize: 12, lineHeight: 1.6, background: T.card2, border: "1px solid " + T.border, color: T.ivory, fontFamily: "DM Sans,system-ui,sans-serif", fontWeight: 300 } },
                 id === "ronaldo" ? "Talent without working hard is nothing. Tell me what you did today \u2014 gym, sleep, food \u2014 and I'll tell you straight where you stand." : ("Ask me anything about your " + coach.name.toLowerCase() + " routine. I know everything \u2014 your products, schedule, targets."))),
