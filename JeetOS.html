@@ -1185,7 +1185,7 @@ const RECIPES = {
         { t: "Apna Protein Bar (No-Bake, Makes 4 Bars)", cal: 335.5, p: 33.5, f: 10.7, c: 28.3, ing: ["BigMuscles Nutrition Whey Protein – 4 scoops", "Oats powder – 120g", "Peanut butter – 3-3.5 tbsp", "Mixed seeds powder (chia + flax + pumpkin + sunflower + watermelon + sesame, dry-roasted then powdered) – 8 tsp (~24g)", "Stevia – 4-6 pinch", "Cocoa powder (Weikfield) – ½ tsp", "Vanilla essence – ½ tsp", "Water – 3-4 tbsp"], steps: ["Dry-roast chia, flax, pumpkin, sunflower, watermelon and sesame seeds on low flame until lightly golden and aromatic, cool, then grind to a coarse powder", "Mix whey protein + oats powder + seeds powder + cocoa powder + stevia (dry ingredients) in a large bowl", "Add peanut butter, mix by hand/spoon — it'll go crumbly", "Add vanilla essence + water gradually until a thick, moldable dough forms — don't make it too wet", "Press firmly into an even layer (~1-1.5cm) on a parchment-lined tray/container", "Set in the fridge 1-2 hours — critical, or the bars will crumble", "Cut into 4 equal bars once set"], note: "Full batch (4 bars): 1342 kcal · 134.1g protein · 42.6g fat · 113.2g carbs. Don't add banana or fresh fruit — moisture and natural sugar shorten shelf life to 3-4 days. Keep in an airtight container in the fridge — room temperature is only safe 2-3 days in humid weather. Wrap each bar individually for freshness and easy grab-and-go. 335 kcal for 33.5g protein — roughly a 1:10 protein-to-calorie ratio, excellent for a snack/bar." },
     ],
 };
-function RecipeCard({ r, color }) {
+function RecipeCard({ r, color, icon }) {
     const macroBits = [];
     if (r.cal != null)
         macroBits.push({ l: "Cal", v: Math.round(r.cal), c: T.gold });
@@ -1196,7 +1196,7 @@ function RecipeCard({ r, color }) {
     if (r.f != null)
         macroBits.push({ l: "F", v: r.f + "g", c: "#B06ECC" });
     const sub = r.cal != null && r.p != null ? Math.round(r.cal) + " kcal · " + r.p + "g protein" : "";
-    return (React.createElement(Card, { title: (r.star ? "⭐ " : "") + r.t, icon: "meal", time: sub, color: color, steps: 0, done: 0 },
+    return (React.createElement(Card, { title: (r.star ? "⭐ " : "") + r.t, icon: icon || "🍽️", time: sub, color: color, steps: 0, done: 0 },
         React.createElement("div", { style: { padding: "10px 16px 16px" } },
             macroBits.length > 0 && React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 } }, macroBits.map(m => React.createElement("div", { key: m.l, style: { padding: "3px 9px", background: m.c + "1A", borderRadius: 8, fontSize: 10, color: m.c, fontFamily: "Inter,system-ui,sans-serif" } }, m.l + ": " + m.v))),
             React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 600 } }, "Ingredients"),
@@ -1224,7 +1224,7 @@ function RecipeBook() {
             React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: "Inter,system-ui,sans-serif", lineHeight: 1.5 } }, b.why)))),
         React.createElement("input", { value: q, onChange: e => setQ(e.target.value), placeholder: "Search recipes...", style: { width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid " + T.border, borderRadius: 10, color: T.ivory, fontSize: 12, fontFamily: "Inter,system-ui,sans-serif", padding: "9px 12px", outline: "none", caretColor: "#C9A461", boxSizing: "border-box", marginTop: 10 } }),
         React.createElement("div", { style: { display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none", padding: "10px 0 2px" } }, RECIPE_CATEGORIES.map(c => React.createElement("button", { key: c.key, onClick: () => setCat(c.key), style: { flexShrink: 0, padding: "6px 12px", borderRadius: 16, border: "1px solid " + (cat === c.key ? c.color : T.border2), background: cat === c.key ? c.color + "22" : "transparent", color: cat === c.key ? c.color : T.ivoryD, fontSize: 10, fontFamily: "Inter,system-ui,sans-serif", fontWeight: cat === c.key ? 600 : 300, whiteSpace: "nowrap", cursor: "pointer" } }, c.icon + " " + c.label))),
-        React.createElement("div", { style: { marginTop: 8 } }, list.length === 0 ? React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, padding: "16px 4px", fontFamily: "Inter,system-ui,sans-serif", textAlign: "center" } }, "No recipes found.") : list.map((r, i) => React.createElement(RecipeCard, { key: cat + "_" + i, r: r, color: activeCat.color })))));
+        React.createElement("div", { style: { marginTop: 8 } }, list.length === 0 ? React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, padding: "16px 4px", fontFamily: "Inter,system-ui,sans-serif", textAlign: "center" } }, "No recipes found.") : list.map((r, i) => React.createElement(RecipeCard, { key: cat + "_" + i, r: r, color: activeCat.color, icon: activeCat.icon })))));
 }
 // ─── COMPONENTS ──────────────────────────────────────────────────────────────
 function Ring({ pct, size, stroke, color, value, sub }) {
