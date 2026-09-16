@@ -1226,6 +1226,17 @@ function RecipeBook() {
         React.createElement("div", { style: { display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none", padding: "10px 0 2px" } }, RECIPE_CATEGORIES.map(c => React.createElement("button", { key: c.key, onClick: () => setCat(c.key), style: { flexShrink: 0, padding: "6px 12px", borderRadius: 16, border: "1px solid " + (cat === c.key ? c.color : T.border2), background: cat === c.key ? c.color + "22" : "transparent", color: cat === c.key ? c.color : T.ivoryD, fontSize: 10, fontFamily: "Inter,system-ui,sans-serif", fontWeight: cat === c.key ? 600 : 300, whiteSpace: "nowrap", cursor: "pointer" } }, c.icon + " " + c.label))),
         React.createElement("div", { style: { marginTop: 8 } }, list.length === 0 ? React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, padding: "16px 4px", fontFamily: "Inter,system-ui,sans-serif", textAlign: "center" } }, "No recipes found.") : list.map((r, i) => React.createElement(RecipeCard, { key: cat + "_" + i, r: r, color: activeCat.color, icon: activeCat.icon })))));
 }
+function EatOptions({ checks, totCM }) {
+    const { calLeft, protLeft } = computeDietTotals(checks, totCM);
+    const flat = [];
+    RECIPE_CATEGORIES.forEach(cat => (RECIPES[cat.key] || []).forEach(r => flat.push({ r, cat })));
+    const fits = flat.filter(x => x.r.cal == null || x.r.cal <= calLeft + 60).sort((a, b) => (b.r.p || 0) - (a.r.p || 0));
+    const top = fits.slice(0, 6);
+    return (React.createElement("div", { style: { marginBottom: 14 } },
+        React.createElement(Label, { c: "#4A9090" }, "What Can I Still Eat?"),
+        React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, fontFamily: "Inter,system-ui,sans-serif", marginBottom: 10, marginTop: -4, lineHeight: 1.5 } }, calLeft <= 0 ? "You've hit today's calorie target — go light or skip the extras." : "You have " + calLeft + " kcal · " + protLeft + "g protein left today — here are the highest-protein picks from the Recipe Book that fit:"),
+        top.length === 0 ? React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, padding: "12px 4px", fontFamily: "Inter,system-ui,sans-serif" } }, "Nothing in the Recipe Book fits your remaining calories — try a lighter custom food log entry instead.") : top.map((x, i) => React.createElement(RecipeCard, { key: i, r: x.r, color: x.cat.color, icon: x.cat.icon }))));
+}
 // ─── COMPONENTS ──────────────────────────────────────────────────────────────
 function Ring({ pct, size, stroke, color, value, sub }) {
     const r = size / 2 - stroke / 2 - 2;
@@ -1902,7 +1913,7 @@ function TopicStatsCard({ topic, history, color }) {
                 React.createElement("div", { style: { fontSize: 7, color: T.ivoryD, fontFamily: "Inter,system-ui,sans-serif" } }, (data[0] && data[0].label) || ""),
                 React.createElement("div", { style: { fontSize: 7, color: T.ivoryD, fontFamily: "Inter,system-ui,sans-serif" } }, (data[data.length - 1] && data[data.length - 1].label) || "")))));
 }
-function MacroHeader({ checks, totCM, T }) {
+function computeDietTotals(checks, totCM) {
     const mealCals = { breakfast: 185, lunch: 0, dinner: 222, bar: 150 };
     const mealProt = { breakfast: 38, lunch: 42, dinner: 32, bar: 24 };
     const doneMeals = {
@@ -1915,6 +1926,10 @@ function MacroHeader({ checks, totCM, T }) {
     const eatenProt = Object.keys(doneMeals).reduce((a, k) => a + (doneMeals[k] ? mealProt[k] || 0 : 0), 0) + totCM.p;
     const calLeft = Math.max(0, 1800 - eatenCal);
     const protLeft = Math.max(0, 170 - eatenProt);
+    return { doneMeals, eatenCal, eatenProt, calLeft, protLeft };
+}
+function MacroHeader({ checks, totCM, T }) {
+    const { doneMeals, eatenCal, eatenProt, calLeft, protLeft } = computeDietTotals(checks, totCM);
     const calPct = Math.min(100, Math.round((eatenCal / 1800) * 100));
     const protPct = Math.min(100, Math.round((eatenProt / 170) * 100));
     return (React.createElement("div", { style: { background: "linear-gradient(135deg,#1A1610,#1C1A10)", border: "1px solid rgba(201,162,74,.25)", borderRadius: 16, padding: 16, marginBottom: 14 } },
@@ -5063,6 +5078,7 @@ function JeetOS() {
             React.createElement("div", { style: { padding: "12px 20px" } },
                 React.createElement(LevelBadge, { count: getDietHistory().length, levelDefs: DIET_LEVELS, color: "#C9A461", T: T, label: getDietHistory().length + " days" }),
                 React.createElement(MacroHeader, { checks: checks, totCM: totCM, T: T }),
+                React.createElement(EatOptions, { checks: checks, totCM: totCM }),
                 React.createElement(Label, { c: "#C9A461" }, "Meals"),
                 MEALS.map(meal => {
                     const em = mealMacros(meal.key, meal.cal, meal.protein);
