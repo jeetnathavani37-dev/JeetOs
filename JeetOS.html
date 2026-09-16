@@ -1043,9 +1043,8 @@ const SUPPS = [
     { time: "Pre Gym", label: "Before workout", color: "#C9A24A", items: [{ n: "Black Coffee", p: "Energy, focus, fat burn" }] },
     { time: "During Gym", label: "Mid workout", color: "#C06848", items: [{ n: "Electrolytes", p: "Hydration, performance" }] },
     { time: "Before Cardio", label: "After exercises", color: "#7A5A9A", items: [{ n: "Creatine 5g", p: "Strength, muscle, recovery" }] },
-    { time: "12:00 PM", label: "Post Breakfast", color: "#B06ECC", items: [{ n: "Glutathione", p: "Antioxidant, skin, cellular health" }, { n: "Astaxanthin", p: "Antioxidant, eye and skin" }, { n: "Omega-3", p: "Brain, heart, inflammation" }, { n: "Vitamin D3 + K2", p: "Bone health, immunity" }] },
     { time: "1:00 PM", label: "Focus Supplements", color: "#5B8DD9", items: [{ n: "Ginkgo Biloba", p: "Blood circulation, memory" }, { n: "Rhodiola", p: "Stress resistance, fatigue reduction" }] },
-    { time: "Post Lunch", label: "After 2:30 PM lunch", color: "#C9A461", items: [{ n: "Ginseng", p: "Energy, stamina, productivity" }] },
+    { time: "Post Lunch", label: "After 2:30 PM lunch", color: "#C9A461", items: [{ n: "Ginseng", p: "Energy, stamina, productivity" }, { n: "Astaxanthin", p: "Antioxidant, eye and skin" }, { n: "Omega-3", p: "Brain, heart, inflammation" }, { n: "Vitamin D3 + K2", p: "Bone health, immunity" }] },
     { time: "5:30 PM", label: "Pre Evening", color: "#C06848", items: [{ n: "Black Coffee", p: "Focus and energy boost" }, { n: "L-Theanine", p: "Smooth focus, no jitter with coffee" }] },
     { time: "11:00 PM", label: "Before sleep", color: "#4A7AB0", items: [{ n: "Magnesium Glycinate", p: "Sleep, muscle relaxation" }, { n: "Ashwagandha", p: "Stress reduction, recovery" }, { n: "Shankhpushpi", p: "Calm mind, memory, sleep" }] },
 ];
@@ -1854,7 +1853,7 @@ const TRACK_TOPICS = [
         ] },
     { cat: "Supplements", color: "#D4AF37", topics: [
             { name: "Morning Supps (7:30 AM)", keys: ["sg_0_0", "sg_0_1"], requireAll: true },
-            { name: "Night Supps (11 PM)", keys: ["sg_9_0", "sg_9_1", "sg_9_2"], requireAll: false },
+            { name: "Night Supps (11 PM)", keys: ["sg_8_0", "sg_8_1", "sg_8_2"], requireAll: false },
         ] },
     { cat: "Diet", color: "#C9A461", topics: [
             { name: "Breakfast logged", keys: ["bf_0"], requireAll: false },
@@ -3386,7 +3385,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
             if (/cheat|junk|pizza|burger|biryani|snack/.test(m))
                 return "Cheat meal strategy: max 1 per week. Keep protein high even in cheat (add a protein source). Log in Diet tab for awareness without guilt. Don't skip gym next day — training is the response to a cheat meal. Resume immediately at next meal — 1 meal doesn't undo progress, but 1 meal becoming 3 days does. Plan it on a rest day.";
             if (/supplement|timing|when to take/.test(m))
-                return "Supplement timing: 7:30 AM empty stomach — ALA + NAC (anti-inflammatory). 8:30 AM with breakfast — Brahmi + B12 + Safed Musli. Pre-gym — Black Coffee. During — Electrolytes. Before cardio — Creatine 5g. Noon — Glutathione + Astaxanthin + Omega-3 + D3K2. 1 PM — Ginkgo + Rhodiola. Post-lunch — Ginseng. 5:30 PM — Coffee + L-Theanine. 11 PM — Magnesium + Ashwagandha + Shankhpushpi.";
+                return "Supplement timing: 7:30 AM empty stomach — ALA + NAC (anti-inflammatory). 8:30 AM with breakfast — Brahmi + B12 + Safed Musli. Pre-gym — Black Coffee. During — Electrolytes. Before cardio — Creatine 5g. 1 PM — Ginkgo + Rhodiola. Post-lunch — Ginseng + Astaxanthin + Omega-3 + D3K2. 5:30 PM — Coffee + L-Theanine. 11 PM — Magnesium + Ashwagandha + Shankhpushpi.";
         }
         if (id === "sleep") {
             if (/dream|nightmare|vivid/.test(m))
@@ -4529,7 +4528,7 @@ function JeetOS() {
         { label: "Dinner", pts: 5, done: !!checks.dinner_0, cat: "diet" },
         // Supplements (10 pts)
         { label: "Morning Supps", pts: 5, done: !!checks.sg_0_0 && !!checks.sg_0_1, cat: "supps" },
-        { label: "Night Supps", pts: 5, done: !!checks.sg_9_0 && !!checks.sg_9_1, cat: "supps" },
+        { label: "Night Supps", pts: 5, done: !!checks.sg_8_0 && !!checks.sg_8_1, cat: "supps" },
         // Hygiene (10 pts)
         { label: "Brush AM", pts: 3, done: !!checks.brush_0 && !!checks.brush_1, cat: "care" },
         { label: "Post Gym Bath", pts: 4, done: !!checks.bath_rinse && !!checks.bath_body, cat: "care" },
@@ -4998,12 +4997,8 @@ function JeetOS() {
                 React.createElement(Card, { title: "Supplements 7:30 AM", icon: "\uD83D\uDC8A", time: "Empty stomach", color: T.green, steps: 2, done: SUPPS[0].items.filter((_, i) => checks["sg_0_" + i]).length },
                     React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[0].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_0_" + i], onToggle: () => toggle("sg_0_" + i), accent: T.green })))),
                 React.createElement(SectionScore, { label: "Morning", total: 2 + MORNING_DRINK.steps.length + 2, done: [checks.brush_0, checks.brush_1].filter(Boolean).length + MORNING_DRINK.steps.filter((_, i) => checks["morning_" + i]).length + [checks["sg_0_0"], checks["sg_0_1"]].filter(Boolean).length, color: T.gold, T: T }),
-                React.createElement(Label, { c: T.purple }, "Skincare AM"),
-                React.createElement(Card, { title: "Morning Skincare", icon: "\u2728", time: "Post shower \u2014 daily", color: T.purple, steps: SKIN_AM.steps.length, done: SKIN_AM.steps.filter((_, i) => checks["skam_" + i]).length },
-                    React.createElement("div", { style: { padding: "6px 0 4px" } }, SKIN_AM.steps.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.q + " — " + s.m + (s.w && s.w !== "0 min" ? " | Wait: " + s.w : ""), done: !!checks["skam_" + i], onToggle: () => toggle("skam_" + i), accent: T.purple })))),
                 todayGymDay !== "Rest" && (React.createElement(React.Fragment, null,
                     React.createElement(LevelBadge, { count: getGymHistory().length, levelDefs: GYM_LEVELS, color: T.green, T: T, label: getGymHistory().length + " sessions" }),
-                    React.createElement(SectionScore, { label: "Skincare AM", total: SKIN_AM.steps.length, done: SKIN_AM.steps.filter((_, i) => checks["skam_" + i]).length, color: T.purple, T: T }),
                     React.createElement(Label, { c: T.green },
                         "Gym \u2014 ",
                         todayGymDay),
@@ -5052,6 +5047,10 @@ function JeetOS() {
                                 React.createElement(CheckItem, { label: "Step 2 \u2014 Conditioner (coin size)", sub: "Ends only \u2014 below ears. NOT scalp. Wait 5-10 min. Cold water rinse.", done: !!checks.hair_cond_reg, onToggle: () => toggle("hair_cond_reg"), accent: "#5B8DD9" }),
                                 React.createElement(CheckItem, { label: "Step 3 \u2014 Argan Oil (2-3 drops on ends)", sub: "Apply when 80% dry \u2014 halki nami pe", done: !!checks.hair_argan_reg, onToggle: () => toggle("hair_argan_reg"), accent: "#5B8DD9" }),
                                 React.createElement(CheckItem, { label: "Step 3 \u2014 Arata Styling Cream (coin size)", sub: "Right after argan oil. Set style.", done: !!checks.hair_arata_reg, onToggle: () => toggle("hair_arata_reg"), accent: "#5B8DD9" })))),
+                    React.createElement(Label, { c: T.purple }, "Skincare AM"),
+                    React.createElement(Card, { title: "Morning Skincare", icon: "\u2728", time: "Post shower \u2014 daily", color: T.purple, steps: SKIN_AM.steps.length, done: SKIN_AM.steps.filter((_, i) => checks["skam_" + i]).length },
+                        React.createElement("div", { style: { padding: "6px 0 4px" } }, SKIN_AM.steps.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.q + " — " + s.m + (s.w && s.w !== "0 min" ? " | Wait: " + s.w : ""), done: !!checks["skam_" + i], onToggle: () => toggle("skam_" + i), accent: T.purple })))),
+                    React.createElement(SectionScore, { label: "Skincare AM", total: SKIN_AM.steps.length, done: SKIN_AM.steps.filter((_, i) => checks["skam_" + i]).length, color: T.purple, T: T }),
                     todayGymDay !== "Rest" && React.createElement(SectionScore, { label: "Gym — " + todayGymDay, total: exercises.length + 2, done: exercises.filter((_, i) => checks["ex_" + i]).length + (checks.creatine ? 1 : 0) + (checks.cardio ? 1 : 0), color: T.green, T: T }),
                     React.createElement(Label, { c: "#C9A461" }, "Afternoon"),
                     React.createElement(Card, { title: customLabels["diet_breakfast"] || "Breakfast \u2014 Seitan", icon: "\uD83C\uDF7D\uFE0F", time: "Post glow juice", color: "#C9A461", steps: 4, done: [checks.bf_0, checks.bf_1, checks.bf_2, checks.bf_3].filter(Boolean).length },
@@ -5065,10 +5064,8 @@ function JeetOS() {
                             React.createElement(CheckItem, { label: "Dry sear on HOT pan 60sec per side \u2014 no oil", done: !!checks.bf_3, onToggle: () => toggle("bf_3"), accent: "#C9A461" }))),
                     React.createElement(Card, { title: "Supplements 8:30 AM", icon: "\uD83D\uDC8A", time: "With breakfast", color: T.green, steps: 3, done: [checks.sg_1_0, checks.sg_1_1, checks.sg_1_2].filter(Boolean).length },
                         React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[1].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_1_" + i], onToggle: () => toggle("sg_1_" + i), accent: T.green })))),
-                    React.createElement(Card, { title: "Supplements 12 PM", icon: "\uD83D\uDC8A", time: "Post breakfast \u2014 fat soluble", color: "#B06ECC", steps: 4, done: SUPPS[5].items.filter((_, i) => checks["sg_5_" + i]).length },
-                        React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[5].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_5_" + i], onToggle: () => toggle("sg_5_" + i), accent: "#B06ECC" })))),
-                    React.createElement(Card, { title: "Focus Supplements 1 PM", icon: "\uD83E\uDDE0", time: "Brain and focus", color: "#5B8DD9", steps: 2, done: SUPPS[6].items.filter((_, i) => checks["sg_6_" + i]).length },
-                        React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[6].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_6_" + i], onToggle: () => toggle("sg_6_" + i), accent: "#5B8DD9" })))),
+                    React.createElement(Card, { title: "Focus Supplements 1 PM", icon: "\uD83E\uDDE0", time: "Brain and focus", color: "#5B8DD9", steps: 2, done: SUPPS[5].items.filter((_, i) => checks["sg_5_" + i]).length },
+                        React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[5].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_5_" + i], onToggle: () => toggle("sg_5_" + i), accent: "#5B8DD9" })))),
                     React.createElement(Card, { title: customLabels["diet_lunch"] || "Lunch \u2014 Paneer Paratha", icon: "\uD83C\uDF7D\uFE0F", time: "2:30 PM \u2014 3 hrs after breakfast", color: "#C9A461", steps: 4, done: [checks.lunch_0, checks.lunch_1, checks.lunch_2, checks.lunch_3].filter(Boolean).length },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
                             React.createElement("div", { style: { display: "flex", gap: 8, padding: "7px 16px", borderBottom: "1px solid " + T.border } },
@@ -5077,8 +5074,8 @@ function JeetOS() {
                             React.createElement(CheckItem, { label: "Dough: 75g HP flour + ajwain + 30g hung curd + whey water \u2014 knead, rest 10 min", done: !!checks.lunch_1, onToggle: () => toggle("lunch_1"), accent: "#C9A461" }),
                             React.createElement(CheckItem, { label: "Stuff with spiced paneer crumbles, seal tightly, roll gently", done: !!checks.lunch_2, onToggle: () => toggle("lunch_2"), accent: "#C9A461" }),
                             React.createElement(CheckItem, { label: "Dry cook on blazing hot tawa \u2014 press edges, both sides charred gold", done: !!checks.lunch_3, onToggle: () => toggle("lunch_3"), accent: "#C9A461" }))),
-                    React.createElement(Card, { title: "Post Lunch Supplements", icon: "\uD83D\uDC8A", time: "After 2:30 PM lunch", color: "#C9A461", steps: 1, done: checks["sg_7_0"] ? 1 : 0 },
-                        React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[7].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_7_" + i], onToggle: () => toggle("sg_7_" + i), accent: "#C9A461" })))),
+                    React.createElement(Card, { title: "Post Lunch Supplements", icon: "\uD83D\uDC8A", time: "After 2:30 PM lunch", color: "#C9A461", steps: 4, done: SUPPS[6].items.filter((_, i) => checks["sg_6_" + i]).length },
+                        React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[6].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_6_" + i], onToggle: () => toggle("sg_6_" + i), accent: "#C9A461" })))),
                     React.createElement(Card, { title: "5:30 PM \u2014 Coffee + Protein Bar", icon: "\u2615", time: "Pre evening boost", color: "#C06848", steps: 3, done: [checks.eve_coffee, checks.eve_ltheanine, checks.eve_bar].filter(Boolean).length },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
                             React.createElement(CheckItem, { label: "Black Coffee", sub: "1 cup \u2014 focus and energy boost", done: !!checks.eve_coffee, onToggle: () => toggle("eve_coffee"), accent: "#C06848" }),
@@ -5088,7 +5085,7 @@ function JeetOS() {
                     React.createElement("div", { style: { fontSize: 26, marginBottom: 6 } }, "\uD83D\uDE34"),
                     React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 16, color: T.ivory, fontWeight: 300, marginBottom: 4 } }, "Rest Day"),
                     React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, lineHeight: 1.7, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } }, "Muscle grows today. Focus on nutrition and sleep.")),
-                React.createElement(SectionScore, { label: "Afternoon", total: 8, done: [checks["bf_0"], checks["sg_1_0"], checks["sg_1_1"], checks["sg_1_2"], checks["sg_5_0"], checks["sg_5_1"], checks["sg_5_2"], checks["sg_5_3"]].filter(Boolean).length, color: "#C9A461", T: T }),
+                React.createElement(SectionScore, { label: "Afternoon", total: 8, done: [checks["bf_0"], checks["sg_1_0"], checks["sg_1_1"], checks["sg_1_2"], checks["sg_6_0"], checks["sg_6_1"], checks["sg_6_2"], checks["sg_6_3"]].filter(Boolean).length, color: "#C9A461", T: T }),
                 React.createElement(Label, { c: T.blue }, "Night"),
                 React.createElement(Card, { title: customLabels["diet_dinner"] || "Dinner \u2014 Soya Chunks", icon: "\uD83C\uDF7D\uFE0F", time: "Night", color: "#C9A461", steps: 4, done: [checks.dinner_0, checks.dinner_1, checks.dinner_2, checks.dinner_3].filter(Boolean).length },
                     React.createElement("div", { style: { padding: "6px 0 4px" } },
@@ -5108,8 +5105,8 @@ function JeetOS() {
                     React.createElement("div", { style: { padding: "6px 0 4px" } }, skinPM.steps.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: (s.q || "") + (s.m ? " — " + s.m : "") + (s.w ? " | Wait: " + s.w : ""), done: !!checks["skpm_" + i], onToggle: () => toggle("skpm_" + i), accent: T.purple })))),
                 hair && React.createElement(Card, { title: "Haircare — " + viewDay, icon: "\uD83D\uDC88", time: "Weekly routine", color: "#5B8DD9", steps: hair.steps.length, done: hair.steps.filter((_, i) => checks["hair_" + i]).length },
                     React.createElement("div", { style: { padding: "6px 0 4px" } }, hair.steps.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: (s.q || "") + (s.m ? " — " + s.m : "") + (s.w ? " | Wait: " + s.w : ""), done: !!checks["hair_" + i], onToggle: () => toggle("hair_" + i), accent: "#5B8DD9" })))),
-                React.createElement(Card, { title: "Night Supplements 11 PM", icon: "\uD83D\uDC8A", time: "Before sleep", color: T.blue, steps: SUPPS[9].items.length, done: SUPPS[9].items.filter((_, i) => checks["sg_9_" + i]).length },
-                    React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[9].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_9_" + i], onToggle: () => toggle("sg_9_" + i), accent: T.blue })))),
+                React.createElement(Card, { title: "Night Supplements 11 PM", icon: "\uD83D\uDC8A", time: "Before sleep", color: T.blue, steps: SUPPS[8].items.length, done: SUPPS[8].items.filter((_, i) => checks["sg_8_" + i]).length },
+                    React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[8].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_8_" + i], onToggle: () => toggle("sg_8_" + i), accent: T.blue })))),
                 alpha && React.createElement(Card, { title: "Alpha Drink", icon: "\uD83C\uDF19", time: alpha.time, color: T.blue, steps: alpha.steps.length, done: alpha.steps.filter((_, i) => checks["alpha_" + i]).length },
                     React.createElement("div", { style: { padding: "6px 0 4px" } }, alpha.steps.map((s, i) => React.createElement(CheckItem, { key: i, label: s, done: !!checks["alpha_" + i], onToggle: () => toggle("alpha_" + i), accent: T.blue })))),
                 React.createElement("button", { onClick: saveDay, style: { width: "100%", padding: "15px", background: T.gold, border: "none", borderRadius: 12, color: "#0A0800", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "Inter,system-ui,sans-serif", letterSpacing: ".02em", marginTop: 12 } }, (() => { const h = new Date().getHours(); return h < 12 ? "Lock In This Morning" : h < 17 ? "Lock In This Afternoon" : h < 21 ? "Lock In This Evening" : "End of Day — Lock In"; })())))),
