@@ -3070,9 +3070,8 @@ function GymTab({ checks, toggle, toggleAlt, altEx, gymSets, updateSets, updateC
             React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 20, color: T.ivory, fontWeight: 300, marginBottom: 8 } }, "Rest Day"),
             React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, lineHeight: 1.8, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } }, "Muscle grows during rest, not during workout. Prioritize protein, sleep and hydration today."))) : (React.createElement(React.Fragment, null,
             React.createElement(Label, { c: T.gold }, "Pre Workout"),
-            React.createElement(Card, { title: "Pre Gym Coffee", icon: "\u2615", time: "30 min before gym", color: T.gold, steps: 2, done: [checks.pregym_coffee, checks.creatine].filter(Boolean).length },
+            React.createElement(Card, { title: "Pre Gym", icon: "\u2615", time: "30 min before gym", color: T.gold, steps: 1, done: checks.creatine ? 1 : 0 },
                 React.createElement("div", { style: { padding: "6px 0 4px" } },
-                    React.createElement(CheckItem, { label: "Black Coffee \u2014 no sugar", sub: "Caffeine peaks 30-45 min after. Take it now.", done: !!checks.pregym_coffee, onToggle: () => toggle("pregym_coffee"), accent: T.gold }),
                     React.createElement(CheckItem, { label: "Creatine 5g", sub: "Strength, muscle, recovery", done: !!checks.creatine, onToggle: () => toggle("creatine"), accent: T.gold }))),
             React.createElement(Label, { c: T.green },
                 gymDay,
@@ -3087,10 +3086,9 @@ function GymTab({ checks, toggle, toggleAlt, altEx, gymSets, updateSets, updateC
                 React.createElement("div", { style: { padding: "6px 0 4px" } },
                     React.createElement(CheckItem, { label: "Treadmill \u2014 Incline 10, Speed 4.5, 30 min", sub: "Low intensity steady state \u2014 fat burn zone", done: !!checks.cardio, onToggle: () => toggle("cardio"), accent: "#4A9090" }))),
             React.createElement(Label, { c: "#B06ECC" }, "Post Workout"),
-            React.createElement(Card, { title: "Post Gym Fuel", icon: "\u2728", time: "Within 2 min of home", color: "#B06ECC", steps: 2, done: [checks.glowjuice, checks.nuts].filter(Boolean).length },
+            React.createElement(Card, { title: "Post Gym Fuel", icon: "\u2728", time: "Within 2 min of home", color: "#B06ECC", steps: 1, done: checks.glowjuice ? 1 : 0 },
                 React.createElement("div", { style: { padding: "6px 0 4px" } },
-                    React.createElement(CheckItem, { label: "Glow Juice \u2014 blend fresh", sub: "Anaar + Gajar + Beetroot + Amla + Aloe + Adrak + Pudina", done: !!checks.glowjuice, onToggle: () => toggle("glowjuice"), accent: "#B06ECC" }),
-                    React.createElement(CheckItem, { label: "4-5 Badam OR 2 Walnuts", sub: "2 min after glow juice \u2014 healthy fats", done: !!checks.nuts, onToggle: () => toggle("nuts"), accent: "#B06ECC" })))))));
+                    React.createElement(CheckItem, { label: "Glow Juice + Badam/Walnuts \u2014 blend fresh", sub: "Anaar + Gajar + Beetroot + Amla + Aloe + Adrak + Pudina, then 4-5 badam or 2 walnuts", done: !!checks.glowjuice, onToggle: () => toggle("glowjuice"), accent: "#B06ECC" })))))));
 }
 function SmartNav({ tab, setTab, T }) {
     const TABS = [
@@ -5006,9 +5004,8 @@ function JeetOS() {
                     React.createElement(Label, { c: T.green },
                         "Gym \u2014 ",
                         todayGymDay),
-                    React.createElement(Card, { title: "Pre Gym", icon: "\u2615", time: "Before workout", color: T.gold, steps: 2, done: [checks.pregym_coffee, checks.creatine].filter(Boolean).length },
+                    React.createElement(Card, { title: "Pre Gym", icon: "\u2615", time: "Before workout", color: T.gold, steps: 1, done: checks.creatine ? 1 : 0 },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
-                            React.createElement(CheckItem, { label: "Black Coffee", sub: "1 cup no sugar \u2014 energy and focus", done: !!checks.pregym_coffee, onToggle: () => toggle("pregym_coffee"), accent: T.gold }),
                             React.createElement(CheckItem, { label: "Creatine 5g", sub: "Strength, muscle, recovery", done: !!checks.creatine, onToggle: () => toggle("creatine"), accent: T.gold }))),
                     React.createElement(Card, { title: todayGymDay + " Workout", icon: "\uD83C\uDFCB\uFE0F", time: "3 sets x 12-15 reps", color: T.green, steps: exercises.length, done: exercises.filter((_, i) => checks["ex_" + i]).length },
                         React.createElement("div", { style: { padding: "10px 12px" } },
@@ -5019,10 +5016,9 @@ function JeetOS() {
                     React.createElement(Card, { title: "Post Gym Cardio", icon: "\uD83D\uDEB6", time: "After all exercises", color: "#4A9090", steps: 1, done: checks.cardio ? 1 : 0 },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
                             React.createElement(CheckItem, { label: "30 min Incline Walk", sub: "Incline 10 \u2014 Speed 4.5", done: !!checks.cardio, onToggle: () => toggle("cardio"), accent: "#4A9090" }))),
-                    React.createElement(Card, { title: "Post Gym", icon: "\u2728", time: "Within 2 min of home", color: "#B06ECC", steps: 2, done: [checks.glowjuice, checks.nuts].filter(Boolean).length },
+                    React.createElement(Card, { title: "Post Gym", icon: "\u2728", time: "Within 2 min of home", color: "#B06ECC", steps: 1, done: checks.glowjuice ? 1 : 0 },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
-                            React.createElement(CheckItem, { label: "Glow Juice", sub: "Anaar + Gajar + Beetroot + Tomato + Cucumber + Papaya + Amla + Aloe + Adrak + Pudina + Jeera + Nimbu", done: !!checks.glowjuice, onToggle: () => toggle("glowjuice"), accent: "#B06ECC" }),
-                            React.createElement(CheckItem, { label: "Badam or Walnut", sub: "4-5 badam OR 2 walnuts \u2014 2 min after glow juice", done: !!checks.nuts, onToggle: () => toggle("nuts"), accent: "#B06ECC" }))),
+                            React.createElement(CheckItem, { label: "Glow Juice + Badam/Walnuts", sub: "Anaar + Gajar + Beetroot + Tomato + Cucumber + Papaya + Amla + Aloe + Adrak + Pudina + Jeera + Nimbu, then 4-5 badam or 2 walnuts", done: !!checks.glowjuice, onToggle: () => toggle("glowjuice"), accent: "#B06ECC" }))),
                     React.createElement(Card, { title: "Post Gym Bath", icon: "\uD83D\uDEBF", time: "After glow juice and badam", color: "#4A9090", steps: viewDay === "Thursday" ? 7 : viewDay === "Sunday" ? 9 : 5, done: [checks.bath_rinse, checks.bath_body, checks.bath_face].filter(Boolean).length + (viewDay === "Thursday" ? [checks.hair_shampoo, checks.hair_conditioner, checks.hair_argan_thu, checks.hair_arata_thu].filter(Boolean).length : viewDay === "Sunday" ? [checks.hair_drymassage, checks.hair_mask, checks.hair_steam, checks.hair_coldrinse, checks.hair_shampoodove, checks.hair_argan].filter(Boolean).length : [checks.hair_shampoo_reg, checks.hair_cond_reg].filter(Boolean).length) },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
                             React.createElement("div", { style: { padding: "6px 16px 4px", borderBottom: "1px solid " + T.border } },
