@@ -1530,41 +1530,53 @@ function CheckItem({ label, sub, done, onToggle, accent }) {
     const ac = accent || T.green;
     const onKey = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } };
     return (React.createElement("div", { className: "jos-tap", onClick: onToggle, role: "checkbox", "aria-checked": !!done, tabIndex: 0, onKeyDown: onKey, style: { display: "flex", alignItems: "flex-start", gap: 14, padding: "13px 18px", borderBottom: "1px solid " + T.border, cursor: "pointer", background: done ? "rgba(47,158,92,.05)" : "transparent", transition: "background .2s" } },
-        React.createElement("div", { style: { width: 24, height: 24, borderRadius: 8, border: "2px solid " + (done ? ac : T.border2), background: done ? ac : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1, boxShadow: done ? "0 2px 8px " + ac + "55" : "none", transition: "all .2s" } },
-            done
-                ? React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 12 12" },
-                    React.createElement("path", { d: "M2 6l3 3 5-5", stroke: "white", strokeWidth: "2.5", fill: "none", strokeLinecap: "round", strokeLinejoin: "round" }))
-                : React.createElement("span", { style: { fontSize: 10, opacity: .55 } }, "📷")),
+        React.createElement("div", { style: { width: 24, height: 24, borderRadius: 8, border: "2px solid " + (done ? ac : T.border2), background: done ? ac : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1, boxShadow: done ? "0 2px 8px " + ac + "55" : "none", transition: "all .2s" } }, done && React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 12 12" },
+            React.createElement("path", { d: "M2 6l3 3 5-5", stroke: "white", strokeWidth: "2.5", fill: "none", strokeLinecap: "round", strokeLinejoin: "round" }))),
         React.createElement("div", { style: { flex: 1 } },
             React.createElement("div", { style: { fontSize: 13, color: done ? T.ivoryD : T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontWeight: done ? 300 : 400, textDecoration: done ? "line-through" : "none", lineHeight: 1.5, letterSpacing: ".01em" } }, label),
             sub && React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, marginTop: 3, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300, lineHeight: 1.5 } }, sub))));
 }
-function Card({ title, icon, time, color, children, steps, done, defaultOpen }) {
+function CardProofRow({ proof, onCapture, T }) {
+    return React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 18px", borderTop: "1px solid " + T.border, background: proof ? "rgba(47,158,92,.06)" : "rgba(91,141,239,.05)" } },
+        proof
+            ? React.createElement("div", { style: { width: 38, height: 38, borderRadius: 8, overflow: "hidden", border: "1.5px solid " + T.green, flexShrink: 0 } },
+                React.createElement("img", { src: proof, style: { width: "100%", height: "100%", objectFit: "cover" } }))
+            : React.createElement("div", { style: { width: 38, height: 38, borderRadius: 8, border: "1.5px dashed rgba(91,141,239,.4)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 15 } }, "\uD83D\uDCF7"),
+        React.createElement("div", { style: { flex: 1 } },
+            React.createElement("div", { style: { fontSize: 11, color: proof ? T.green : "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 600 } }, proof ? "Proof attached" : "Proof photo required"),
+            React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, marginTop: 2, fontFamily: "Inter,system-ui,sans-serif" } }, proof ? "One photo for this task \u2014 tap to replace" : "One photo for this whole task")),
+        React.createElement("button", { onClick: onCapture, style: { padding: "7px 14px", borderRadius: 8, border: "none", background: proof ? "rgba(255,255,255,.08)" : "linear-gradient(135deg,#4C6FE0,#5B8DEF)", color: proof ? T.ivory : "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "Inter,system-ui,sans-serif", flexShrink: 0 } }, proof ? "Replace" : "Add Photo"));
+}
+function Card({ title, icon, time, color, children, steps, done, defaultOpen, proofKey, proof, onCapture }) {
     const [open, setOpen] = React.useState(defaultOpen || false);
     const allDone = steps > 0 && done >= steps;
+    const complete = allDone && (!proofKey || !!proof);
     const pct = steps > 0 ? Math.round((done / steps) * 100) : 0;
     const onKey = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(o => !o); } };
-    return (React.createElement("div", { style: { background: allDone ? "linear-gradient(135deg,#0D1610,#0D1410)" : "linear-gradient(135deg,#131725,#0F0F14 55%,#0D0D12)", border: "1px solid " + (allDone ? "rgba(47,158,92,.35)" : open ? color + "88" : "rgba(91,141,239,.16)"), borderRadius: 16, overflow: "hidden", marginBottom: 12, boxShadow: allDone ? "0 4px 20px rgba(47,158,92,.08)" : open ? "0 4px 20px rgba(76,111,224,.15)" : "0 2px 10px rgba(76,111,224,.04)", transition: "border-color .25s ease, box-shadow .25s ease, background .25s ease" } },
+    return (React.createElement("div", { style: { background: complete ? "linear-gradient(135deg,#0D1610,#0D1410)" : "linear-gradient(135deg,#131725,#0F0F14 55%,#0D0D12)", border: "1px solid " + (complete ? "rgba(47,158,92,.35)" : open ? color + "88" : "rgba(91,141,239,.16)"), borderRadius: 16, overflow: "hidden", marginBottom: 12, boxShadow: complete ? "0 4px 20px rgba(47,158,92,.08)" : open ? "0 4px 20px rgba(76,111,224,.15)" : "0 2px 10px rgba(76,111,224,.04)", transition: "border-color .25s ease, box-shadow .25s ease, background .25s ease" } },
         React.createElement("div", { className: "jos-tap", onClick: () => setOpen(o => !o), role: "button", "aria-expanded": open, tabIndex: 0, onKeyDown: onKey, style: { display: "flex", alignItems: "center", gap: 14, padding: "15px 18px", cursor: "pointer" } },
-            React.createElement("div", { style: { width: 36, height: 36, borderRadius: 10, background: allDone ? "rgba(47,158,92,.12)" : "rgba(255,255,255,.04)", border: "1px solid " + (allDone ? T.green : color + "AA"), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative" } },
-                ICON_NAMES.has(icon) ? React.createElement(Icon, { name: icon, size: 17, color: allDone ? T.green : color }) : icon,
-                allDone && React.createElement("div", { style: { position: "absolute", top: -5, right: -5, width: 16, height: 16, borderRadius: "50%", background: T.green, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 6px rgba(47,158,92,.5)" } },
+            React.createElement("div", { style: { width: 36, height: 36, borderRadius: 10, background: complete ? "rgba(47,158,92,.12)" : "rgba(255,255,255,.04)", border: "1px solid " + (complete ? T.green : color + "AA"), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative" } },
+                ICON_NAMES.has(icon) ? React.createElement(Icon, { name: icon, size: 17, color: complete ? T.green : color }) : icon,
+                complete && React.createElement("div", { style: { position: "absolute", top: -5, right: -5, width: 16, height: 16, borderRadius: "50%", background: T.green, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 6px rgba(47,158,92,.5)" } },
                     React.createElement("svg", { width: "8", height: "8", viewBox: "0 0 12 12" },
-                        React.createElement("path", { d: "M2 6l3 3 5-5", stroke: "white", strokeWidth: "2.5", fill: "none", strokeLinecap: "round" })))),
+                        React.createElement("path", { d: "M2 6l3 3 5-5", stroke: "white", strokeWidth: "2.5", fill: "none", strokeLinecap: "round" }))),
+                allDone && proofKey && !proof && React.createElement("div", { style: { position: "absolute", top: -5, right: -5, width: 16, height: 16, borderRadius: "50%", background: "#4C6FE0", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 6px rgba(76,111,224,.5)", fontSize: 8 } }, "\uD83D\uDCF7")),
             React.createElement("div", { style: { flex: 1 } },
-                React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 16, color: allDone ? T.green : T.ivory, fontWeight: 400, letterSpacing: ".02em" } }, title),
-                time && React.createElement("div", { style: { fontSize: 9, color: allDone ? T.green : color, letterSpacing: ".1em", textTransform: "uppercase", marginTop: 2, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500 } }, time)),
+                React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 16, color: complete ? T.green : T.ivory, fontWeight: 400, letterSpacing: ".02em" } }, title),
+                time && React.createElement("div", { style: { fontSize: 9, color: complete ? T.green : color, letterSpacing: ".1em", textTransform: "uppercase", marginTop: 2, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500 } }, time)),
             React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
                 steps > 0 && React.createElement("div", { style: { textAlign: "center" } },
-                    React.createElement("div", { style: { fontSize: 13, color: allDone ? T.green : pct > 50 ? T.gold : T.ivoryD, fontFamily: "Fraunces,Georgia,serif", fontWeight: 300, lineHeight: 1 } }, done + "/" + steps),
+                    React.createElement("div", { style: { fontSize: 13, color: complete ? T.green : pct > 50 ? T.gold : T.ivoryD, fontFamily: "Fraunces,Georgia,serif", fontWeight: 300, lineHeight: 1 } }, done + "/" + steps),
                     React.createElement("div", { style: { fontSize: 7, color: T.ivoryD, fontFamily: "Inter,system-ui,sans-serif", textTransform: "uppercase", letterSpacing: ".05em", marginTop: 1 } }, pct + "%")),
                 React.createElement("div", { style: { width: 28, height: 28, borderRadius: 8, background: "rgba(255,255,255,.04)", border: "1px solid " + T.border2, display: "flex", alignItems: "center", justifyContent: "center" } },
                     React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, transform: open ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .2s" } }, "\u25B6")))),
         steps > 0 && React.createElement("div", { style: { height: 3, background: T.border, margin: "0 18px 0", borderRadius: 2 } },
-            React.createElement("div", { style: { height: "100%", width: pct + "%", background: allDone ? T.green : color, borderRadius: 2, transition: "width .4s", boxShadow: pct > 0 ? "0 0 6px " + color + "66" : "none" } })),
+            React.createElement("div", { style: { height: "100%", width: pct + "%", background: complete ? T.green : color, borderRadius: 2, transition: "width .4s", boxShadow: pct > 0 ? "0 0 6px " + color + "66" : "none" } })),
         React.createElement("div", { style: { display: "grid", gridTemplateRows: open ? "1fr" : "0fr", transition: "grid-template-rows .28s ease" } },
             React.createElement("div", { style: { overflow: "hidden", minHeight: 0 } },
-                React.createElement("div", { style: { borderTop: "1px solid " + T.border } }, children)))));
+                React.createElement("div", { style: { borderTop: "1px solid " + T.border } },
+                    children,
+                    proofKey && React.createElement(CardProofRow, { proof: proof, onCapture: () => onCapture(proofKey), T: T }))))));
 }
 function Chat({ id, hist, loading, onSend, color }) {
     const [inp, setInp] = React.useState("");
@@ -4156,13 +4168,17 @@ function JeetOS() {
     const [statsTab, setStatsTab] = React.useState("overview"); // overview | trends | compare | log
     const [statsPeriod, setStatsPeriod] = React.useState("week"); // day | week | month
     const [notifPermission, setNotifPermission] = React.useState(typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported");
-    const [pendingProofKey, setPendingProofKey] = React.useState(null);
-    const proofInputRef = React.useRef(null);
+    const [pendingCardProofKey, setPendingCardProofKey] = React.useState(null);
+    const cardProofInputRef = React.useRef(null);
+    const [cardProofs, setCardProofs] = React.useState({});
     const dateKey = new Date().toDateString();
     React.useEffect(() => {
         const sc = store.get("jos_checks_" + dateKey);
         if (sc)
             setChecks(sc);
+        const scp = store.get("jos_cardproof_" + dateKey);
+        if (scp)
+            setCardProofs(scp);
         const sm = store.get("jos_meals_" + dateKey);
         if (sm)
             setCustomMeals(sm);
@@ -4235,37 +4251,31 @@ function JeetOS() {
         setGymSets(up);
         store.set("jos_sets_" + dateKey, up);
     };
-    const getProofStore = dk => { try { const v = localStorage.getItem("jos_proof_" + dk); return v ? JSON.parse(v) : {}; } catch (_e) { return {}; } };
-    const setProofStore = (dk, obj) => { try { localStorage.setItem("jos_proof_" + dk, JSON.stringify(obj)); return true; } catch (_e) { return false; } };
-    const pruneOldProofs = () => { try {
-        const cutoff = Date.now() - 10 * 86400000;
-        Object.keys(localStorage).filter(k => k.startsWith("jos_proof_")).forEach(k => {
-            const t = new Date(k.slice("jos_proof_".length)).getTime();
+    const toggle = k => { const up = Object.assign({}, checks, { [k]: !checks[k] }); setChecks(up); store.set("jos_checks_" + dateKey, up); if (!checks[k])
+        showToast("Done!"); };
+    const getCardProofStore = dk => { try { const v = localStorage.getItem("jos_cardproof_" + dk); return v ? JSON.parse(v) : {}; } catch (_e) { return {}; } };
+    const setCardProofStore = (dk, obj) => { try { localStorage.setItem("jos_cardproof_" + dk, JSON.stringify(obj)); return true; } catch (_e) { return false; } };
+    const pruneOldCardProofs = () => { try {
+        const cutoff = Date.now() - 14 * 86400000;
+        Object.keys(localStorage).filter(k => k.startsWith("jos_cardproof_")).forEach(k => {
+            const t = new Date(k.slice("jos_cardproof_".length)).getTime();
             if (!isNaN(t) && t < cutoff) localStorage.removeItem(k);
         });
     } catch (_e) { } };
-    const clearProof = k => { const up = Object.assign({}, getProofStore(dateKey)); delete up[k]; setProofStore(dateKey, up); };
-    const savePhotoAndComplete = (k, dataUrl) => {
-        const up = Object.assign({}, getProofStore(dateKey), { [k]: dataUrl });
-        if (!setProofStore(dateKey, up)) {
-            pruneOldProofs();
-            if (!setProofStore(dateKey, up)) { showToast("Storage full — couldn't save photo"); return; }
-        }
-        const upc = Object.assign({}, checks, { [k]: true });
-        setChecks(upc);
-        store.set("jos_checks_" + dateKey, upc);
-        showToast("Proof saved ✓");
+    const captureCardProof = key => {
+        setPendingCardProofKey(key);
+        if (cardProofInputRef.current) { cardProofInputRef.current.value = ""; cardProofInputRef.current.click(); }
     };
-    const handleProofFile = e => {
+    const handleCardProofFile = e => {
         const file = e.target.files && e.target.files[0];
-        const key = pendingProofKey;
-        setPendingProofKey(null);
+        const key = pendingCardProofKey;
+        setPendingCardProofKey(null);
         if (!file || !key) return;
         const reader = new FileReader();
         reader.onload = ev => {
             const img = new Image();
             img.onload = () => {
-                const maxDim = 360;
+                const maxDim = 480;
                 let w = img.width, h = img.height;
                 if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
                 else if (h >= w && h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
@@ -4273,24 +4283,20 @@ function JeetOS() {
                 canvas.width = w; canvas.height = h;
                 const ctx = canvas.getContext("2d");
                 ctx.drawImage(img, 0, 0, w, h);
-                savePhotoAndComplete(key, canvas.toDataURL("image/jpeg", 0.55));
+                const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
+                const up = Object.assign({}, cardProofs, { [key]: dataUrl });
+                if (!setCardProofStore(dateKey, up)) {
+                    pruneOldCardProofs();
+                    if (!setCardProofStore(dateKey, up)) { showToast("Storage full — couldn't save photo"); return; }
+                }
+                setCardProofs(up);
+                showToast("Proof saved ✓");
             };
             img.onerror = () => showToast("Couldn't read photo — try again");
             img.src = ev.target.result;
         };
         reader.onerror = () => showToast("Couldn't read photo — try again");
         reader.readAsDataURL(file);
-    };
-    const toggle = k => {
-        if (!checks[k]) {
-            setPendingProofKey(k);
-            if (proofInputRef.current) { proofInputRef.current.value = ""; proofInputRef.current.click(); }
-            return;
-        }
-        const up = Object.assign({}, checks, { [k]: false });
-        setChecks(up);
-        store.set("jos_checks_" + dateKey, up);
-        clearProof(k);
     };
     const toggleAlt = k => { const up = Object.assign({}, altEx, { [k]: !altEx[k] }); setAltEx(up); store.set("jos_alt", up); };
     const saveLog = async (l) => { setL(l); store.set("jos_log", l); syncToSupabase(new Date().toDateString(), l); };
@@ -4844,7 +4850,7 @@ function JeetOS() {
             )
           )
         ),
-        React.createElement("input", { ref: proofInputRef, type: "file", accept: "image/*", capture: "environment", style: { display: "none" }, onChange: handleProofFile }),
+        React.createElement("input", { ref: cardProofInputRef, type: "file", accept: "image/*", capture: "environment", style: { display: "none" }, onChange: handleCardProofFile }),
         toast && React.createElement("div", { style: { position: "fixed", bottom: 90, left: "50%", transform: "translateX(-50%)", background: T.card2, border: "1px solid rgba(74,122,90,.4)", borderRadius: 20, padding: "8px 18px", fontSize: 11, color: T.green, zIndex: 500, whiteSpace: "nowrap", fontFamily: "Inter,system-ui,sans-serif", boxShadow: "0 6px 20px rgba(0,0,0,.35)", animation: "josToastIn .25s ease" } }, "✓ " + toast),
         milestone && React.createElement("div", { style: { position: "fixed", inset: 0, background: "rgba(0,0,0,.9)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 28 }, onClick: () => setMilestone(null) },
             React.createElement("div", { style: { background: "linear-gradient(135deg,#1E1A10,#2A2210)", border: "1px solid rgba(201,162,74,.4)", borderRadius: 20, padding: 28, textAlign: "center", maxWidth: 280, width: "100%" } },
@@ -4961,7 +4967,7 @@ function JeetOS() {
             React.createElement("div", { style: { padding: "0 20px", marginBottom: 14 } },
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, background: "rgba(91,141,239,.08)", border: "1px solid rgba(91,141,239,.22)", borderRadius: 12, padding: "10px 12px" } },
                     React.createElement("span", { style: { fontSize: 14 } }, "📷"),
-                    React.createElement("span", { style: { fontSize: 10, color: "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, lineHeight: 1.5 } }, "Every task now needs a quick photo as proof — tap to check off, camera opens automatically."))),
+                    React.createElement("span", { style: { fontSize: 10, color: "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, lineHeight: 1.5 } }, "Every task needs one photo as proof — finish the steps, then add a photo inside the card to mark it complete."))),
             disciplineCard && React.createElement("div", { style: { padding: "0 20px", marginBottom: 14 } },
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, background: disciplineCard.type === "red" ? "linear-gradient(135deg,#2A0E0E,#1A0808)" : "linear-gradient(135deg,#2A2410,#1A1608)", border: "1px solid " + (disciplineCard.type === "red" ? "rgba(220,50,50,.4)" : "rgba(220,180,50,.35)"), borderRadius: 14, padding: "14px 16px" } },
                     React.createElement("div", { style: { width: 30, height: 40, borderRadius: 4, flexShrink: 0, background: disciplineCard.type === "red" ? "linear-gradient(160deg,#E23B3B,#A82424)" : "linear-gradient(160deg,#F0D04A,#C8A420)", boxShadow: "0 2px 8px " + (disciplineCard.type === "red" ? "rgba(226,59,59,.4)" : "rgba(240,208,74,.4)") } }),
@@ -5061,13 +5067,13 @@ function JeetOS() {
                                 React.createElement("button", { onClick: () => saveLog(Object.assign({}, L, { water: Math.max(0, L.water - 1) })), style: { width: 28, height: 28, borderRadius: "50%", border: "1px solid " + T.border2, background: T.card2, color: T.ivory, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" } }, "-"),
                                 React.createElement("button", { onClick: () => saveLog(Object.assign({}, L, { water: L.water + 1 })), style: { width: 28, height: 28, borderRadius: "50%", border: "1px solid rgba(74,122,176,.4)", background: "rgba(74,122,176,.1)", color: T.blue, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" } }, "+"))))),
                 React.createElement(Label, null, "Morning"),
-                React.createElement(Card, { title: "Brush Teeth", icon: "\uD83E\uDEA5", time: "First thing \u2014 before anything", color: "#4A9090", steps: 2, done: [checks.brush_0, checks.brush_1].filter(Boolean).length },
+                React.createElement(Card, { title: "Brush Teeth", icon: "\uD83E\uDEA5", time: "First thing \u2014 before anything", color: "#4A9090", steps: 2, done: [checks.brush_0, checks.brush_1].filter(Boolean).length, proofKey: "brush_am", proof: cardProofs["brush_am"], onCapture: captureCardProof },
                     React.createElement("div", { style: { padding: "6px 0 4px" } },
                         React.createElement(CheckItem, { label: "Brush 2 minutes \u2014 up down circular motion", sub: "Colgate or fluoride toothpaste", done: !!checks.brush_0, onToggle: () => toggle("brush_0"), accent: "#4A9090" }),
                         React.createElement(CheckItem, { label: "Tongue scraper \u2014 back to front 5-7 times", sub: "Removes bacteria, fixes bad breath", done: !!checks.brush_1, onToggle: () => toggle("brush_1"), accent: "#4A9090" }))),
-                React.createElement(Card, { title: MORNING_DRINK.name, icon: MORNING_DRINK.icon, time: MORNING_DRINK.time, color: T.gold, steps: MORNING_DRINK.steps.length, done: MORNING_DRINK.steps.filter((_, i) => checks["morning_" + i]).length, defaultOpen: false },
+                React.createElement(Card, { title: MORNING_DRINK.name, icon: MORNING_DRINK.icon, time: MORNING_DRINK.time, color: T.gold, steps: MORNING_DRINK.steps.length, done: MORNING_DRINK.steps.filter((_, i) => checks["morning_" + i]).length, defaultOpen: false, proofKey: "morning_drink", proof: cardProofs["morning_drink"], onCapture: captureCardProof },
                     React.createElement("div", { style: { padding: "6px 0 4px" } }, MORNING_DRINK.steps.map((s, i) => React.createElement(CheckItem, { key: i, label: s, done: !!checks["morning_" + i], onToggle: () => toggle("morning_" + i), accent: T.gold })))),
-                React.createElement(Card, { title: "Supplements", icon: "\uD83D\uDC8A", time: "Empty stomach", color: T.green, steps: SUPPS[0].items.length, done: SUPPS[0].items.filter((_, i) => checks["sg_0_" + i]).length },
+                React.createElement(Card, { title: "Supplements", icon: "\uD83D\uDC8A", time: "Empty stomach", color: T.green, steps: SUPPS[0].items.length, done: SUPPS[0].items.filter((_, i) => checks["sg_0_" + i]).length, proofKey: "supps_0", proof: cardProofs["supps_0"], onCapture: captureCardProof },
                     React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[0].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_0_" + i], onToggle: () => toggle("sg_0_" + i), accent: T.green })))),
                 React.createElement(SectionScore, { label: "Morning", total: 2 + MORNING_DRINK.steps.length + SUPPS[0].items.length, done: [checks.brush_0, checks.brush_1].filter(Boolean).length + MORNING_DRINK.steps.filter((_, i) => checks["morning_" + i]).length + SUPPS[0].items.filter((_, i) => checks["sg_0_" + i]).length, color: T.gold, T: T }),
                 todayGymDay !== "Rest" && (React.createElement(React.Fragment, null,
@@ -5075,22 +5081,22 @@ function JeetOS() {
                     React.createElement(Label, { c: T.green },
                         "Gym \u2014 ",
                         todayGymDay),
-                    React.createElement(Card, { title: "Pre Gym", icon: "\u2615", time: "Before workout", color: T.gold, steps: 1, done: checks.creatine ? 1 : 0 },
+                    React.createElement(Card, { title: "Pre Gym", icon: "\u2615", time: "Before workout", color: T.gold, steps: 1, done: checks.creatine ? 1 : 0, proofKey: "pregym", proof: cardProofs["pregym"], onCapture: captureCardProof },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
                             React.createElement(CheckItem, { label: "Creatine 5g", sub: "Strength, muscle, recovery", done: !!checks.creatine, onToggle: () => toggle("creatine"), accent: T.gold }))),
-                    React.createElement(Card, { title: todayGymDay + " Workout", icon: "\uD83C\uDFCB\uFE0F", time: "3 sets x 12-15 reps", color: T.green, steps: exercises.length, done: exercises.filter((_, i) => checks["ex_" + i]).length },
+                    React.createElement(Card, { title: todayGymDay + " Workout", icon: "\uD83C\uDFCB\uFE0F", time: "3 sets x 12-15 reps", color: T.green, steps: exercises.length, done: exercises.filter((_, i) => checks["ex_" + i]).length, proofKey: "workout", proof: cardProofs["workout"], onCapture: captureCardProof },
                         React.createElement("div", { style: { padding: "10px 12px" } },
                             exercises.map((ex, i) => (React.createElement(ExerciseSetCard, { key: i, ex: ex, exIdx: i, done: !!checks["ex_" + i], onToggle: () => toggle("ex_" + i), altShown: !!altEx["ex_" + i], onAltToggle: () => toggleAlt("ex_" + i), sets: gymSets["ex_" + i], onSetUpdate: sets => updateSets(i, sets), customName: customNames["ex_" + i] || null, onCustomName: name => updateCustomName(i, name) }))))),
-                    React.createElement(Card, { title: "Electrolytes", icon: "\uD83D\uDCA7", time: "During/after workout", color: "#C06848", steps: 1, done: checks.electrolytes ? 1 : 0 },
+                    React.createElement(Card, { title: "Electrolytes", icon: "\uD83D\uDCA7", time: "During/after workout", color: "#C06848", steps: 1, done: checks.electrolytes ? 1 : 0, proofKey: "electrolytes", proof: cardProofs["electrolytes"], onCapture: captureCardProof },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
                             React.createElement(CheckItem, { label: "Electrolytes", sub: "Hydration, performance", done: !!checks.electrolytes, onToggle: () => toggle("electrolytes"), accent: "#C06848" }))),
-                    React.createElement(Card, { title: "Post Gym Cardio", icon: "\uD83D\uDEB6", time: "After all exercises", color: "#4A9090", steps: 1, done: checks.cardio ? 1 : 0 },
+                    React.createElement(Card, { title: "Post Gym Cardio", icon: "\uD83D\uDEB6", time: "After all exercises", color: "#4A9090", steps: 1, done: checks.cardio ? 1 : 0, proofKey: "postgym_cardio", proof: cardProofs["postgym_cardio"], onCapture: captureCardProof },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
                             React.createElement(CheckItem, { label: "30 min Incline Walk", sub: "Incline 10 \u2014 Speed 4.5", done: !!checks.cardio, onToggle: () => toggle("cardio"), accent: "#4A9090" }))),
-                    React.createElement(Card, { title: "Post Gym", icon: "\u2728", time: "Within 2 min of home", color: "#B06ECC", steps: 1, done: checks.glowjuice ? 1 : 0 },
+                    React.createElement(Card, { title: "Post Gym", icon: "\u2728", time: "Within 2 min of home", color: "#B06ECC", steps: 1, done: checks.glowjuice ? 1 : 0, proofKey: "postgym", proof: cardProofs["postgym"], onCapture: captureCardProof },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
                             React.createElement(CheckItem, { label: "Glow Juice + Badam/Walnuts", sub: "Anaar + Gajar + Beetroot + Tomato + Cucumber + Papaya + Amla + Aloe + Adrak + Pudina + Jeera + Nimbu, then 4-5 badam or 2 walnuts", done: !!checks.glowjuice, onToggle: () => toggle("glowjuice"), accent: "#B06ECC" }))),
-                    React.createElement(Card, { title: "Post Gym Bath", icon: "\uD83D\uDEBF", time: "After glow juice and badam", color: "#4A9090", steps: viewDay === "Thursday" ? 7 : viewDay === "Sunday" ? 9 : 5, done: [checks.bath_rinse, checks.bath_body, checks.bath_face].filter(Boolean).length + (viewDay === "Thursday" ? [checks.hair_shampoo, checks.hair_conditioner, checks.hair_argan_thu, checks.hair_arata_thu].filter(Boolean).length : viewDay === "Sunday" ? [checks.hair_drymassage, checks.hair_mask, checks.hair_steam, checks.hair_coldrinse, checks.hair_shampoodove, checks.hair_argan].filter(Boolean).length : [checks.hair_shampoo_reg, checks.hair_cond_reg].filter(Boolean).length) },
+                    React.createElement(Card, { title: "Post Gym Bath", icon: "\uD83D\uDEBF", time: "After glow juice and badam", color: "#4A9090", steps: viewDay === "Thursday" ? 7 : viewDay === "Sunday" ? 9 : 5, done: [checks.bath_rinse, checks.bath_body, checks.bath_face].filter(Boolean).length + (viewDay === "Thursday" ? [checks.hair_shampoo, checks.hair_conditioner, checks.hair_argan_thu, checks.hair_arata_thu].filter(Boolean).length : viewDay === "Sunday" ? [checks.hair_drymassage, checks.hair_mask, checks.hair_steam, checks.hair_coldrinse, checks.hair_shampoodove, checks.hair_argan].filter(Boolean).length : [checks.hair_shampoo_reg, checks.hair_cond_reg].filter(Boolean).length), proofKey: "postgym_bath", proof: cardProofs["postgym_bath"], onCapture: captureCardProof },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
                             React.createElement("div", { style: { padding: "6px 16px 4px", borderBottom: "1px solid " + T.border } },
                                 React.createElement("div", { style: { fontSize: 8, color: "#4A9090", letterSpacing: ".1em", textTransform: "uppercase", fontFamily: "Inter,system-ui,sans-serif" } }, "Bath")),
@@ -5122,12 +5128,12 @@ function JeetOS() {
                                 React.createElement(CheckItem, { label: "Step 3 \u2014 Argan Oil (2-3 drops on ends)", sub: "Apply when 80% dry \u2014 halki nami pe", done: !!checks.hair_argan_reg, onToggle: () => toggle("hair_argan_reg"), accent: "#5B8DD9" }),
                                 React.createElement(CheckItem, { label: "Step 3 \u2014 Arata Styling Cream (coin size)", sub: "Right after argan oil. Set style.", done: !!checks.hair_arata_reg, onToggle: () => toggle("hair_arata_reg"), accent: "#5B8DD9" })))),
                     React.createElement(Label, { c: T.purple }, "Skincare AM"),
-                    React.createElement(Card, { title: "Morning Skincare", icon: "\u2728", time: "Post shower \u2014 daily", color: T.purple, steps: SKIN_AM.steps.length, done: SKIN_AM.steps.filter((_, i) => checks["skam_" + i]).length },
+                    React.createElement(Card, { title: "Morning Skincare", icon: "\u2728", time: "Post shower \u2014 daily", color: T.purple, steps: SKIN_AM.steps.length, done: SKIN_AM.steps.filter((_, i) => checks["skam_" + i]).length, proofKey: "skincare_am", proof: cardProofs["skincare_am"], onCapture: captureCardProof },
                         React.createElement("div", { style: { padding: "6px 0 4px" } }, SKIN_AM.steps.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.q + " — " + s.m + (s.w && s.w !== "0 min" ? " | Wait: " + s.w : ""), done: !!checks["skam_" + i], onToggle: () => toggle("skam_" + i), accent: T.purple })))),
                     React.createElement(SectionScore, { label: "Skincare AM", total: SKIN_AM.steps.length, done: SKIN_AM.steps.filter((_, i) => checks["skam_" + i]).length, color: T.purple, T: T }),
                     todayGymDay !== "Rest" && React.createElement(SectionScore, { label: "Gym — " + todayGymDay, total: exercises.length + 3, done: exercises.filter((_, i) => checks["ex_" + i]).length + (checks.creatine ? 1 : 0) + (checks.electrolytes ? 1 : 0) + (checks.cardio ? 1 : 0), color: T.green, T: T }),
                     React.createElement(Label, { c: "#C9A461" }, "Afternoon"),
-                    React.createElement(Card, { title: customLabels["diet_breakfast"] || "Breakfast \u2014 Seitan", icon: "\uD83C\uDF7D\uFE0F", time: "Post glow juice", color: "#C9A461", steps: 4, done: [checks.bf_0, checks.bf_1, checks.bf_2, checks.bf_3].filter(Boolean).length },
+                    React.createElement(Card, { title: customLabels["diet_breakfast"] || "Breakfast \u2014 Seitan", icon: "\uD83C\uDF7D\uFE0F", time: "Post glow juice", color: "#C9A461", steps: 4, done: [checks.bf_0, checks.bf_1, checks.bf_2, checks.bf_3].filter(Boolean).length, proofKey: "breakfast", proof: cardProofs["breakfast"], onCapture: captureCardProof },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
                             React.createElement("div", { style: { display: "flex", gap: 8, padding: "7px 16px", borderBottom: "1px solid " + T.border } },
                                 React.createElement("div", { style: { padding: "3px 9px", background: "rgba(74,122,90,.1)", borderRadius: 8, fontSize: 10, color: T.green, fontFamily: "Inter,system-ui,sans-serif" } }, "P: 38g"),
@@ -5136,11 +5142,11 @@ function JeetOS() {
                             React.createElement(CheckItem, { label: "Simmer in garlic water LOW flame 10 min \u2014 not boiling hard", done: !!checks.bf_1, onToggle: () => toggle("bf_1"), accent: "#C9A461" }),
                             React.createElement(CheckItem, { label: "Coat warm seitan in 30g hung curd + kashmiri mirch + chaat masala + kasuri methi", done: !!checks.bf_2, onToggle: () => toggle("bf_2"), accent: "#C9A461" }),
                             React.createElement(CheckItem, { label: "Dry sear on HOT pan 60sec per side \u2014 no oil", done: !!checks.bf_3, onToggle: () => toggle("bf_3"), accent: "#C9A461" }))),
-                    React.createElement(Card, { title: "Supplements", icon: "\uD83D\uDC8A", time: "With breakfast", color: T.green, steps: 3, done: [checks.sg_1_0, checks.sg_1_1, checks.sg_1_2].filter(Boolean).length },
+                    React.createElement(Card, { title: "Supplements", icon: "\uD83D\uDC8A", time: "With breakfast", color: T.green, steps: 3, done: [checks.sg_1_0, checks.sg_1_1, checks.sg_1_2].filter(Boolean).length, proofKey: "supps_1", proof: cardProofs["supps_1"], onCapture: captureCardProof },
                         React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[1].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_1_" + i], onToggle: () => toggle("sg_1_" + i), accent: T.green })))),
-                    React.createElement(Card, { title: "Focus Supplements 1 PM", icon: "\uD83E\uDDE0", time: "Brain and focus", color: "#5B8DD9", steps: 2, done: SUPPS[5].items.filter((_, i) => checks["sg_5_" + i]).length },
+                    React.createElement(Card, { title: "Focus Supplements 1 PM", icon: "\uD83E\uDDE0", time: "Brain and focus", color: "#5B8DD9", steps: 2, done: SUPPS[5].items.filter((_, i) => checks["sg_5_" + i]).length, proofKey: "supps_5", proof: cardProofs["supps_5"], onCapture: captureCardProof },
                         React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[5].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_5_" + i], onToggle: () => toggle("sg_5_" + i), accent: "#5B8DD9" })))),
-                    React.createElement(Card, { title: customLabels["diet_lunch"] || "Lunch \u2014 Paneer Paratha", icon: "\uD83C\uDF7D\uFE0F", time: "2:30 PM \u2014 3 hrs after breakfast", color: "#C9A461", steps: 4, done: [checks.lunch_0, checks.lunch_1, checks.lunch_2, checks.lunch_3].filter(Boolean).length },
+                    React.createElement(Card, { title: customLabels["diet_lunch"] || "Lunch \u2014 Paneer Paratha", icon: "\uD83C\uDF7D\uFE0F", time: "2:30 PM \u2014 3 hrs after breakfast", color: "#C9A461", steps: 4, done: [checks.lunch_0, checks.lunch_1, checks.lunch_2, checks.lunch_3].filter(Boolean).length, proofKey: "lunch", proof: cardProofs["lunch"], onCapture: captureCardProof },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
                             React.createElement("div", { style: { display: "flex", gap: 8, padding: "7px 16px", borderBottom: "1px solid " + T.border } },
                                 React.createElement("div", { style: { padding: "3px 9px", background: "rgba(74,122,90,.1)", borderRadius: 8, fontSize: 10, color: T.green, fontFamily: "Inter,system-ui,sans-serif" } }, "P: 42g")),
@@ -5148,9 +5154,9 @@ function JeetOS() {
                             React.createElement(CheckItem, { label: "Dough: 75g HP flour + ajwain + 30g hung curd + whey water \u2014 knead, rest 10 min", done: !!checks.lunch_1, onToggle: () => toggle("lunch_1"), accent: "#C9A461" }),
                             React.createElement(CheckItem, { label: "Stuff with spiced paneer crumbles, seal tightly, roll gently", done: !!checks.lunch_2, onToggle: () => toggle("lunch_2"), accent: "#C9A461" }),
                             React.createElement(CheckItem, { label: "Dry cook on blazing hot tawa \u2014 press edges, both sides charred gold", done: !!checks.lunch_3, onToggle: () => toggle("lunch_3"), accent: "#C9A461" }))),
-                    React.createElement(Card, { title: "Post Lunch Supplements", icon: "\uD83D\uDC8A", time: "After 2:30 PM lunch", color: "#C9A461", steps: 4, done: SUPPS[6].items.filter((_, i) => checks["sg_6_" + i]).length },
+                    React.createElement(Card, { title: "Post Lunch Supplements", icon: "\uD83D\uDC8A", time: "After 2:30 PM lunch", color: "#C9A461", steps: 4, done: SUPPS[6].items.filter((_, i) => checks["sg_6_" + i]).length, proofKey: "supps_6", proof: cardProofs["supps_6"], onCapture: captureCardProof },
                         React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[6].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_6_" + i], onToggle: () => toggle("sg_6_" + i), accent: "#C9A461" })))),
-                    React.createElement(Card, { title: "5:30 PM \u2014 Coffee + Protein Bar", icon: "\u2615", time: "Pre evening boost", color: "#C06848", steps: 3, done: [checks.eve_coffee, checks.eve_ltheanine, checks.eve_bar].filter(Boolean).length },
+                    React.createElement(Card, { title: "5:30 PM \u2014 Coffee + Protein Bar", icon: "\u2615", time: "Pre evening boost", color: "#C06848", steps: 3, done: [checks.eve_coffee, checks.eve_ltheanine, checks.eve_bar].filter(Boolean).length, proofKey: "coffee_bar", proof: cardProofs["coffee_bar"], onCapture: captureCardProof },
                         React.createElement("div", { style: { padding: "6px 0 4px" } },
                             React.createElement(CheckItem, { label: "Black Coffee", sub: "1 cup \u2014 focus and energy boost", done: !!checks.eve_coffee, onToggle: () => toggle("eve_coffee"), accent: "#C06848" }),
                             React.createElement(CheckItem, { label: "L-Theanine", sub: "Smooth focus, no jitter \u2014 take with coffee", done: !!checks.eve_ltheanine, onToggle: () => toggle("eve_ltheanine"), accent: "#C06848" }),
@@ -5161,7 +5167,7 @@ function JeetOS() {
                     React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, lineHeight: 1.7, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } }, "Muscle grows today. Focus on nutrition and sleep.")),
                 React.createElement(SectionScore, { label: "Afternoon", total: 8, done: [checks["bf_0"], checks["sg_1_0"], checks["sg_1_1"], checks["sg_1_2"], checks["sg_6_0"], checks["sg_6_1"], checks["sg_6_2"], checks["sg_6_3"]].filter(Boolean).length, color: "#C9A461", T: T }),
                 React.createElement(Label, { c: T.blue }, "Night"),
-                React.createElement(Card, { title: customLabels["diet_dinner"] || "Dinner \u2014 Soya Chunks", icon: "\uD83C\uDF7D\uFE0F", time: "Night", color: "#C9A461", steps: 4, done: [checks.dinner_0, checks.dinner_1, checks.dinner_2, checks.dinner_3].filter(Boolean).length },
+                React.createElement(Card, { title: customLabels["diet_dinner"] || "Dinner \u2014 Soya Chunks", icon: "\uD83C\uDF7D\uFE0F", time: "Night", color: "#C9A461", steps: 4, done: [checks.dinner_0, checks.dinner_1, checks.dinner_2, checks.dinner_3].filter(Boolean).length, proofKey: "dinner", proof: cardProofs["dinner"], onCapture: captureCardProof },
                     React.createElement("div", { style: { padding: "6px 0 4px" } },
                         React.createElement("div", { style: { display: "flex", gap: 8, padding: "7px 16px", borderBottom: "1px solid " + T.border } },
                             React.createElement("div", { style: { padding: "3px 9px", background: "rgba(47,158,92,.1)", borderRadius: 8, fontSize: 10, color: T.green, fontFamily: "Inter,system-ui,sans-serif" } }, "P: 32g"),
@@ -5170,18 +5176,18 @@ function JeetOS() {
                         React.createElement(CheckItem, { label: "Marinate: ginger-garlic + mirch + haldi + jeera + lemon + crushed soya powder \u2014 10 min", done: !!checks.dinner_1, onToggle: () => toggle("dinner_1"), accent: "#C9A461" }),
                         React.createElement(CheckItem, { label: "Sear full heat pan NO OIL until dark brown charred spots", done: !!checks.dinner_2, onToggle: () => toggle("dinner_2"), accent: "#C9A461" }),
                         React.createElement(CheckItem, { label: "Deglaze: 1 tbsp water when masala sticks, coat chunks", done: !!checks.dinner_3, onToggle: () => toggle("dinner_3"), accent: "#C9A461" }))),
-                React.createElement(Card, { title: "Night Bath", icon: "\uD83D\uDEBF", time: "After dinner", color: "#4A9090", steps: 3, done: [checks.nbath_0, checks.nbath_1, checks.nbath_2].filter(Boolean).length },
+                React.createElement(Card, { title: "Night Bath", icon: "\uD83D\uDEBF", time: "After dinner", color: "#4A9090", steps: 3, done: [checks.nbath_0, checks.nbath_1, checks.nbath_2].filter(Boolean).length, proofKey: "nightbath", proof: cardProofs["nightbath"], onCapture: captureCardProof },
                     React.createElement("div", { style: { padding: "6px 0 4px" } },
                         React.createElement(CheckItem, { label: "Warm shower \u2014 full body", sub: "Relaxes muscles, prepares for sleep", done: !!checks.nbath_0, onToggle: () => toggle("nbath_0"), accent: "#4A9090" }),
                         React.createElement(CheckItem, { label: "Body wash + underarms focus", sub: "Fresh before bedtime routine", done: !!checks.nbath_1, onToggle: () => toggle("nbath_1"), accent: "#4A9090" }),
                         React.createElement(CheckItem, { label: "Face wash \u2014 Cetaphil Oily Skin Cleanser", sub: "60s massage, dry completely before skincare", done: !!checks.nbath_2, onToggle: () => toggle("nbath_2"), accent: "#4A9090" }))),
-                skinPM && React.createElement(Card, { title: skinPM.focus, icon: "\uD83C\uDF19", time: "Night skincare", color: T.purple, steps: skinPM.steps.length, done: skinPM.steps.filter((_, i) => checks["skpm_" + i]).length },
+                skinPM && React.createElement(Card, { title: skinPM.focus, icon: "\uD83C\uDF19", time: "Night skincare", color: T.purple, steps: skinPM.steps.length, done: skinPM.steps.filter((_, i) => checks["skpm_" + i]).length, proofKey: "skincare_pm", proof: cardProofs["skincare_pm"], onCapture: captureCardProof },
                     React.createElement("div", { style: { padding: "6px 0 4px" } }, skinPM.steps.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: (s.q || "") + (s.m ? " — " + s.m : "") + (s.w ? " | Wait: " + s.w : ""), done: !!checks["skpm_" + i], onToggle: () => toggle("skpm_" + i), accent: T.purple })))),
-                hair && React.createElement(Card, { title: "Haircare — " + viewDay, icon: "\uD83D\uDC88", time: "Weekly routine", color: "#5B8DD9", steps: hair.steps.length, done: hair.steps.filter((_, i) => checks["hair_" + i]).length },
+                hair && React.createElement(Card, { title: "Haircare — " + viewDay, icon: "\uD83D\uDC88", time: "Weekly routine", color: "#5B8DD9", steps: hair.steps.length, done: hair.steps.filter((_, i) => checks["hair_" + i]).length, proofKey: "haircare", proof: cardProofs["haircare"], onCapture: captureCardProof },
                     React.createElement("div", { style: { padding: "6px 0 4px" } }, hair.steps.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: (s.q || "") + (s.m ? " — " + s.m : "") + (s.w ? " | Wait: " + s.w : ""), done: !!checks["hair_" + i], onToggle: () => toggle("hair_" + i), accent: "#5B8DD9" })))),
-                React.createElement(Card, { title: "Night Supplements 11 PM", icon: "\uD83D\uDC8A", time: "Before sleep", color: T.blue, steps: SUPPS[8].items.length, done: SUPPS[8].items.filter((_, i) => checks["sg_8_" + i]).length },
+                React.createElement(Card, { title: "Night Supplements 11 PM", icon: "\uD83D\uDC8A", time: "Before sleep", color: T.blue, steps: SUPPS[8].items.length, done: SUPPS[8].items.filter((_, i) => checks["sg_8_" + i]).length, proofKey: "supps_8", proof: cardProofs["supps_8"], onCapture: captureCardProof },
                     React.createElement("div", { style: { padding: "6px 0 4px" } }, SUPPS[8].items.map((s, i) => React.createElement(CheckItem, { key: i, label: s.n, sub: s.p, done: !!checks["sg_8_" + i], onToggle: () => toggle("sg_8_" + i), accent: T.blue })))),
-                alpha && React.createElement(Card, { title: "Alpha Drink", icon: "\uD83C\uDF19", time: alpha.time, color: T.blue, steps: alpha.steps.length, done: alpha.steps.filter((_, i) => checks["alpha_" + i]).length },
+                alpha && React.createElement(Card, { title: "Alpha Drink", icon: "\uD83C\uDF19", time: alpha.time, color: T.blue, steps: alpha.steps.length, done: alpha.steps.filter((_, i) => checks["alpha_" + i]).length, proofKey: "alpha_drink", proof: cardProofs["alpha_drink"], onCapture: captureCardProof },
                     React.createElement("div", { style: { padding: "6px 0 4px" } }, alpha.steps.map((s, i) => React.createElement(CheckItem, { key: i, label: s, done: !!checks["alpha_" + i], onToggle: () => toggle("alpha_" + i), accent: T.blue })))),
                 React.createElement("button", { onClick: saveDay, style: { width: "100%", padding: "15px", background: "linear-gradient(90deg,#4C6FE0 0%,#D4AF37 100%)", border: "none", borderRadius: 12, color: "#080B18", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "Inter,system-ui,sans-serif", letterSpacing: ".04em", textTransform: "uppercase", marginTop: 12, boxShadow: "0 4px 20px rgba(76,111,224,.3)" } }, (() => { const h = new Date().getHours(); return h < 12 ? "Lock In This Morning" : h < 17 ? "Lock In This Afternoon" : h < 21 ? "Lock In This Evening" : "End of Day — Lock In"; })())))),
         tab === "diet" && (React.createElement("div", { style: { paddingBottom: 80, animation: "josFadeIn .28s ease" } },
