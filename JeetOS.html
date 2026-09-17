@@ -1530,8 +1530,11 @@ function CheckItem({ label, sub, done, onToggle, accent }) {
     const ac = accent || T.green;
     const onKey = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } };
     return (React.createElement("div", { className: "jos-tap", onClick: onToggle, role: "checkbox", "aria-checked": !!done, tabIndex: 0, onKeyDown: onKey, style: { display: "flex", alignItems: "flex-start", gap: 14, padding: "13px 18px", borderBottom: "1px solid " + T.border, cursor: "pointer", background: done ? "rgba(47,158,92,.05)" : "transparent", transition: "background .2s" } },
-        React.createElement("div", { style: { width: 24, height: 24, borderRadius: 8, border: "2px solid " + (done ? ac : T.border2), background: done ? ac : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1, boxShadow: done ? "0 2px 8px " + ac + "55" : "none", transition: "all .2s" } }, done && React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 12 12" },
-            React.createElement("path", { d: "M2 6l3 3 5-5", stroke: "white", strokeWidth: "2.5", fill: "none", strokeLinecap: "round", strokeLinejoin: "round" }))),
+        React.createElement("div", { style: { width: 24, height: 24, borderRadius: 8, border: "2px solid " + (done ? ac : T.border2), background: done ? ac : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1, boxShadow: done ? "0 2px 8px " + ac + "55" : "none", transition: "all .2s" } },
+            done
+                ? React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 12 12" },
+                    React.createElement("path", { d: "M2 6l3 3 5-5", stroke: "white", strokeWidth: "2.5", fill: "none", strokeLinecap: "round", strokeLinejoin: "round" }))
+                : React.createElement("span", { style: { fontSize: 10, opacity: .55 } }, "📷")),
         React.createElement("div", { style: { flex: 1 } },
             React.createElement("div", { style: { fontSize: 13, color: done ? T.ivoryD : T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontWeight: done ? 300 : 400, textDecoration: done ? "line-through" : "none", lineHeight: 1.5, letterSpacing: ".01em" } }, label),
             sub && React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, marginTop: 3, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300, lineHeight: 1.5 } }, sub))));
@@ -4153,6 +4156,8 @@ function JeetOS() {
     const [statsTab, setStatsTab] = React.useState("overview"); // overview | trends | compare | log
     const [statsPeriod, setStatsPeriod] = React.useState("week"); // day | week | month
     const [notifPermission, setNotifPermission] = React.useState(typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported");
+    const [pendingProofKey, setPendingProofKey] = React.useState(null);
+    const proofInputRef = React.useRef(null);
     const dateKey = new Date().toDateString();
     React.useEffect(() => {
         const sc = store.get("jos_checks_" + dateKey);
@@ -4230,8 +4235,63 @@ function JeetOS() {
         setGymSets(up);
         store.set("jos_sets_" + dateKey, up);
     };
-    const toggle = k => { const up = Object.assign({}, checks, { [k]: !checks[k] }); setChecks(up); store.set("jos_checks_" + dateKey, up); if (!checks[k])
-        showToast("Done!"); };
+    const getProofStore = dk => { try { const v = localStorage.getItem("jos_proof_" + dk); return v ? JSON.parse(v) : {}; } catch (_e) { return {}; } };
+    const setProofStore = (dk, obj) => { try { localStorage.setItem("jos_proof_" + dk, JSON.stringify(obj)); return true; } catch (_e) { return false; } };
+    const pruneOldProofs = () => { try {
+        const cutoff = Date.now() - 10 * 86400000;
+        Object.keys(localStorage).filter(k => k.startsWith("jos_proof_")).forEach(k => {
+            const t = new Date(k.slice("jos_proof_".length)).getTime();
+            if (!isNaN(t) && t < cutoff) localStorage.removeItem(k);
+        });
+    } catch (_e) { } };
+    const clearProof = k => { const up = Object.assign({}, getProofStore(dateKey)); delete up[k]; setProofStore(dateKey, up); };
+    const savePhotoAndComplete = (k, dataUrl) => {
+        const up = Object.assign({}, getProofStore(dateKey), { [k]: dataUrl });
+        if (!setProofStore(dateKey, up)) {
+            pruneOldProofs();
+            if (!setProofStore(dateKey, up)) { showToast("Storage full — couldn't save photo"); return; }
+        }
+        const upc = Object.assign({}, checks, { [k]: true });
+        setChecks(upc);
+        store.set("jos_checks_" + dateKey, upc);
+        showToast("Proof saved ✓");
+    };
+    const handleProofFile = e => {
+        const file = e.target.files && e.target.files[0];
+        const key = pendingProofKey;
+        setPendingProofKey(null);
+        if (!file || !key) return;
+        const reader = new FileReader();
+        reader.onload = ev => {
+            const img = new Image();
+            img.onload = () => {
+                const maxDim = 360;
+                let w = img.width, h = img.height;
+                if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
+                else if (h >= w && h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
+                const canvas = document.createElement("canvas");
+                canvas.width = w; canvas.height = h;
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(img, 0, 0, w, h);
+                savePhotoAndComplete(key, canvas.toDataURL("image/jpeg", 0.55));
+            };
+            img.onerror = () => showToast("Couldn't read photo — try again");
+            img.src = ev.target.result;
+        };
+        reader.onerror = () => showToast("Couldn't read photo — try again");
+        reader.readAsDataURL(file);
+    };
+    const toggle = k => {
+        if (!checks[k]) {
+            setPendingProofKey(k);
+            if (proofInputRef.current) { proofInputRef.current.value = ""; proofInputRef.current.click(); }
+            return;
+        }
+        const up = Object.assign({}, checks, { [k]: false });
+        setChecks(up);
+        store.set("jos_checks_" + dateKey, up);
+        clearProof(k);
+    };
     const toggleAlt = k => { const up = Object.assign({}, altEx, { [k]: !altEx[k] }); setAltEx(up); store.set("jos_alt", up); };
     const saveLog = async (l) => { setL(l); store.set("jos_log", l); syncToSupabase(new Date().toDateString(), l); };
     const saveMealEdit = (key, field, val) => {
@@ -4784,6 +4844,7 @@ function JeetOS() {
             )
           )
         ),
+        React.createElement("input", { ref: proofInputRef, type: "file", accept: "image/*", capture: "environment", style: { display: "none" }, onChange: handleProofFile }),
         toast && React.createElement("div", { style: { position: "fixed", bottom: 90, left: "50%", transform: "translateX(-50%)", background: T.card2, border: "1px solid rgba(74,122,90,.4)", borderRadius: 20, padding: "8px 18px", fontSize: 11, color: T.green, zIndex: 500, whiteSpace: "nowrap", fontFamily: "Inter,system-ui,sans-serif", boxShadow: "0 6px 20px rgba(0,0,0,.35)", animation: "josToastIn .25s ease" } }, "✓ " + toast),
         milestone && React.createElement("div", { style: { position: "fixed", inset: 0, background: "rgba(0,0,0,.9)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 28 }, onClick: () => setMilestone(null) },
             React.createElement("div", { style: { background: "linear-gradient(135deg,#1E1A10,#2A2210)", border: "1px solid rgba(201,162,74,.4)", borderRadius: 20, padding: 28, textAlign: "center", maxWidth: 280, width: "100%" } },
@@ -4897,6 +4958,10 @@ function JeetOS() {
                     React.createElement("div", { style: { fontSize: 9, color: "rgba(220,228,255,.5)", fontFamily: "Inter,system-ui,sans-serif", letterSpacing: ".08em", textTransform: "uppercase" } }, "Form Rating"),
                     React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 14, color: T.gold, fontWeight: 600 } }, sc + "/100"),
                     React.createElement("div", { style: { flex: 1, height: 1, background: "linear-gradient(90deg,rgba(91,141,239,.7),transparent)" } }))),
+            React.createElement("div", { style: { padding: "0 20px", marginBottom: 14 } },
+                React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, background: "rgba(91,141,239,.08)", border: "1px solid rgba(91,141,239,.22)", borderRadius: 12, padding: "10px 12px" } },
+                    React.createElement("span", { style: { fontSize: 14 } }, "📷"),
+                    React.createElement("span", { style: { fontSize: 10, color: "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, lineHeight: 1.5 } }, "Every task now needs a quick photo as proof — tap to check off, camera opens automatically."))),
             disciplineCard && React.createElement("div", { style: { padding: "0 20px", marginBottom: 14 } },
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, background: disciplineCard.type === "red" ? "linear-gradient(135deg,#2A0E0E,#1A0808)" : "linear-gradient(135deg,#2A2410,#1A1608)", border: "1px solid " + (disciplineCard.type === "red" ? "rgba(220,50,50,.4)" : "rgba(220,180,50,.35)"), borderRadius: 14, padding: "14px 16px" } },
                     React.createElement("div", { style: { width: 30, height: 40, borderRadius: 4, flexShrink: 0, background: disciplineCard.type === "red" ? "linear-gradient(160deg,#E23B3B,#A82424)" : "linear-gradient(160deg,#F0D04A,#C8A420)", boxShadow: "0 2px 8px " + (disciplineCard.type === "red" ? "rgba(226,59,59,.4)" : "rgba(240,208,74,.4)") } }),
