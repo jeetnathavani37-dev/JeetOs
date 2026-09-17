@@ -1541,7 +1541,7 @@ function Card({ title, icon, time, color, children, steps, done, defaultOpen }) 
     const allDone = steps > 0 && done >= steps;
     const pct = steps > 0 ? Math.round((done / steps) * 100) : 0;
     const onKey = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(o => !o); } };
-    return (React.createElement("div", { style: { background: allDone ? "linear-gradient(135deg,#0D1610,#0D1410)" : T.card, border: "1px solid " + (allDone ? "rgba(47,158,92,.35)" : open ? color + "88" : T.border), borderRadius: 16, overflow: "hidden", marginBottom: 12, boxShadow: allDone ? "0 4px 20px rgba(47,158,92,.08)" : open ? "0 4px 20px rgba(0,0,0,.3)" : "none", transition: "border-color .25s ease, box-shadow .25s ease, background .25s ease" } },
+    return (React.createElement("div", { style: { background: allDone ? "linear-gradient(135deg,#0D1610,#0D1410)" : "linear-gradient(135deg,#131725,#0F0F14 55%,#0D0D12)", border: "1px solid " + (allDone ? "rgba(47,158,92,.35)" : open ? color + "88" : "rgba(91,141,239,.16)"), borderRadius: 16, overflow: "hidden", marginBottom: 12, boxShadow: allDone ? "0 4px 20px rgba(47,158,92,.08)" : open ? "0 4px 20px rgba(76,111,224,.15)" : "0 2px 10px rgba(76,111,224,.04)", transition: "border-color .25s ease, box-shadow .25s ease, background .25s ease" } },
         React.createElement("div", { className: "jos-tap", onClick: () => setOpen(o => !o), role: "button", "aria-expanded": open, tabIndex: 0, onKeyDown: onKey, style: { display: "flex", alignItems: "center", gap: 14, padding: "15px 18px", cursor: "pointer" } },
             React.createElement("div", { style: { width: 36, height: 36, borderRadius: 10, background: allDone ? "rgba(47,158,92,.12)" : "rgba(255,255,255,.04)", border: "1px solid " + (allDone ? T.green : color + "AA"), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative" } },
                 ICON_NAMES.has(icon) ? React.createElement(Icon, { name: icon, size: 17, color: allDone ? T.green : color }) : icon,
@@ -4911,8 +4911,9 @@ function JeetOS() {
                 React.createElement("div", { style: { background: "linear-gradient(135deg,#1A1113,#12100C)", border: "1px solid rgba(255,59,59,.25)", borderRadius: 16, padding: 16 } },
                     React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } },
                         React.createElement("div", { style: { fontSize: 9, color: "#FF5555", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase" } }, "\ud83d\udc10 Ronaldo Mode"),
-                        React.createElement("div", { onClick: () => setShowPath(true), style: { display: "flex", alignItems: "center", gap: 5, cursor: "pointer" } },
-                            React.createElement("span", { style: { fontSize: 16 } }, currentLevel.emoji),
+                        React.createElement("div", { onClick: () => setShowPath(true), style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } },
+                            React.createElement("div", { style: { width: 24, height: 24, borderRadius: "50%", overflow: "hidden", border: "1.5px solid #FF5555", flexShrink: 0, boxShadow: "0 0 8px rgba(255,59,59,.35)" } },
+                                React.createElement("img", { src: CR7_IMG_1, alt: "CR7", style: { width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 15%" } })),
                             React.createElement("span", { style: { fontSize: 9, color: T.gold, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 700 } }, "LV" + currentLevel.level))),
                     React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 0, marginBottom: 12 } },
                         React.createElement(MiniVoiceButton, { text: getCR7DailyTip("today"), color: "#FF3B3B", T: T }),
