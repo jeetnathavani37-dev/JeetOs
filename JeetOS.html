@@ -1006,6 +1006,33 @@ YOUR APPROACH:
 - Max 4-5 sentences, zero fluff`
     },
     {
+        id: "mind", name: "Mind", icon: "🧠", color: "#8E7CC3",
+        sys: `You are Dr. Meher — Jeet's personal psychologist inside JeetOS. You have been talking with him for months, you remember what he's told you, and you speak and sign as Dr. Meher every time — never "the AI" or "a chatbot".
+
+JEET'S CONTEXT:
+- Age 20, Guwahati. Solo founder of Luxella (luxury sourcing for HNI clients) + BBA Finance student at NMIMS
+- Tracks gym, skincare, nutrition, sleep daily in JeetOS — he has the systems; his real struggle is consistency, follow-through and mental load
+- Known stress sources: Luxella business pressure (shipments, clients, cash flow), exam weeks, late nights on the phone, comparing himself to his "2031" vision
+- Works from his phone only
+
+YOUR APPROACH:
+- Warm, curious, non-judgmental — like a wise friend who happens to be a psychologist. Reply in Hinglish if he writes Hinglish, English if he writes English
+- Listen first. Reflect back what you heard in one line before giving any advice, so he feels understood
+- Every missed task is a symptom, not the problem — look for the root cause (stress, overwhelm, avoidance, fatigue, low mood, perfectionism) before suggesting fixes
+- Use evidence-based tools and name them simply: CBT thought reframing, box breathing (4-4-4-4), 5-4-3-2-1 grounding, journaling prompts, behavioural activation (2-minute starts), worry-time, self-compassion
+- Offer exactly ONE small, concrete, testable step at a time — not a list of ten things
+- Connect mind with body using his LIVE DATA below: poor sleep, skipped gym, low mood/energy scores all affect each other — mention them gently, never as blame
+- If he mentions a fix you suggested before and says it didn't work, never repeat it — explore why and offer a different one
+- Celebrate real wins specifically (streaks, PRs, a hard day handled well)
+
+HARD RULES:
+- NEVER use guilt, shame, disappointment or emotional pressure to make him comply. Accountability comes from honesty and remembering, not from making him feel bad
+- You are a supportive, self-help guide — not a replacement for a licensed therapist, psychiatrist, or real friends and family. If something sounds clinical (weeks of low mood, panic attacks, not eating/sleeping, trauma), gently encourage seeing a real professional
+- SAFETY: if he mentions self-harm, suicide, wanting to disappear, or feeling unsafe — stop coaching. Respond with warmth, take it seriously, ask if he is safe right now, and share India helplines: Tele-MANAS 14416 (24x7, free) or KIRAN 1800-599-0019, and emergency 112. Encourage him to reach out to someone he trusts right now
+- Don't diagnose. Don't prescribe medication
+- Keep replies short and human: 3-5 sentences, end with one gentle question or one small step`
+    },
+    {
         id: "ronaldo", name: "Ronaldo", icon: "🐐", color: "#FF3B3B",
         sys: `You are speaking as Cristiano — a coaching persona built entirely on Cristiano Ronaldo's real, well-documented mentality, work ethic, and habits. You are Jeet's toughest mentor, talking to him like Ronaldo would talk to himself. You are not literally CR7, but you never break character or mention you are an AI or a persona — you speak in first person as him, direct and self-assured.
 
@@ -1621,9 +1648,9 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
     const [cTab, setCTab] = React.useState("guide");
     const [pendingAsk, setPendingAsk] = React.useState(null);
     const coach = COACHES.find(c => c.id === id) || {};
-    const tips = { skin: ["SPF every morning. #1 anti-aging step.", "Niacinamide and Vit C not at same time. One AM one PM.", "Moisturizer on damp skin — locks hydration.", "Retinol at night only — start 2x per week.", "If skin tight after cleanser it is too harsh."], hair: ["Wash 2-3x per week max — overwashing strips oils.", "Condition ends only, never scalp.", "Pat dry, never rub — use microfiber towel.", "Oil on lengths only, not scalp — 30 min before wash.", "Hairstyle should match face shape."], fitness: ["Progressive overload — lift more every week.", "Protein 2g per kg bodyweight every day.", "Rest day is not lazy — muscle grows during rest.", "Sleep 7-8h is part of training. Non-negotiable.", "Compounds first — squat deadlift bench row."], nutrition: ["One glass water first thing in morning.", "Protein in every meal — full and builds muscle.", "Never skip breakfast on training mornings.", "Caffeine after 2pm ruins sleep even if fine.", "Carbs around workout — before energy after recovery."], sleep: ["Same bedtime every night including weekends.", "No screens 1 hour before sleep — melatonin blocked.", "Cool dark room — 18-20 degrees for best sleep.", "Caffeine half-life 6 hours. Last by 2-3pm.", "Cannot sleep? Get up and do something calm."], style: ["Fit beats price — well-fitted cheap wins.", "Capsule: 3 tees 2 jeans 1 chino 2 shirts 2 shoes.", "Shoes and belt same tone — always.", "One statement piece max per outfit.", "Grooming completes the outfit."], grooming: ["Bath every day — non-negotiable.", "Beard oil after shower on slightly damp beard.", "Neckline trim separates sharp from sloppy.", "Fresh clothes daily.", "Oral: 2 min brush tongue scraper floss at night."], ronaldo: ["Train like it's session one, not session five thousand — intensity doesn't get to fade.", "Extra reps after the set ends is where the gap between good and great gets made.", "Discipline in food is discipline everywhere else — protect it even on the hard days.", "Protect your sleep like it's part of training, because it is.", "Review your own day harder than anyone else would — that's how standards rise."] };
+    const tips = { mind: ["Name the feeling — \"I feel anxious\" calms the brain more than fighting it.", "Box breathing: in 4, hold 4, out 4, hold 4. Repeat 4 rounds when stressed.", "5-4-3-2-1 grounding: 5 things you see, 4 hear, 3 touch, 2 smell, 1 taste.", "Stuck on a task? Do just 2 minutes. Starting is the hardest part.", "Brain dump at night — write every worry on paper so it stops looping in bed.", "A missed day is data, not failure. Ask why, not what's wrong with me.", "Talking to a real friend or therapist is strength, not weakness."], skin: ["SPF every morning. #1 anti-aging step.", "Niacinamide and Vit C not at same time. One AM one PM.", "Moisturizer on damp skin — locks hydration.", "Retinol at night only — start 2x per week.", "If skin tight after cleanser it is too harsh."], hair: ["Wash 2-3x per week max — overwashing strips oils.", "Condition ends only, never scalp.", "Pat dry, never rub — use microfiber towel.", "Oil on lengths only, not scalp — 30 min before wash.", "Hairstyle should match face shape."], fitness: ["Progressive overload — lift more every week.", "Protein 2g per kg bodyweight every day.", "Rest day is not lazy — muscle grows during rest.", "Sleep 7-8h is part of training. Non-negotiable.", "Compounds first — squat deadlift bench row."], nutrition: ["One glass water first thing in morning.", "Protein in every meal — full and builds muscle.", "Never skip breakfast on training mornings.", "Caffeine after 2pm ruins sleep even if fine.", "Carbs around workout — before energy after recovery."], sleep: ["Same bedtime every night including weekends.", "No screens 1 hour before sleep — melatonin blocked.", "Cool dark room — 18-20 degrees for best sleep.", "Caffeine half-life 6 hours. Last by 2-3pm.", "Cannot sleep? Get up and do something calm."], style: ["Fit beats price — well-fitted cheap wins.", "Capsule: 3 tees 2 jeans 1 chino 2 shirts 2 shoes.", "Shoes and belt same tone — always.", "One statement piece max per outfit.", "Grooming completes the outfit."], grooming: ["Bath every day — non-negotiable.", "Beard oil after shower on slightly damp beard.", "Neckline trim separates sharp from sloppy.", "Fresh clothes daily.", "Oral: 2 min brush tongue scraper floss at night."], ronaldo: ["Train like it's session one, not session five thousand — intensity doesn't get to fade.", "Extra reps after the set ends is where the gap between good and great gets made.", "Discipline in food is discipline everywhere else — protect it even on the hard days.", "Protect your sleep like it's part of training, because it is.", "Review your own day harder than anyone else would — that's how standards rise."] };
     const coachTips = tips[id] || [];
-    const quickAsks = { skin: ["Rate my routine", "Any ingredient conflicts?", "What active to add next?"], hair: ["Should I wash today?", "Oiling check", "Best style for face shape"], fitness: ["Design today workout", "Am I recovered enough?", "How to break plateau?"], nutrition: ["Did I hit protein today?", "Analyze my diet", "What to eat next?"], sleep: ["Why am I tired?", "Optimize tonight", "Fix sleep debt"], style: ["What to wear today?", "Wardrobe gaps?", "Rate my style"], grooming: ["Overdue for trim?", "Rate grooming", "Product to add?"], ronaldo: ["Rate my day like CR7 would", "Give me today's discipline tip", "Motivate me right now"] };
+    const quickAsks = { mind: ["I'm feeling stressed", "I can't focus today", "Why do I keep skipping tasks?", "Help me calm down right now"], skin: ["Rate my routine", "Any ingredient conflicts?", "What active to add next?"], hair: ["Should I wash today?", "Oiling check", "Best style for face shape"], fitness: ["Design today workout", "Am I recovered enough?", "How to break plateau?"], nutrition: ["Did I hit protein today?", "Analyze my diet", "What to eat next?"], sleep: ["Why am I tired?", "Optimize tonight", "Fix sleep debt"], style: ["What to wear today?", "Wardrobe gaps?", "Rate my style"], grooming: ["Overdue for trim?", "Rate grooming", "Product to add?"], ronaldo: ["Rate my day like CR7 would", "Give me today's discipline tip", "Motivate me right now"] };
     return (React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", height: "100vh", background: T.ink, fontFamily: "Inter,system-ui,sans-serif", display: "flex", flexDirection: "column", overflow: "hidden" } },
         React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "16px 20px 12px", flexShrink: 0, borderBottom: "1px solid " + T.border } },
             React.createElement("button", { onClick: onBack, style: { width: 34, height: 34, borderRadius: "50%", border: "1px solid " + T.border2, background: T.card, color: T.ivory, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 } }, "\u2190"),
@@ -1639,7 +1666,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
             cTab === "guide" && (React.createElement("div", { style: { padding: "16px 20px" } },
                 React.createElement("div", { style: { background: "linear-gradient(135deg,#1A1713,#1C1A14)", border: "1px solid rgba(201,162,74,.2)", borderRadius: 12, padding: 14, marginBottom: 14 } },
                     React.createElement("div", { style: { fontSize: 8, letterSpacing: ".18em", textTransform: "uppercase", color: coach.color, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, marginBottom: 8 } }, "Today Status"),
-                    React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, fontWeight: 300, lineHeight: 1.7, fontFamily: "Inter,system-ui,sans-serif" } }, id === "skin" ? L.skincareDone ? "Skin routine done today." : "Skin routine pending. Do AM now — cleanser to SPF." : id === "fitness" ? L.gymDone ? "Session logged. Recovery starts now." : gymDay === "Rest" ? "Rest day. Focus on protein and sleep." : "Not trained yet. Best window 4-9pm." : id === "nutrition" ? "Water: " + L.water + " glasses. Target 170g protein. Breakfast 38g + Lunch 42g + Dinner 32g = 112g base." : id === "sleep" ? L.sleepHours >= 7 ? "Good sleep. Body recovered well." : "Short on sleep. Prioritize tonight — aim 8 hours." : id === "ronaldo" ? (L.gymDone ? "Trained today — that's the standard, not the exception." : "Not trained yet today. I don't wait for the mood to be right.") : "Ask me anything about your " + coach.name.toLowerCase() + " routine.")),
+                    React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, fontWeight: 300, lineHeight: 1.7, fontFamily: "Inter,system-ui,sans-serif" } }, id === "skin" ? L.skincareDone ? "Skin routine done today." : "Skin routine pending. Do AM now — cleanser to SPF." : id === "fitness" ? L.gymDone ? "Session logged. Recovery starts now." : gymDay === "Rest" ? "Rest day. Focus on protein and sleep." : "Not trained yet. Best window 4-9pm." : id === "nutrition" ? "Water: " + L.water + " glasses. Target 170g protein. Breakfast 38g + Lunch 42g + Dinner 32g = 112g base." : id === "sleep" ? L.sleepHours >= 7 ? "Good sleep. Body recovered well." : "Short on sleep. Prioritize tonight — aim 8 hours." : id === "mind" ? ((L.mood || 0) === 0 ? "Mood not logged yet today. Kaisa feel ho raha hai? Tell Dr. Meher — no judgment." : (L.mood || 0) <= 2 ? "Mood " + L.mood + "/5 today. Rough day? Talk it out — one small step at a time." : "Mood " + L.mood + "/5, energy " + (L.energy || 0) + "/5. Good time to reflect on what's working.") : id === "ronaldo" ? (L.gymDone ? "Trained today — that's the standard, not the exception." : "Not trained yet today. I don't wait for the mood to be right.") : "Ask me anything about your " + coach.name.toLowerCase() + " routine.")),
                 React.createElement("div", { style: { fontSize: 8, letterSpacing: ".18em", textTransform: "uppercase", color: coach.color, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, marginBottom: 8 } }, "Quick Asks"),
                 React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7 } }, (quickAsks[id] || []).map(p => (React.createElement("button", { key: p, onClick: () => { setCTab("ask"); setPendingAsk(p); }, style: { padding: "10px 14px", background: T.card, border: "1px solid " + T.border, borderRadius: 10, color: T.ivory, fontSize: 11, cursor: "pointer", textAlign: "left", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300, display: "flex", alignItems: "center", justifyContent: "space-between" } },
                     p,
@@ -3644,6 +3671,28 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
             ]);
         }
         // ── RONALDO COACH ──────────────────────────────────────
+        // ── MIND (DR. MEHER) ────────────────────────────────────
+        if (coachId === "mind") {
+            if (m.match(/suicid|kill myself|end my life|self.?harm|hurt myself|marna|mar jaun|jeena nahi|disappear forever|no reason to live/))
+                return "Jeet, I'm really glad you told me this — please don't sit with it alone. Are you safe right now? Please call Tele-MANAS at 14416 (free, 24x7) or KIRAN at 1800-599-0019, or 112 if it's an emergency. And message or call one person you trust right now — a friend, family, anyone. You matter, and this feeling can get better with real support.";
+            if (m.match(/hi|hello|hey|what.?s up|wassup|kaisa|kaise/))
+                return pick([
+                    `Hey Jeet, Dr. Meher here. ${mood && mood <= 2 ? "Mood log says " + mood + "/5 today — kya chal raha hai?" : "Kaisa chal raha hai aaj?"} Jo bhi mann mein hai, bolo.`,
+                    `Jeet! ${sleep && sleep < 6 ? "Sirf " + sleep + "h neend hui — thakaan mood ko bhi heavy kar deti hai." : "Good to hear from you."} What's on your mind today?`
+                ]);
+            if (m.match(/stress|anxi|tension|overwhelm|pressure|panic|nervous/))
+                return `Sounds like a lot is sitting on you right now. Try this first: box breathing — in 4 sec, hold 4, out 4, hold 4, four rounds. Then write down the ONE thing stressing you most. ${sleep && sleep < 6.5 ? "Also, " + sleep + "h sleep makes everything feel heavier — your brain's alarm system is more reactive when tired." : ""} What's the biggest thing on that list?`;
+            if (m.match(/focus|distract|concentrat|procrastinat|phone/))
+                return `Focus usually breaks because the task feels too big or unclear. Pick the smallest next action and do it for just 2 minutes — phone in another room. Starting is the hardest part; momentum does the rest. Which task are you avoiding right now?`;
+            if (m.match(/skip|miss|lazy|consisten|discipline|motivat/))
+                return `A missed task is a symptom, not a character flaw. Usually it's one of: too tired, too overwhelmed, or the task feels unpleasant to start. ${gymDays7 < 4 ? "You've trained " + gymDays7 + "/7 days this week — " : ""}Let's find the real reason before fixing it. When you skipped, what were you feeling just before?`;
+            if (m.match(/sad|low|down|depress|lonely|alone|empty|cry/))
+                return `I'm sorry it feels heavy right now — thanks for telling me. Small things help: step outside for 10 minutes, eat something, message one friend. If this low feeling has lasted 2+ weeks, please talk to a real therapist too — that's strength, not weakness. What's been weighing on you most?`;
+            if (m.match(/calm|relax|breath|sleep|can.?t sleep/))
+                return `Let's slow your body down first: 5-4-3-2-1 — name 5 things you see, 4 you hear, 3 you can touch, 2 you smell, 1 you taste. Then 4 slow breaths with a longer exhale than inhale. Your mind follows your body. How do you feel after?`;
+            if (m.match(/angry|frustrat|irritat|gussa/))
+                return `Anger is usually protecting something — a boundary, an expectation, or tiredness. Before reacting, give it 10 minutes and a short walk. Then ask: what did I actually need in that moment? What triggered it?`;
+        }
         if (coachId === "ronaldo") {
             if (m.match(/hi|hello|hey|what.?s up|wassup/))
                 return pick([
@@ -3672,6 +3721,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
             sleep: `Sleep: ${sleep}h last night, ${avgSl}h weekly avg. Target 7.5h. ${sleep >= 7 ? "Good recovery." : "Below target — let's fix it."} What's your sleep question?`,
             style: `Style: quiet luxury, minimal, Dubai-ready. Outfit, shopping, or color question? Give me context.`,
             grooming: `Grooming: beard, hair, nails, fragrance, or oral hygiene? What needs attention?`,
+            mind: `Dr. Meher here. Mood ${mood}/5, energy ${energy}/5, sleep ${sleep}h. Stress, focus, motivation, or just need to talk? Jo bhi hai, bolo — no judgment.`,
             ronaldo: `${gymDone ? "Trained today — that's the standard, not the exception." : "Not trained yet — I don't wait for motivation, I move first, feeling follows."} Sleep ${sleep}h, protein ${protein}g. Do you want a push, a plan, or a reality check?`,
         };
         return fallbacks[coachId] || `Tell me more specifically what you need and I'll give you a precise answer.`;
@@ -3868,6 +3918,11 @@ function CoachAvatar({ coachId, color, size }) {
             React.createElement("path", { d: "M24 20 L32 26 L40 20 L40 16 L24 16Z", fill: "rgba(255,255,255,.25)" }),
             React.createElement("path", { d: "M28 26 L32 50 L36 26", fill: "none", stroke: "rgba(255,255,255,.3)", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }),
             React.createElement("circle", { cx: "32", cy: "32", r: "2", fill: "rgba(255,255,255,.5)" }))),
+        mind: (React.createElement(React.Fragment, null,
+            React.createElement("circle", { cx: "32", cy: "32", r: "30", fill: "url(#" + gid + ")" }),
+            React.createElement("path", { d: "M32 18c-5 0-9 3.5-9 8 0 2 .8 3.6 2 4.8-.8 1-1.2 2.2-1.2 3.6 0 3.4 2.8 6 6.2 6.2V46h4V40.6c3.4-.2 6.2-2.8 6.2-6.2 0-1.4-.4-2.6-1.2-3.6 1.2-1.2 2-2.8 2-4.8 0-4.5-4-8-9-8Z", fill: "rgba(255,255,255,.2)" }),
+            React.createElement("path", { d: "M32 20v18", stroke: "rgba(255,255,255,.4)", strokeWidth: "1.5", strokeLinecap: "round" }),
+            React.createElement("circle", { cx: "32", cy: "28", r: "2.5", fill: "rgba(255,255,255,.55)" }))),
         grooming: (React.createElement(React.Fragment, null,
             React.createElement("circle", { cx: "32", cy: "32", r: "30", fill: "url(#" + gid + ")" }),
             React.createElement("rect", { x: "22", y: "18", width: "4", height: "28", rx: "2", fill: "rgba(255,255,255,.3)", transform: "rotate(20 24 32)" }),
