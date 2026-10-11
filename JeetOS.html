@@ -4173,6 +4173,68 @@ function TabHeader({ icon, title, subtitle, color, gradient, T }) {
 
 
 
+// ── FORM CARD: today's form score with grade, category breakdown and next moves ──
+const FORM_CATS = [
+    { k: "sleep", l: "Sleep", i: "🌙", c: "#5B8DEF" },
+    { k: "gym", l: "Gym", i: "🏋️", c: "#2F9E5C" },
+    { k: "diet", l: "Diet", i: "🥗", c: "#C9A461" },
+    { k: "care", l: "Care", i: "✨", c: "#B06ECC" },
+    { k: "drinks", l: "Water", i: "💧", c: "#4AA3C9" },
+    { k: "supps", l: "Supps", i: "💊", c: "#4A9090" },
+];
+function formGrade(sc) {
+    if (sc >= 95) return { name: "Ballon d'Or", emoji: "🏆", c: "#D4AF37" };
+    if (sc >= 85) return { name: "World Class", emoji: "⭐", c: "#E8C766" };
+    if (sc >= 70) return { name: "Starting XI", emoji: "⚽", c: "#2F9E5C" };
+    if (sc >= 50) return { name: "On the Bench", emoji: "🪑", c: "#C9A461" };
+    if (sc >= 25) return { name: "Reserves", emoji: "🔄", c: "#E08A3C" };
+    return { name: "Warming Up", emoji: "🔥", c: "#D14B3D" };
+}
+function FormCard({ sc, items, T }) {
+    const [open, setOpen] = React.useState(false);
+    const grade = formGrade(sc);
+    const scored = items.filter(it => it.pts > 0);
+    const cats = FORM_CATS.map(c => {
+        const its = scored.filter(it => it.cat === c.k);
+        const max = its.reduce((a, it) => a + it.pts, 0);
+        const got = its.filter(it => it.done).reduce((a, it) => a + it.pts, 0);
+        return Object.assign({}, c, { max: max, got: got });
+    }).filter(c => c.max > 0);
+    const pending = scored.filter(it => !it.done).sort((a, b) => b.pts - a.pts);
+    const font = "Inter,system-ui,sans-serif";
+    return React.createElement("div", { style: { position: "relative", background: "linear-gradient(135deg,rgba(91,141,239,.10),rgba(212,175,55,.06))", border: "1px solid rgba(212,175,55,.28)", borderRadius: 16, padding: "14px 14px 12px", boxShadow: "0 0 24px rgba(91,141,239,.10)" } },
+        React.createElement("div", { style: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 10 } },
+            React.createElement("div", null,
+                React.createElement("div", { style: { fontSize: 9, color: "rgba(220,228,255,.55)", fontFamily: font, letterSpacing: ".14em", textTransform: "uppercase", fontWeight: 600, marginBottom: 5 } }, "Form Rating"),
+                React.createElement("div", { style: { display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 20, background: grade.c + "22", border: "1px solid " + grade.c + "66", fontSize: 10, color: grade.c, fontFamily: font, fontWeight: 700, letterSpacing: ".04em" } },
+                    React.createElement("span", null, grade.emoji), grade.name)),
+            React.createElement("div", { style: { textAlign: "right", lineHeight: 1 } },
+                React.createElement("span", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 40, color: grade.c, fontWeight: 400, textShadow: "0 0 18px " + grade.c + "55" } }, sc),
+                React.createElement("span", { style: { fontSize: 12, color: T.ivoryD, fontFamily: font, marginLeft: 2 } }, "/100"))),
+        React.createElement("div", { style: { height: 6, background: "rgba(255,255,255,.07)", borderRadius: 4, overflow: "hidden", marginBottom: 12 } },
+            React.createElement("div", { style: { height: "100%", width: sc + "%", background: "linear-gradient(90deg,#5B8DEF," + grade.c + ")", borderRadius: 4, transition: "width .5s ease" } })),
+        React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, marginBottom: 10 } }, cats.map(c => {
+            const full = c.got >= c.max;
+            return React.createElement("div", { key: c.k, style: { background: "rgba(0,0,0,.25)", border: "1px solid " + (full ? c.c + "66" : "rgba(255,255,255,.06)"), borderRadius: 10, padding: "7px 8px" } },
+                React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 } },
+                    React.createElement("span", { style: { fontSize: 10, color: T.ivoryM, fontFamily: font } }, c.i + " " + c.l),
+                    React.createElement("span", { style: { fontSize: 9, color: full ? c.c : T.ivoryD, fontFamily: font, fontWeight: 600 } }, c.got + "/" + c.max)),
+                React.createElement("div", { style: { height: 3, background: "rgba(255,255,255,.07)", borderRadius: 2, overflow: "hidden" } },
+                    React.createElement("div", { style: { height: "100%", width: Math.round(c.got / c.max * 100) + "%", background: c.c, borderRadius: 2 } })));
+        })),
+        pending.length === 0
+            ? React.createElement("div", { style: { fontSize: 11, color: T.gold, fontFamily: font, fontWeight: 600, textAlign: "center", padding: "4px 0" } }, "💯 Perfect form today — Ronaldo standard.")
+            : React.createElement("div", null,
+                React.createElement("div", { style: { fontSize: 9, color: "rgba(220,228,255,.5)", fontFamily: font, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 6 } }, "Next best moves"),
+                React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } }, pending.slice(0, 3).map(it => React.createElement("div", { key: it.label, style: { display: "flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 20, background: "rgba(47,158,92,.10)", border: "1px solid rgba(47,158,92,.3)", fontSize: 10, color: T.ivory, fontFamily: font } },
+                    React.createElement("span", { style: { color: T.green, fontWeight: 700 } }, "+" + it.pts),
+                    it.label)))),
+        React.createElement("button", { onClick: () => setOpen(!open), style: { width: "100%", marginTop: 10, padding: "6px 0 0", background: "transparent", border: "none", borderTop: "1px solid rgba(255,255,255,.06)", color: T.ivoryD, fontSize: 9, fontFamily: font, letterSpacing: ".1em", textTransform: "uppercase", cursor: "pointer" } }, open ? "Hide breakdown ▴" : "Full breakdown ▾"),
+        open && React.createElement("div", { style: { marginTop: 6 } }, scored.map(it => React.createElement("div", { key: it.label, style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "5px 2px", borderBottom: "1px solid rgba(255,255,255,.04)" } },
+            React.createElement("span", { style: { fontSize: 11, color: it.done ? T.ivory : T.ivoryD, fontFamily: font } }, (it.done ? "✅ " : "⬜ ") + it.label),
+            React.createElement("span", { style: { fontSize: 10, color: it.done ? T.green : T.ivoryD, fontFamily: font, fontWeight: 600 } }, (it.done ? "+" : "") + it.pts + " pts")))));
+}
+
 function JeetOS() {
     const [screen, setScreen] = React.useState("home");
     const [tab, setTab] = React.useState("today");
@@ -5014,11 +5076,7 @@ function JeetOS() {
                     (() => { const h = new Date().getHours(); return h < 5 ? "Still up." : h < 12 ? "Good morning," : h < 17 ? "Good afternoon," : h < 21 ? "Good evening," : "Late night,"; })(),
                     React.createElement("br", null),
                     React.createElement("span", { style: { fontStyle: "italic", background: "linear-gradient(135deg,#fff,#B9C9FF)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" } }, "Jeet.")),
-                React.createElement("div", { style: { position: "relative", display: "flex", alignItems: "center", gap: 8 } },
-                    React.createElement("div", { style: { flex: "0 0 18px", height: 1, background: "linear-gradient(90deg,transparent,rgba(91,141,239,.7))" } }),
-                    React.createElement("div", { style: { fontSize: 9, color: "rgba(220,228,255,.5)", fontFamily: "Inter,system-ui,sans-serif", letterSpacing: ".08em", textTransform: "uppercase" } }, "Form Rating"),
-                    React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 14, color: T.gold, fontWeight: 600 } }, sc + "/100"),
-                    React.createElement("div", { style: { flex: 1, height: 1, background: "linear-gradient(90deg,rgba(91,141,239,.7),transparent)" } }))),
+                React.createElement(FormCard, { sc: sc, items: scoreItems, T: T })),
             React.createElement("div", { style: { padding: "0 20px", marginBottom: 14 } },
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, background: "rgba(91,141,239,.08)", border: "1px solid rgba(91,141,239,.22)", borderRadius: 12, padding: "10px 12px" } },
                     React.createElement("span", { style: { fontSize: 14 } }, "📷"),
