@@ -4175,7 +4175,7 @@ function TabHeader({ icon, title, subtitle, color, gradient, T }) {
 
 function JeetOS() {
     const [screen, setScreen] = React.useState("home");
-    const [tab, setTab] = React.useState("analytics");
+    const [tab, setTab] = React.useState("today");
     React.useEffect(() => {
         if (tab === "today") {
             const key = "jos_whistle_" + new Date().toDateString();
