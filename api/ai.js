@@ -94,6 +94,25 @@ async function callGemini(system, messages, max) {
 const CALLERS = { claude: callClaude, groq: callGroq, gemini: callGemini };
 
 module.exports = async function handler(req, res) {
+  // GET /api/ai is a setup check you can open in a browser: it reports which
+  // provider keys this deployment can see (never the keys themselves) and
+  // whether a one-word Claude call actually succeeds.
+  if (req.method === "GET") {
+    const status = {
+      claudeKey: !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY),
+      groqKey: !!process.env.GROQ_API_KEY,
+      geminiKey: !!process.env.GEMINI_API_KEY,
+    };
+    if (status.claudeKey) {
+      try {
+        await callClaude("Reply with one word.", [{ role: "user", content: "ping" }], 50);
+        status.claude = "ok";
+      } catch (e) {
+        status.claude = e.message;
+      }
+    }
+    return res.status(200).json(status);
+  }
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   const { system, messages, max, provider } = req.body || {};
@@ -105,14 +124,16 @@ module.exports = async function handler(req, res) {
     ? [provider, ...PROVIDER_ORDER.filter(p => p !== provider)]
     : PROVIDER_ORDER;
 
-  let lastErr = null;
+  const errors = [];
   for (const p of order) {
     try {
       const text = await CALLERS[p](system, messages, max);
       return res.status(200).json({ text, provider: p });
     } catch (e) {
-      lastErr = e;
+      errors.push(e.message);
     }
   }
-  return res.status(502).json({ error: (lastErr && lastErr.message) || "No AI provider configured" });
+  // Report every provider's failure, not just the last one — the first
+  // (Claude) error is usually the one that matters.
+  return res.status(502).json({ error: errors.join(" | ") || "No AI provider configured" });
 };
