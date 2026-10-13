@@ -867,19 +867,72 @@ function loadTeamMemory() {
 function saveTeamMemory(list) {
     store.set(TEAM_MEMORY_KEY, list.slice(-TEAM_MEMORY_MAX));
 }
+function teamMemoryKey(text) {
+    return String(text).toLowerCase().replace(/\s+/g, " ").trim();
+}
 function addTeamMemoryFacts(facts, coachId) {
     if (!facts.length) return;
     const list = loadTeamMemory();
-    const seen = new Set(list.map(f => f.text.toLowerCase()));
+    const seen = new Set(list.map(f => teamMemoryKey(f.text)));
     const date = new Date().toISOString().slice(0, 10);
+    const added = [];
     facts.forEach(text => {
         const t = text.replace(/\s+/g, " ").trim().slice(0, 200);
-        if (t && !seen.has(t.toLowerCase())) {
-            seen.add(t.toLowerCase());
-            list.push({ text: t, from: coachId, date: date });
+        if (t && !seen.has(teamMemoryKey(t))) {
+            seen.add(teamMemoryKey(t));
+            const f = { text: t, from: coachId, date: date, synced: false };
+            list.push(f);
+            added.push(f);
         }
     });
     saveTeamMemory(list);
+    added.forEach(pushTeamMemoryFact);
+}
+// ── Cross-device sync: same Supabase project as the logs/labels sync ──
+// Local storage is used offline; facts carry synced:false until Supabase has
+// them, so a fact saved without network is pushed on the next sync.
+const SUPA_HEADERS = () => ({ "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + SUPABASE_ANON_KEY });
+function supabaseReady() {
+    return SUPABASE_URL && SUPABASE_URL !== "YOUR_SUPABASE_URL" && SUPABASE_ANON_KEY;
+}
+function markTeamMemorySynced(text) {
+    const list = loadTeamMemory();
+    const f = list.find(x => teamMemoryKey(x.text) === teamMemoryKey(text));
+    if (f) { f.synced = true; saveTeamMemory(list); }
+}
+async function pushTeamMemoryFact(f) {
+    if (!supabaseReady()) return;
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_team_memory?on_conflict=fact_key", {
+            method: "POST",
+            headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }),
+            body: JSON.stringify({ fact_key: teamMemoryKey(f.text), fact: f.text, from_coach: f.from, created_on: f.date }),
+        });
+        if (r.ok) markTeamMemorySynced(f.text);
+    } catch (_a) { /* stays synced:false, retried on next sync */ }
+}
+async function deleteTeamMemoryFact(text) {
+    if (!supabaseReady()) return;
+    try {
+        await fetch(SUPABASE_URL + "/rest/v1/jeetos_team_memory?fact_key=eq." + encodeURIComponent(teamMemoryKey(text)), {
+            method: "DELETE", headers: SUPA_HEADERS(),
+        });
+    } catch (_a) { }
+}
+// Supabase is the source of truth; local facts not yet synced are kept and pushed.
+async function syncTeamMemory() {
+    if (!supabaseReady()) return loadTeamMemory();
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_team_memory?select=fact,from_coach,created_on&order=created_at.asc", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        if (!r.ok || !Array.isArray(rows)) return loadTeamMemory();
+        const merged = rows.map(row => ({ text: row.fact, from: row.from_coach, date: row.created_on, synced: true }));
+        const have = new Set(merged.map(f => teamMemoryKey(f.text)));
+        const pending = loadTeamMemory().filter(f => !f.synced && !have.has(teamMemoryKey(f.text)));
+        saveTeamMemory(merged.concat(pending));
+        pending.forEach(pushTeamMemoryFact);
+        return loadTeamMemory();
+    } catch (_a) { return loadTeamMemory(); }
 }
 function extractTeamMemory(reply) {
     const facts = [];
@@ -1630,14 +1683,14 @@ function Stp({ val, dec, inc }) { return (React.createElement("div", { style: { 
 function TeamMemoryCard({ T }) {
     const [open, setOpen] = React.useState(false);
     const [list, setList] = React.useState(loadTeamMemory());
-    React.useEffect(() => { if (open) setList(loadTeamMemory()); }, [open]);
-    const remove = (i) => { const next = list.filter((_, j) => j !== i); saveTeamMemory(next); setList(next); };
+    React.useEffect(() => { if (open) { setList(loadTeamMemory()); syncTeamMemory().then(setList); } }, [open]);
+    const remove = (i) => { const gone = list[i]; const next = list.filter((_, j) => j !== i); saveTeamMemory(next); setList(next); if (gone) deleteTeamMemoryFact(gone.text); };
     const font = "Inter,system-ui,sans-serif";
     return React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 14px", marginBottom: 16 } },
         React.createElement("div", { onClick: () => setOpen(!open), style: { display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" } },
             React.createElement("div", null,
                 React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontFamily: font, fontWeight: 500 } }, "🧠 Team Memory"),
-                React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, fontFamily: font, marginTop: 2 } }, list.length + (list.length === 1 ? " thing" : " things") + " your coaches know about you · shared by all")),
+                React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, fontFamily: font, marginTop: 2 } }, list.length + (list.length === 1 ? " thing" : " things") + " your coaches know about you · synced across devices")),
             React.createElement("span", { style: { color: T.ivoryD, fontSize: 12 } }, open ? "▴" : "▾")),
         open && React.createElement("div", { style: { marginTop: 10 } },
             list.length === 0
@@ -4428,6 +4481,7 @@ function JeetOS() {
             setCustomLabels(scl);
         // Pull the permanent, cross-device copy from Supabase and merge it in —
         // Supabase wins over local storage since it's the durable source of truth.
+        syncTeamMemory();
         fetchLabelsFromSupabase().then(remote => {
             if (!remote) return;
             const remoteNames = {}, remoteLabels = {};
