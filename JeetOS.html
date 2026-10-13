@@ -822,7 +822,7 @@ async function callBackendAI(sys, msgs, max, provider) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             system: sys,
-            messages: msgs.map(m => Object.assign({ role: m.role, content: typeof m.content === "string" ? m.content : String(m.content) }, m.image ? { image: m.image } : {})),
+            messages: msgs.map(m => Object.assign({ role: m.role, content: typeof m.content === "string" ? m.content : String(m.content) }, m.image ? { image: m.image } : {}, m.images ? { images: m.images } : {})),
             max,
             provider,
         })
@@ -2217,6 +2217,375 @@ function FoodMacros({ food, qty, calc, T }) {
     return (React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 8 } }, [{ l: "Cal", v: m.cal, c: T.gold }, { l: "P", v: m.p + "g", c: T.green }, { l: "C", v: m.c + "g", c: "#5B8DD9" }, { l: "F", v: m.f + "g", c: "#B06ECC" }].map(s => (React.createElement("div", { key: s.l, style: { flex: 1, padding: "6px 4px", background: "rgba(255,255,255,.03)", borderRadius: 7, textAlign: "center" } },
         React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 13, color: s.c, lineHeight: 1, fontWeight: 300 } }, s.v),
         React.createElement("div", { style: { fontSize: 7, color: T.ivoryD, marginTop: 2, fontFamily: "Inter,system-ui,sans-serif" } }, s.l))))));
+}
+// ── WEEKLY CHECK-IN: photos + numbers, every coach reviews the week ────
+// Photos stay on this device (IndexedDB) and only travel to the AI for the
+// review. The written reviews sync to Supabase (jeetos_checkins).
+const CHECKINS_KEY = "jos_checkins";
+const CHECKIN_SLOTS = [
+    { id: "face", label: "Face", icon: "🙂", hint: "Front, natural light, no filter", coaches: ["skin", "grooming"] },
+    { id: "hair", label: "Hair", icon: "💇", hint: "Top + hairline", coaches: ["hair"] },
+    { id: "body", label: "Body", icon: "💪", hint: "Front, same pose & light each week", coaches: ["fitness", "nutrition"] },
+    { id: "outfit", label: "Outfit", icon: "👔", hint: "Full-length mirror pic", coaches: ["style"] },
+    { id: "other", label: "Anything", icon: "📷", hint: "Meal, room, skin spot…", coaches: ["ronaldo"] },
+];
+const CHECKIN_FOCUS = {
+    skin: "skin: skincare consistency, sleep, water — and the face photo (texture, breakouts, marks, glow, dark circles)",
+    hair: "hair: haircare consistency and the hair photo (density, hairline, scalp, styling)",
+    fitness: "training: gym days, energy, recovery — and the body photo (physique, posture, visible progress)",
+    nutrition: "nutrition: protein and calories vs his 170g / 1800 kcal target, water — and the body photo for how the diet is showing",
+    sleep: "sleep: hours vs the 7.5h target, sleep quality, and how it shows in energy and mood",
+    style: "style: the outfit photo — fit, colours, proportions, shoes, grooming with the look",
+    grooming: "grooming: the face photo — beard line, haircut, brows, nails, overall sharpness",
+    mind: "his mind: mood, energy, stress, his own note about the week — as his psychologist, gently; a reflection, not a grade",
+    ronaldo: "discipline overall: every number, promises kept or broken, how seriously he took the week",
+};
+// Coaches who review every week from the numbers; the others only when their photo is in.
+const CHECKIN_ALWAYS = ["fitness", "nutrition", "sleep", "skin", "mind", "ronaldo"];
+const CHECKIN_STAT_ROWS = [["Days logged", "daysLogged", ""], ["Gym", "gymDays", " days"], ["Sleep", "avgSleep", "h"], ["Protein", "avgProtein", "g"], ["Water", "avgWater", " gl"], ["Skincare", "skincareDays", " days"], ["Haircare", "haircareDays", " days"], ["Mood", "avgMood", "/5"], ["Energy", "avgEnergy", "/5"]];
+function loadCheckins() { const l = store.get(CHECKINS_KEY); return Array.isArray(l) ? l : []; }
+function saveCheckins(l) { store.set(CHECKINS_KEY, l.slice(-26)); }
+function weekStats(W, weeksAgo) {
+    const end = Date.now() - weeksAgo * 7 * 86400000, start = end - 7 * 86400000;
+    // Log dates are local midnights, so (end - 7d, end] holds exactly 7 days.
+    const days = (W || []).filter(d => { const t = new Date(d.date).getTime(); return t > start && t <= end; });
+    const n = days.length;
+    const avg = k => n ? +(days.reduce((s, d) => s + (+d[k] || 0), 0) / n).toFixed(1) : 0;
+    const cnt = k => days.filter(d => d[k]).length;
+    return { daysLogged: n, gymDays: cnt("gymDone"), skincareDays: cnt("skincareDone"), haircareDays: cnt("haircareDone"), suppDays: cnt("supplementsDone"),
+        avgSleep: avg("sleepHours"), avgSleepQuality: avg("sleepQuality"), avgProtein: Math.round(avg("totalProtein")), avgCalories: Math.round(avg("totalCal")),
+        avgWater: avg("water"), avgMood: avg("mood"), avgEnergy: avg("energy"), dayNotes: days.map(d => d.dayNotes).filter(Boolean).slice(-4) };
+}
+function statsText(s) {
+    return `${s.daysLogged}/7 days logged · gym ${s.gymDays} days · sleep avg ${s.avgSleep}h (quality ${s.avgSleepQuality}/5) · protein avg ${s.avgProtein}g · calories avg ${s.avgCalories} · water avg ${s.avgWater} glasses · skincare ${s.skincareDays} days · haircare ${s.haircareDays} days · supplements ${s.suppDays} days · mood avg ${s.avgMood}/5 · energy avg ${s.avgEnergy}/5`;
+}
+function weekPromises() {
+    const from = localIsoDate(new Date(Date.now() - 7 * 86400000));
+    return loadCommitments().filter(c => c.due >= from && c.due <= localIsoDate());
+}
+function parseJsonLoose(text) {
+    const s = String(text || "");
+    const a = s.indexOf("{"), b = s.lastIndexOf("}");
+    if (a < 0 || b <= a) return null;
+    try { return JSON.parse(s.slice(a, b + 1)); } catch (_a) { return null; }
+}
+// Small IndexedDB wrapper — check-in photos are too big for localStorage.
+function photoDB() {
+    return new Promise((res, rej) => {
+        const r = indexedDB.open("jeetos", 1);
+        r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains("photos")) r.result.createObjectStore("photos"); };
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+    });
+}
+async function putPhoto(key, val) {
+    try { const db = await photoDB(); await new Promise((res, rej) => { const tx = db.transaction("photos", "readwrite"); tx.objectStore("photos").put(val, key); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (_a) { }
+}
+async function getPhoto(key) {
+    try { const db = await photoDB(); return await new Promise((res) => { const q = db.transaction("photos").objectStore("photos").get(key); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); }); } catch (_a) { return null; }
+}
+// Latest earlier check-in that has a photo for this slot.
+async function previousSlotPhoto(slot, beforeId) {
+    const list = loadCheckins().filter(c => c.id !== beforeId && (c.slots || []).includes(slot));
+    for (let i = list.length - 1; i >= 0; i--) { const p = await getPhoto(list[i].id + ":" + slot); if (p) return { image: p, date: list[i].created_on }; }
+    return null;
+}
+async function pushCheckin(c) {
+    if (!supabaseReady()) return;
+    try {
+        await fetch(SUPABASE_URL + "/rest/v1/jeetos_checkins?on_conflict=id", {
+            method: "POST", headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }),
+            body: JSON.stringify({ id: c.id, created_on: c.created_on, note: c.note || null, slots: c.slots || [], stats: c.stats, reviews: c.reviews, summary: c.summary }),
+        });
+    } catch (_a) { }
+}
+async function syncCheckins() {
+    if (!supabaseReady()) return loadCheckins();
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_checkins?select=id,created_on,note,slots,stats,reviews,summary&order=created_at.asc&limit=26", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        if (!r.ok || !Array.isArray(rows)) return loadCheckins();
+        const byId = {};
+        loadCheckins().forEach(c => { byId[c.id] = c; });
+        rows.forEach(c => { byId[c.id] = Object.assign({}, byId[c.id] || {}, c); });
+        const merged = Object.values(byId).sort((a, b) => String(a.created_on).localeCompare(String(b.created_on)) || String(a.id).localeCompare(String(b.id)));
+        saveCheckins(merged);
+        return loadCheckins();
+    } catch (_a) { return loadCheckins(); }
+}
+function checkinDue() {
+    const last = loadCheckins().slice(-1)[0];
+    if (!last) return true;
+    const days = Math.round((new Date(localIsoDate()) - new Date(last.created_on)) / 86400000);
+    return days >= 6 || (new Date().getDay() === 0 && last.created_on !== localIsoDate());
+}
+async function runPool(items, limit, fn) {
+    const out = new Array(items.length);
+    let i = 0;
+    const worker = async () => { while (i < items.length) { const k = i++; out[k] = await fn(items[k], k); } };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return out;
+}
+async function reviewCoach(coach, ctx) {
+    const { stats, prevStats, note, photos, prevPhotos, prevCheckin } = ctx;
+    const id = coach.id;
+    const prevRev = prevCheckin && prevCheckin.reviews && prevCheckin.reviews[id];
+    const goals = loadGoals().filter(g => g.coach === id && g.status === "active");
+    const promises = weekPromises();
+    const slots = CHECKIN_SLOTS.filter(s => s.coaches.includes(id) && photos[s.id]);
+    const images = [], labels = [];
+    slots.forEach(s => {
+        if (prevPhotos[s.id]) { images.push(prevPhotos[s.id].image); labels.push(s.label + " photo from " + prevPhotos[s.id].date + " (previous check-in)"); }
+        images.push(photos[s.id].full); labels.push(s.label + " photo — THIS week");
+    });
+    const sys = `${coach.sys || ""}
+
+You are ${coach.name}. ${COACH_VOICES[id] || ""}
+IGNORE any length or format rules above: this is Jeet's WEEKLY CHECK-IN and he wants a detailed, honest review.
+
+Review his last 7 days in YOUR area — ${CHECKIN_FOCUS[id]}. Judge him like a real coach, by the numbers AND by the quality you actually see in the photos. Be specific and honest: praise what's real, call out what isn't, find the real reason things didn't work (root cause — never just "be consistent"), and give a concrete plan with numbers or times.${id === "fitness" || id === "nutrition" ? " Assess the physique objectively for fitness progress; never body-shame." : ""}${id === "skin" ? " Observations only, not a medical diagnosis; flag anything a dermatologist should see." : ""}
+
+THIS WEEK: ${statsText(stats)}
+LAST WEEK: ${statsText(prevStats)}
+${stats.dayNotes.length ? "His day notes: " + stats.dayNotes.join(" | ") + "\n" : ""}${prevRev ? `YOUR LAST CHECK-IN (${prevCheckin.created_on}): you gave ${prevRev.score != null ? prevRev.score + "/10" : "no score"}; your plan was: ${(prevRev.plan || []).join("; ")}. Judge whether he followed that plan and whether it worked.` : "This is your first weekly check-in with him."}
+His goals with you: ${goals.map(goalLine).join("; ") || "none yet — suggest one in the plan if it makes sense"}.
+Promises due this week: ${promises.map(c => `"${c.text}" (${c.status}, to ${coachLabel(c.coach)})`).join("; ") || "none"}.
+What the team knows about him: ${loadTeamMemory().map(f => f.text).join("; ") || "nothing yet"}.
+His own note about the week: ${note ? "\"" + note + "\"" : "none"}.
+PHOTOS: ${labels.length ? "attached in this order — " + labels.map((l, i) => (i + 1) + ") " + l).join("; ") + ". Compare them carefully." : "none for your area this week — judge on the numbers."}
+
+Reply with ONLY a JSON object (no markdown, no extra text), written in his Hinglish:
+{"score": ${id === "mind" ? "null" : "1-10 for your area this week"}, "trend": "up|same|down|first", "photo_notes": "detailed observations from the photos and how they compare with the previous one; empty string if no photos", "went_well": ["specific things"], "didnt_go_well": ["specific things"], "why": "honest root cause, 1-3 sentences", "plan": ["exactly 3 specific actions for next week"], "message": "2-3 lines straight to him in your own voice"}`;
+    const msg = { role: "user", content: "Here's my week. Review it." };
+    if (images.length) msg.images = images;
+    const raw = await ai(sys, [msg], 3000);
+    const j = parseJsonLoose(raw) || { message: String(raw).replace(/[{}"]/g, "").slice(0, 600) };
+    const score = j.score == null || id === "mind" ? null : Math.max(1, Math.min(10, Math.round(+j.score) || 0)) || null;
+    const arr = v => Array.isArray(v) ? v.map(String).filter(Boolean).slice(0, 5) : (v ? [String(v)] : []);
+    return { score: score, trend: ["up", "same", "down", "first"].includes(j.trend) ? j.trend : (prevRev ? "same" : "first"), photo_notes: String(j.photo_notes || ""),
+        went_well: arr(j.went_well), didnt_go_well: arr(j.didnt_go_well), why: String(j.why || ""), plan: arr(j.plan).slice(0, 3), message: String(j.message || ""), photos: slots.map(s => s.id) };
+}
+async function teamSummary(reviews, stats, prevStats, prevCheckin) {
+    const lines = Object.keys(reviews).map(id => { const r = reviews[id]; return `${coachLabel(id)} (${id}): ${r.score != null ? r.score + "/10" : "no score"}, trend ${r.trend}. Why: ${r.why} Plan: ${r.plan.join("; ")}. Said: ${r.message}`; }).join("\n");
+    const sys = `You write the recap of Jeet's Sunday coaches' team meeting, after every coach reviewed his week. Hinglish, warm but honest, like a real team that cares about him.
+THIS WEEK: ${statsText(stats)}
+LAST WEEK: ${statsText(prevStats)}
+${prevCheckin && prevCheckin.summary ? `Last check-in overall: ${prevCheckin.summary.overall}/100, focus was "${prevCheckin.summary.focus}".` : "This is his first weekly check-in."}
+COACH REVIEWS:
+${lines}
+
+Reply with ONLY a JSON object:
+{"overall": 0-100 overall score for the week, "headline": "one punchy line about the week", "team_meeting": ["one line per coach recapping what they said, e.g. 'Marcus khush hai — 5 din gym'"], "wins": ["top 3 wins"], "fixes": [{"coach": "coach id from the list", "action": "specific action for next week"}], "focus": "THE single most important thing for next week"}
+fixes: max 3, the most impactful ones.`;
+    const raw = await ai(sys, [{ role: "user", content: "Write the recap." }], 2000);
+    const j = parseJsonLoose(raw) || {};
+    const scores = Object.values(reviews).map(r => r.score).filter(x => x != null);
+    const fallback = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 10) : 50;
+    return { overall: Math.max(0, Math.min(100, Math.round(+j.overall) || fallback)), headline: String(j.headline || ""), team_meeting: Array.isArray(j.team_meeting) ? j.team_meeting.map(String).slice(0, 9) : [],
+        wins: Array.isArray(j.wins) ? j.wins.map(String).slice(0, 3) : [], fixes: Array.isArray(j.fixes) ? j.fixes.filter(f => f && f.action).map(f => ({ coach: COACHES.some(c => c.id === f.coach) ? f.coach : "ronaldo", action: String(f.action) })).slice(0, 3) : [],
+        focus: String(j.focus || "") };
+}
+function trendMark(t, T) {
+    return t === "up" ? React.createElement("span", { style: { color: T.green } }, " ▲") : t === "down" ? React.createElement("span", { style: { color: T.red } }, " ▼") : t === "same" ? React.createElement("span", { style: { color: T.ivoryD } }, " ▬") : null;
+}
+function CheckinScreen({ T, W, setCH, onBack, onOpenCoach, onCoachMessages }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [view, setView] = React.useState("new");
+    const [list, setList] = React.useState(loadCheckins());
+    const [photos, setPhotos] = React.useState({});
+    const [prevThumbs, setPrevThumbs] = React.useState({});
+    const [note, setNote] = React.useState("");
+    const [progress, setProgress] = React.useState({});
+    const [report, setReport] = React.useState(null);
+    const [reportPhotos, setReportPhotos] = React.useState({});
+    const [openCoach, setOpenCoach] = React.useState(null);
+    const [error, setError] = React.useState("");
+    const fileRefs = React.useRef({});
+    const stats = weekStats(W, 0), prevStats = weekStats(W, 1);
+    React.useEffect(() => {
+        syncCheckins().then(setList);
+        CHECKIN_SLOTS.forEach(s => previousSlotPhoto(s.id, null).then(p => { if (p) setPrevThumbs(prev => Object.assign({}, prev, { [s.id]: p })); }));
+    }, []);
+    const pick = (slot) => async (e) => {
+        const f = e.target.files && e.target.files[0];
+        e.target.value = "";
+        if (!f) return;
+        try { const full = await resizeImage(f, 1024, 0.82); setPhotos(prev => Object.assign({}, prev, { [slot]: { full: full } })); } catch (_a) { }
+    };
+    const openReport = async (c) => {
+        setReport(c); setView("report"); setOpenCoach(null);
+        const out = {};
+        for (const s of c.slots || []) {
+            const now = await getPhoto(c.id + ":" + s);
+            const prev = await previousSlotPhoto(s, c.id);
+            const earlier = prev && prev.date <= c.created_on ? prev : null;
+            if (now) out[s] = { now: now, prev: earlier && earlier.image, prevDate: earlier && earlier.date };
+        }
+        setReportPhotos(out);
+    };
+    const start = async () => {
+        setError("");
+        const id = "ck" + Date.now().toString(36);
+        const prevCheckin = loadCheckins().slice(-1)[0] || null;
+        const prevPhotos = {};
+        for (const s of CHECKIN_SLOTS) if (photos[s.id]) { const p = await previousSlotPhoto(s.id, id); if (p) prevPhotos[s.id] = p; }
+        const coaches = COACHES.filter(c => CHECKIN_ALWAYS.includes(c.id) || CHECKIN_SLOTS.some(s => photos[s.id] && s.coaches.includes(c.id)));
+        setProgress(Object.fromEntries(coaches.map(c => [c.id, "pending"])));
+        setView("running");
+        const reviews = {};
+        await runPool(coaches, 3, async (c) => {
+            try { reviews[c.id] = await reviewCoach(c, { stats, prevStats, note, photos, prevPhotos, prevCheckin }); setProgress(p => Object.assign({}, p, { [c.id]: "done" })); }
+            catch (e) { setProgress(p => Object.assign({}, p, { [c.id]: "error" })); }
+        });
+        if (!Object.keys(reviews).length) { setError("Coaches tak nahi pahunch paya — internet ya AI key check karo, phir dobara try karo."); setView("new"); return; }
+        setProgress(p => Object.assign({}, p, { team: "pending" }));
+        let summary;
+        try { summary = await teamSummary(reviews, stats, prevStats, prevCheckin); } catch (_a) { summary = { overall: 50, headline: "", team_meeting: [], wins: [], fixes: [], focus: "" }; }
+        const slots = Object.keys(photos);
+        for (const s of slots) await putPhoto(id + ":" + s, photos[s].full);
+        const c = { id: id, created_on: localIsoDate(), note: note, slots: slots, stats: stats, reviews: reviews, summary: summary };
+        const next = loadCheckins().concat([c]);
+        saveCheckins(next); setList(next); pushCheckin(c);
+        // Next week's fixes become promises the coaches follow up on.
+        const commits = loadCommitments();
+        const due = localIsoDate(new Date(Date.now() + 7 * 86400000));
+        summary.fixes.forEach(f => { const cm = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), coach: f.coach, text: f.action.slice(0, 200), due: due, status: "open", synced: false }; commits.push(cm); pushCommitment(cm); });
+        saveCommitments(commits);
+        // Each coach drops their verdict into their chat so he can talk it through.
+        const now = Date.now();
+        setCH(prev => {
+            const up = Object.assign({}, prev);
+            Object.keys(reviews).forEach((cid, i) => {
+                const r = reviews[cid];
+                const msgs = [];
+                if (r.message) msgs.push({ role: "assistant", content: r.message, ts: now + i, checkin: true });
+                if (r.plan.length) msgs.push({ role: "assistant", content: "Next week ka plan:\n" + r.plan.map(p => "• " + p).join("\n"), ts: now + i, checkin: true });
+                up[cid] = (up[cid] || []).concat(msgs);
+            });
+            store.set("jos_ch", slimChatImages(up));
+            return up;
+        });
+        if (onCoachMessages) onCoachMessages(Object.keys(reviews));
+        setPhotos({}); setNote("");
+        openReport(c);
+    };
+    const card = { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "14px 16px", marginBottom: 12 };
+    const label = (t, c) => React.createElement("div", { style: { fontSize: 9, letterSpacing: ".14em", textTransform: "uppercase", color: c || T.gold, fontFamily: font, fontWeight: 600, marginBottom: 8 } }, t);
+    const bullets = (arr, color) => arr.map((x, i) => React.createElement("div", { key: i, style: { fontSize: 12, color: T.ivory, fontFamily: font, lineHeight: 1.6, paddingLeft: 14, position: "relative", marginBottom: 3 } },
+        React.createElement("span", { style: { position: "absolute", left: 0, color: color } }, "•"), x));
+    const header = React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "16px 20px 12px", borderBottom: "1px solid " + T.border, flexShrink: 0 } },
+        React.createElement("button", { onClick: view === "report" || view === "history" ? () => setView("new") : onBack, "aria-label": "Back", style: { width: 34, height: 34, borderRadius: "50%", border: "1px solid " + T.border2, background: T.card, color: T.ivory, cursor: "pointer", fontSize: 16 } }, "←"),
+        React.createElement("div", { style: { flex: 1 } },
+            React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 18, color: T.ivory } }, view === "report" ? "Weekly Report" : view === "history" ? "Past Check-ins" : "Weekly Check-in"),
+            React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, fontFamily: font } }, view === "report" && report ? new Date(report.created_on).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short" }) : list.length ? "Last check-in " + agoText(list[list.length - 1].created_on) : "Your first check-in")),
+        view === "new" && list.length > 0 && React.createElement("button", { onClick: () => setView("history"), style: { fontSize: 10, color: T.ivoryD, background: "transparent", border: "1px solid " + T.border2, borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: font } }, "History"));
+    let body;
+    if (view === "new") {
+        body = React.createElement("div", { style: { padding: "16px 20px 40px" } },
+            React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, fontFamily: font, lineHeight: 1.6, marginBottom: 14 } }, "Photos daalo (jitni chaho) — har coach apni photo last week se compare karega, numbers dekhega, aur poora review dega: kya sahi gaya, kya nahi, kyun, aur agle hafte kya karna hai. Photos sirf is phone pe save hoti hain."),
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 } }, CHECKIN_SLOTS.map(s => {
+                const p = photos[s.id];
+                return React.createElement("div", { key: s.id, onClick: () => fileRefs.current[s.id] && fileRefs.current[s.id].click(), style: { position: "relative", background: T.card, border: "1px " + (p ? "solid " + T.gold : "dashed " + T.border2), borderRadius: 12, minHeight: 120, cursor: "pointer", overflow: "hidden", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: p ? 0 : 10, textAlign: "center" } },
+                    React.createElement("input", { ref: el => { fileRefs.current[s.id] = el; }, type: "file", accept: "image/*", onChange: pick(s.id), style: { display: "none" } }),
+                    p ? React.createElement("img", { src: p.full, alt: s.label, style: { width: "100%", height: 140, objectFit: "cover" } }) : React.createElement(React.Fragment, null,
+                        React.createElement("div", { style: { fontSize: 24 } }, s.icon),
+                        React.createElement("div", { style: { fontSize: 12, color: T.ivory, fontFamily: font, marginTop: 4 } }, s.label),
+                        React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: font, marginTop: 3, lineHeight: 1.4 } }, s.hint),
+                        React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: font, marginTop: 4 } }, "→ " + s.coaches.map(coachLabel).join(", "))),
+                    p && React.createElement("div", { style: { position: "absolute", left: 6, bottom: 6, fontSize: 10, color: "#fff", background: "rgba(0,0,0,.55)", borderRadius: 6, padding: "2px 6px", fontFamily: font } }, s.label),
+                    p && React.createElement("button", { onClick: (e) => { e.stopPropagation(); setPhotos(prev => { const n = Object.assign({}, prev); delete n[s.id]; return n; }); }, "aria-label": "Remove " + s.label + " photo", style: { position: "absolute", right: 6, top: 6, width: 24, height: 24, borderRadius: "50%", border: "none", background: "rgba(0,0,0,.6)", color: "#fff", cursor: "pointer" } }, "✕"),
+                    !p && prevThumbs[s.id] && React.createElement("img", { src: prevThumbs[s.id].image, alt: "Last " + s.label, title: "Last check-in", style: { position: "absolute", right: 6, top: 6, width: 28, height: 28, objectFit: "cover", borderRadius: 6, opacity: .7 } }));
+            })),
+            React.createElement("div", { style: card },
+                label("This week vs last week"),
+                CHECKIN_STAT_ROWS.map(([l, k, u]) => {
+                    const a = stats[k], b = prevStats[k];
+                    const d = +(a - b).toFixed(1);
+                    return React.createElement("div", { key: k, style: { display: "flex", justifyContent: "space-between", fontSize: 12, fontFamily: font, padding: "4px 0", borderTop: "1px solid " + T.border } },
+                        React.createElement("span", { style: { color: T.ivoryM } }, l),
+                        React.createElement("span", { style: { color: T.ivory } }, a + u, React.createElement("span", { style: { color: d > 0 ? T.green : d < 0 ? T.red : T.ivoryD, fontSize: 10, marginLeft: 6 } }, d > 0 ? "+" + d : d < 0 ? String(d) : "=")));
+                })),
+            React.createElement("textarea", { value: note, onChange: e => setNote(e.target.value), placeholder: "Is hafte kaisa raha? Kya mushkil tha, kya achha laga… (optional)", rows: 3, style: { width: "100%", boxSizing: "border-box", background: T.card2, border: "1px solid " + T.border2, borderRadius: 12, color: T.ivory, fontFamily: font, fontSize: 16, padding: "12px 14px", outline: "none", resize: "vertical", marginBottom: 14 } }),
+            error && React.createElement("div", { style: { fontSize: 12, color: T.red, fontFamily: font, marginBottom: 10 } }, error),
+            React.createElement("button", { onClick: start, style: { width: "100%", padding: "14px", borderRadius: 12, border: "none", background: "linear-gradient(135deg,#D4AF37,#F0D080)", color: "#0A0800", fontSize: 13, fontWeight: 700, fontFamily: font, cursor: "pointer" } }, Object.keys(photos).length ? "Coaches ko bhejo (" + Object.keys(photos).length + " photo" + (Object.keys(photos).length > 1 ? "s" : "") + ")" : "Sirf numbers se review karo"));
+    }
+    else if (view === "running") {
+        body = React.createElement("div", { style: { padding: "24px 20px" } },
+            React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontFamily: font, marginBottom: 16 } }, "Coaches tumhara hafta dekh rahe hain…"),
+            Object.keys(progress).map(cid => React.createElement("div", { key: cid, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderTop: "1px solid " + T.border } },
+                cid === "team" ? React.createElement("div", { style: { width: 30, textAlign: "center", fontSize: 18 } }, "🤝") : React.createElement(CoachAvatar, { coachId: cid, color: (COACHES.find(c => c.id === cid) || {}).color || T.gold, size: 30 }),
+                React.createElement("div", { style: { flex: 1, fontSize: 12, color: T.ivory, fontFamily: font } }, cid === "team" ? "Team meeting" : coachLabel(cid)),
+                React.createElement("div", { style: { fontSize: 11, fontFamily: font, color: progress[cid] === "done" ? T.green : progress[cid] === "error" ? T.red : T.ivoryD } }, progress[cid] === "done" ? "✓ done" : progress[cid] === "error" ? "✗ failed" : "dekh rahe hain…"))));
+    }
+    else if (view === "history") {
+        const max = 100;
+        body = React.createElement("div", { style: { padding: "16px 20px 40px" } },
+            React.createElement("div", { style: Object.assign({}, card, { display: "flex", alignItems: "flex-end", gap: 6, height: 110 }) }, list.slice(-10).map(c => {
+                const v = c.summary ? c.summary.overall : 0;
+                return React.createElement("div", { key: c.id, style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" } },
+                    React.createElement("div", { style: { fontSize: 9, color: T.ivory, fontFamily: font, marginBottom: 3 } }, v),
+                    React.createElement("div", { style: { width: "100%", maxWidth: 22, height: Math.max(4, v / max * 70), background: T.gold, borderRadius: 4 } }),
+                    React.createElement("div", { style: { fontSize: 8, color: T.ivoryD, fontFamily: font, marginTop: 4 } }, String(c.created_on).slice(5)));
+            })),
+            list.slice().reverse().map(c => React.createElement("div", { key: c.id, onClick: () => openReport(c), style: Object.assign({}, card, { cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }) },
+                React.createElement("div", null,
+                    React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontFamily: font } }, new Date(c.created_on).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })),
+                    React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, fontFamily: font, marginTop: 3 } }, (c.summary && c.summary.headline) || ((c.slots || []).length + " photos"))),
+                React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 22, color: T.gold } }, c.summary ? c.summary.overall : "–"))));
+    }
+    else if (view === "report" && report) {
+        const sm = report.summary || {};
+        const idx = list.findIndex(c => c.id === report.id);
+        const prev = idx > 0 ? list[idx - 1] : null;
+        const delta = prev && prev.summary ? sm.overall - prev.summary.overall : null;
+        body = React.createElement("div", { style: { padding: "16px 20px 40px" } },
+            React.createElement("div", { style: Object.assign({}, card, { textAlign: "center", background: "linear-gradient(135deg,#1A1713,#1C1A14)", border: "1px solid rgba(201,162,74,.25)" }) },
+                React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 48, color: T.gold, lineHeight: 1 } }, sm.overall, React.createElement("span", { style: { fontSize: 16, color: T.ivoryD } }, "/100")),
+                delta != null && React.createElement("div", { style: { fontSize: 11, fontFamily: font, marginTop: 4, color: delta > 0 ? T.green : delta < 0 ? T.red : T.ivoryD } }, (delta > 0 ? "▲ +" : delta < 0 ? "▼ " : "= ") + delta + " vs last check-in"),
+                sm.headline && React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontFamily: font, marginTop: 10, lineHeight: 1.5 } }, sm.headline),
+                sm.focus && React.createElement("div", { style: { fontSize: 11, color: T.gold, fontFamily: font, marginTop: 10 } }, "🎯 Next week focus: " + sm.focus)),
+            sm.team_meeting && sm.team_meeting.length > 0 && React.createElement("div", { style: card }, label("🤝 Team meeting"), bullets(sm.team_meeting, T.gold)),
+            (sm.wins || []).length > 0 && React.createElement("div", { style: card }, label("✅ Wins", T.green), bullets(sm.wins, T.green)),
+            (sm.fixes || []).length > 0 && React.createElement("div", { style: card }, label("🔧 Fix next week (saved as promises)", T.red),
+                sm.fixes.map((f, i) => React.createElement("div", { key: i, style: { fontSize: 12, color: T.ivory, fontFamily: font, lineHeight: 1.6, marginBottom: 4 } }, f.action, React.createElement("span", { style: { color: T.ivoryD, fontSize: 10 } }, " — " + coachLabel(f.coach))))),
+            Object.keys(report.reviews || {}).map(cid => {
+                const r = report.reviews[cid];
+                const coach = COACHES.find(c => c.id === cid) || { color: T.gold };
+                const open = openCoach === cid;
+                return React.createElement("div", { key: cid, style: card },
+                    React.createElement("div", { onClick: () => setOpenCoach(open ? null : cid), style: { display: "flex", alignItems: "center", gap: 10, cursor: "pointer" } },
+                        React.createElement(CoachAvatar, { coachId: cid, color: coach.color, size: 34 }),
+                        React.createElement("div", { style: { flex: 1 } },
+                            React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontFamily: font } }, coachLabel(cid)),
+                            React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, fontFamily: font, marginTop: 2, lineHeight: 1.4 } }, open ? "" : (r.message || "").slice(0, 70) + ((r.message || "").length > 70 ? "…" : ""))),
+                        React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 20, color: coach.color, whiteSpace: "nowrap" } }, r.score != null ? r.score + "/10" : "💜", trendMark(r.trend, T))),
+                    open && React.createElement("div", { style: { marginTop: 12 } },
+                        (r.photos || []).filter(s => reportPhotos[s]).map(s => React.createElement("div", { key: s, style: { display: "flex", gap: 8, marginBottom: 10 } },
+                            reportPhotos[s].prev && React.createElement("div", { style: { flex: 1 } }, React.createElement("img", { src: reportPhotos[s].prev, alt: "Before", style: { width: "100%", height: 150, objectFit: "cover", borderRadius: 8 } }), React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: font, textAlign: "center", marginTop: 3 } }, reportPhotos[s].prevDate)),
+                            React.createElement("div", { style: { flex: 1 } }, React.createElement("img", { src: reportPhotos[s].now, alt: "Now", style: { width: "100%", height: 150, objectFit: "cover", borderRadius: 8 } }), React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: font, textAlign: "center", marginTop: 3 } }, "This check-in")))),
+                        r.message && React.createElement("div", { style: { fontSize: 12, color: T.ivory, fontFamily: font, lineHeight: 1.6, fontStyle: "italic", marginBottom: 10 } }, "\"" + r.message + "\""),
+                        r.photo_notes && React.createElement("div", { style: { marginBottom: 10 } }, label("👀 Photo analysis", coach.color), React.createElement("div", { style: { fontSize: 12, color: T.ivory, fontFamily: font, lineHeight: 1.6 } }, r.photo_notes)),
+                        r.went_well.length > 0 && React.createElement("div", { style: { marginBottom: 10 } }, label("Sahi gaya", T.green), bullets(r.went_well, T.green)),
+                        r.didnt_go_well.length > 0 && React.createElement("div", { style: { marginBottom: 10 } }, label("Nahi hua", T.red), bullets(r.didnt_go_well, T.red)),
+                        r.why && React.createElement("div", { style: { marginBottom: 10 } }, label("Kyun", coach.color), React.createElement("div", { style: { fontSize: 12, color: T.ivory, fontFamily: font, lineHeight: 1.6 } }, r.why)),
+                        r.plan.length > 0 && React.createElement("div", { style: { marginBottom: 10 } }, label("Next week plan", T.gold), bullets(r.plan, T.gold)),
+                        onOpenCoach && React.createElement("button", { onClick: () => onOpenCoach(cid), style: { width: "100%", padding: "10px", borderRadius: 10, border: "1px solid " + coach.color, background: "transparent", color: coach.color, fontSize: 12, fontFamily: font, cursor: "pointer" } }, "Chat with " + coachLabel(cid))));
+            }));
+    }
+    return React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", height: "100vh", background: T.ink, display: "flex", flexDirection: "column", overflow: "hidden" } },
+        header,
+        React.createElement("div", { style: { flex: 1, overflowY: "auto", scrollbarWidth: "none" } }, body));
+}
+function CheckinEntryCard({ T, onOpen }) {
+    const font = "Inter,system-ui,sans-serif";
+    const last = loadCheckins().slice(-1)[0];
+    const due = checkinDue();
+    return React.createElement("div", { onClick: onOpen, style: { background: due ? "linear-gradient(135deg,#1F1A0E,#16130B)" : T.card, border: "1px solid " + (due ? "rgba(212,175,55,.45)" : T.border), borderRadius: 14, padding: "14px 16px", marginBottom: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 12 } },
+        React.createElement("div", { style: { fontSize: 26 } }, "📸"),
+        React.createElement("div", { style: { flex: 1 } },
+            React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontFamily: font, fontWeight: 600 } }, "Weekly Check-in"),
+            React.createElement("div", { style: { fontSize: 10, color: due ? T.gold : T.ivoryD, fontFamily: font, marginTop: 3, lineHeight: 1.4 } }, due ? "Due — face, hair, body, outfit photos bhejo, coaches poora hafta review karenge" : "Last " + agoText(last.created_on) + " · score " + (last.summary ? last.summary.overall : "–") + "/100 · tap for report")),
+        React.createElement("span", { style: { color: T.gold, fontSize: 16 } }, "→"));
 }
 function GoalStrip({ coachId, color, T }) {
     const goals = loadGoals().filter(g => g.coach === coachId && g.status === "active");
@@ -4964,6 +5333,7 @@ function JeetOS() {
         syncCommitments();
         syncGoals();
         syncMoments();
+        syncCheckins();
         // Messages coaches texted first while the app was closed.
         fetchCoachInbox().then(rows => {
             const seen = new Set(store.get("jos_inbox_seen") || []);
@@ -5590,6 +5960,11 @@ function JeetOS() {
             return () => clearTimeout(t);
         }
     }, [siuuu]);
+    if (screen === "checkin") {
+        return React.createElement(CheckinScreen, { T: T, W: W, setCH: setCH, onBack: () => setScreen("home"),
+            onOpenCoach: (cid) => { setActiveCoach(cid); setScreen("coach"); },
+            onCoachMessages: (ids) => setUnread(prev => { const up = Object.assign({}, prev); ids.forEach(cid => { up[cid] = (up[cid] || 0) + 1; }); store.set("jos_unread", up); return up; }) });
+    }
     // Coach screen
     if (screen === "coach" && activeCoach) {
         return React.createElement(CoachScreen, { id: activeCoach, CH: CH, setCH: setCH, CL: CL, L: L, W: W, T: T, gymDay: todayGymDay, onSwitchCoach: (cid) => setActiveCoach(cid), onBack: () => setScreen("home"), onSend: sendMsg, onClear: (id) => { const up = Object.assign({}, CH, { [id]: [] }); setCH(up); store.set("jos_ch", up); showToast("Cleared"); }, viewDay: viewDay });
@@ -5735,6 +6110,10 @@ function JeetOS() {
                 React.createElement("div", { style: { padding: "5px 14px", background: "linear-gradient(135deg,rgba(212,175,55,.12),rgba(212,175,55,.06))", border: "1px solid rgba(212,175,55,.3)", borderRadius: 20, fontSize: 9, color: T.gold, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 600, letterSpacing: ".1em", boxShadow: "0 2px 8px rgba(212,175,55,.1)" } }, viewDay.toUpperCase()),
                 React.createElement("div", { style: { padding: "5px 14px", background: todayGymDay === "Rest" ? "rgba(209,75,61,.08)" : "rgba(47,158,92,.1)", border: "1px solid " + (todayGymDay === "Rest" ? "rgba(209,75,61,.3)" : "rgba(47,158,92,.3)"), borderRadius: 20, fontSize: 9, color: todayGymDay === "Rest" ? T.red : T.green, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 600, letterSpacing: ".06em", boxShadow: todayGymDay === "Rest" ? "none" : "0 2px 8px rgba(47,158,92,.1)" } }, todayGymDay === "Rest" ? "😴 Rest Day" : "💪 Gym: " + todayGymDay))),
         tab === "today" && (React.createElement("div", { style: { paddingBottom: 80, animation: "josFadeIn .28s ease", backgroundColor: "#04060D", backgroundImage: "radial-gradient(1.2px 1.2px at 20px 30px, rgba(255,255,255,.3), transparent), radial-gradient(1px 1px at 90px 80px, rgba(255,255,255,.22), transparent), radial-gradient(1.4px 1.4px at 150px 40px, rgba(255,255,255,.28), transparent), radial-gradient(1px 1px at 60px 150px, rgba(255,255,255,.2), transparent), radial-gradient(1.2px 1.2px at 170px 170px, rgba(255,255,255,.25), transparent), radial-gradient(1px 1px at 110px 190px, rgba(255,255,255,.18), transparent), radial-gradient(ellipse 100% 45% at 50% 0%, rgba(40,80,220,.14) 0%, transparent 60%)", backgroundSize: "200px 200px, 200px 200px, 200px 200px, 200px 200px, 200px 200px, 200px 200px, 100% 900px", backgroundRepeat: "repeat, repeat, repeat, repeat, repeat, repeat, no-repeat" } },
+            new Date().getDay() === 0 && checkinDue() && React.createElement("div", { onClick: () => setScreen("checkin"), style: { margin: "12px 20px 0", padding: "12px 14px", borderRadius: 12, background: "linear-gradient(135deg,#1F1A0E,#16130B)", border: "1px solid rgba(212,175,55,.45)", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 } },
+                React.createElement("span", { style: { fontSize: 20 } }, "📸"),
+                React.createElement("div", { style: { flex: 1, fontSize: 12, color: T.ivory, fontFamily: "Inter,system-ui,sans-serif", lineHeight: 1.4 } }, "Sunday check-in time — photos bhejo, coaches poora hafta review karenge"),
+                React.createElement("span", { style: { color: T.gold } }, "→")),
             React.createElement("div", { style: { position: "relative", padding: "22px 20px 18px", overflow: "hidden", background: "radial-gradient(ellipse 100% 70% at 10% -20%, rgba(40,80,220,.35) 0%, transparent 55%), radial-gradient(ellipse 80% 60% at 100% -10%, rgba(212,175,55,.16) 0%, transparent 50%), linear-gradient(180deg, #070B1E 0%, #0A0A10 70%, transparent 100%)" } },
                 React.createElement("div", { style: { position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "linear-gradient(90deg, transparent, #5B8DEF 20%, #D4AF37 50%, #5B8DEF 80%, transparent)", opacity: .7 } }),
                 React.createElement("div", { style: { position: "absolute", inset: 0, opacity: .6, pointerEvents: "none", backgroundImage: "radial-gradient(1.4px 1.4px at 12% 22%, rgba(255,255,255,.55), transparent), radial-gradient(1px 1px at 28% 55%, rgba(255,255,255,.4), transparent), radial-gradient(1.6px 1.6px at 45% 15%, rgba(255,255,255,.5), transparent), radial-gradient(1px 1px at 62% 40%, rgba(255,255,255,.35), transparent), radial-gradient(1.4px 1.4px at 78% 20%, rgba(255,255,255,.5), transparent), radial-gradient(1px 1px at 90% 50%, rgba(255,255,255,.35), transparent), radial-gradient(1.6px 1.6px at 95% 12%, rgba(255,255,255,.45), transparent)" } }),
@@ -6241,6 +6620,7 @@ function JeetOS() {
                 React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: "Fraunces,Georgia,serif", fontStyle: "italic", textAlign: "center", marginTop: 6, marginBottom: 4 } },
                     TROPHY_DEFS.filter(t => trophyStatus[t.id]).length + " of " + TROPHY_DEFS.length + " unlocked")),
             React.createElement("div", { style: { padding: "12px 20px" } },
+                React.createElement(CheckinEntryCard, { T: T, onOpen: () => setScreen("checkin") }),
                 React.createElement(Label, { c: T.gold }, "Your Coaches"),
                 React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 } }, COACHES.map(c => {
                     const grads = { skin: "linear-gradient(135deg,#1E1524,#150F1C)", hair: "linear-gradient(135deg,#141C2C,#0E1420)", fitness: "linear-gradient(135deg,#141E14,#0E160E)", nutrition: "linear-gradient(135deg,#1E1808,#161206)", sleep: "linear-gradient(135deg,#0C1420,#080E18)", style: "linear-gradient(135deg,#1E1208,#160E06)", grooming: "linear-gradient(135deg,#101C1C,#0A1414)" };
