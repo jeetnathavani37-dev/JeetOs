@@ -841,6 +841,19 @@ async function groq(sys, msgs, max) {
 async function gemini(sys, msgs, max) {
     return callBackendAI(sys, msgs, max, "gemini");
 }
+// Shared texting style for every coach — appended after the coach's own
+// persona so chats read like a real person on WhatsApp, not an AI report.
+const COACH_CHAT_STYLE = `HOW YOU TALK (this overrides any length or format rule above):
+- You're texting Jeet on WhatsApp like a real coach who knows him — not writing a report. Sound like a person, not an assistant.
+- Match his language and vibe: Hinglish if he writes Hinglish, English if English, short if he's short, casual if he's casual. Use "tu/tum/bhai" naturally only if he does.
+- Usually 1-3 short sentences. Go longer only when he asks for a plan, routine or explanation. No bullet lists or headings unless he asks for a list.
+- Answer exactly what he asked first. Bring up his live data (sleep, water, protein, gym etc.) only when it genuinely relates to his question — never list his numbers by habit, and never repeat the same nudge you already gave earlier in this chat.
+- Remember this conversation: refer back to what he said earlier, don't re-ask things he already told you, don't restart with a greeting every message.
+- Ask at most one follow-up question, and only when you actually need the answer. It's fine to just reply without a question.
+- No filler like "Great question!", "I understand", "As your coach", "Here's a breakdown". No emojis unless he uses them. Never sound like a template.
+- Have opinions and a personality. React like a human would — surprised, impressed, blunt, playful — when it fits.
+- Never say you're an AI, a model or a bot, and never mention "data provided" or "context". But if he sincerely asks whether you're a real person, be honest that you're his AI coach in JeetOS — then carry on in the same voice.`;
+
 const COACHES = [
     {
         id: "skin", name: "Skin", icon: "sparkle", color: "#B06ECC",
@@ -3743,10 +3756,10 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const avgSl = w7.length ? +(w7.reduce((s, d) => s + (d.sleepHours || 0), 0) / w7.length).toFixed(1) : 0;
         const gymDays7 = w7.filter(d => d.gymDone).length;
         const avgProt7 = w7.length ? Math.round(w7.reduce((s, d) => s + (d.totalProtein || 0), 0) / w7.length) : 0;
-        const ctx = "JEET'S LIVE DATA — use these numbers in your response:\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nThis week: " + gymDays7 + "/7 gym days | Avg sleep: " + avgSl + "h | Avg protein: " + avgProt7 + "g\nBe direct, specific, reference his actual numbers. Max 4-5 sentences.";
-        const fullSys = coach.sys + "\n\n" + ctx;
+        const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nThis week: " + gymDays7 + "/7 gym days | Avg sleep: " + avgSl + "h | Avg protein: " + avgProt7 + "g\nBackground only — use a number only if it matters for what he just asked.";
+        const fullSys = coach.sys + "\n\n" + COACH_CHAT_STYLE + "\n\n" + ctx;
         try {
-            const response = await ai(fullSys, newHistUser.slice(-10), 800);
+            const response = await ai(fullSys, newHistUser.slice(-20), 800);
             const assistantMsg = { role: "assistant", content: response };
             const newHist = [...newHistUser, assistantMsg];
             const up2 = Object.assign({}, CH, { [id]: newHist });
@@ -4547,7 +4560,7 @@ function JeetOS() {
         const coach = COACHES.find(c => c.id === coachId) || {};
         const ctx = "User routine: Morning drink daily. Seitan breakfast (38g P). Paneer paratha lunch (42g P). Soya dinner (32g P). Target 1800kcal 170g protein. Gym: " + GYM_SPLIT[TODAY] + ". Skin AM: Cetaphil+VitC+SPF. Night: " + viewDay + " routine. Today: sleep=" + L.sleepHours + "h mood=" + L.mood + " of 5 energy=" + L.energy + " of 5.";
         try {
-            const r = await ai(coach.sys + " " + ctx, nh, 800);
+            const r = await ai(coach.sys + "\n\n" + COACH_CHAT_STYLE + "\n\n" + ctx, nh.slice(-20), 800);
             const final = Object.assign({}, CH, { [coachId]: [...nh, { role: "assistant", content: r }] });
             setCH(final);
             store.set("jos_ch", final);
