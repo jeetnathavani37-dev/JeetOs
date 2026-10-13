@@ -2706,6 +2706,257 @@ function CheckinEntryCard({ T, onOpen }) {
             React.createElement("div", { style: { fontSize: 10, color: due ? T.gold : T.ivoryD, fontFamily: font, marginTop: 3, lineHeight: 1.4 } }, due ? "Due — face, hair, body, outfit photos bhejo, coaches poora hafta review karenge" : "Last " + agoText(last.created_on) + " · score " + (last.summary ? last.summary.overall : "–") + "/100 · tap for report")),
         React.createElement("span", { style: { color: T.gold, fontSize: 16 } }, "→"));
 }
+// ── TEAM GROUP: one WhatsApp-style group with every coach ───────────────
+// One AI call writes the whole turn: it picks the 1-3 coaches who'd reply
+// and has them talk to Jeet and to each other. Stored in CH.team.
+const GROUP_ID = "team";
+const GROUP_ORDER = ["fitness", "nutrition", "skin", "hair", "sleep", "style", "grooming", "ronaldo", "mind"];
+function personaName(id) { return String(COACH_VOICES[id] || coachLabel(id)).split(" (")[0]; }
+function groupLiveData(L, W, viewDay) {
+    const w7 = (W || []).slice(-7);
+    const avg = k => w7.length ? +(w7.reduce((s, d) => s + (+d[k] || 0), 0) / w7.length).toFixed(1) : 0;
+    return "JEET'S LIVE DATA: " + viewDay + " | gym " + (L.gymDone ? "done" : "not yet") + " | skincare " + (L.skincareDone ? "done" : "not yet") + " | sleep " + (L.sleepHours || 0) + "h | water " + (L.water || 0)
+        + " glasses | protein " + (L.totalProtein || 0) + "g | mood " + (L.mood || 0) + "/5 | energy " + (L.energy || 0) + "/5. Last 7 days: gym " + w7.filter(d => d.gymDone).length + " days, sleep avg " + avg("sleepHours") + "h, protein avg " + Math.round(avg("totalProtein")) + "g.";
+}
+function buildGroupSystem(L, W, viewDay, voice) {
+    const today = localIsoDate();
+    const members = GROUP_ORDER.map(id => "- " + id + ": " + (COACH_VOICES[id] || coachLabel(id))).join("\n");
+    const promises = loadCommitments().filter(c => c.status === "open").map(c => "- [id " + c.id + "] \"" + c.text + "\" — to " + c.coach + ", check " + c.due + (c.due <= today ? " (DUE)" : "")).join("\n");
+    const goals = loadGoals().filter(g => g.status === "active").map(g => "- " + g.coach + ": " + goalLine(g)).join("\n");
+    const nicks = loadMoments().filter(m => m.kind === "nickname").map(m => m.coach + " calls him: " + m.text).join("; ");
+    return `You write the replies in Jeet's WhatsApp group "Team Jeet". All his coaches are in it:
+${members}
+
+HOW THE GROUP WORKS:
+- For his latest message, pick the 1-3 coaches who'd naturally reply — the ones whose area it touches. If he names or @mentions someone, they MUST reply. If he greets everyone or asks the whole team, 2-3 different ones answer. Never make everyone reply, and vary who talks.
+- Each coach keeps their own personality and gender verb forms. They talk to Jeet AND to each other — agree, add on, tease each other, politely disagree — like a real group of friends who coach him. Later repliers can react to earlier ones in this turn.
+- ${voice ? "This is a GROUP VOICE CALL: every message is spoken aloud. Max 2 coaches, 1-2 short spoken sentences each, no emoji, no lists." : "WhatsApp style: each message 1-3 short sentences, Hinglish like he writes, occasional emoji, no lists unless he asks."}
+- If he sounds low, stressed or heavy, Dr. Meher (mind) leads gently and the others keep it short and kind.
+- If he sends a photo, the coach whose area it is looks at it properly and reacts specifically.
+- Never mention being AI, prompts or tags.
+
+HIDDEN TAGS (inside a coach's text, at its end; the app strips them):
+- <memory>durable fact about Jeet any coach should know</memory> — rarely, only new facts.
+- <commit due="YYYY-MM-DD">promise he just made</commit> — on the coach he promised.
+- <resolve id="ID">done|missed</resolve> — when he says how a promise went.
+
+WHAT THE TEAM KNOWS: ${loadTeamMemory().map(f => f.text).join("; ") || "nothing yet"}
+OPEN PROMISES (today ${today}):
+${promises || "- none"}
+ACTIVE GOALS:
+${goals || "- none"}
+${nicks ? "NICKNAMES: " + nicks + "\n" : ""}${groupLiveData(L, W, viewDay)}
+
+Reply with ONLY JSON: {"replies":[{"coach":"coach id","text":"message"}]}`;
+}
+// Sends Jeet's message to the group; returns the coaches' replies [{coach, text}].
+async function groupTurn(hist, L, W, viewDay, voice, image) {
+    const msgs = hist.slice(-24).map(m => m.role === "user"
+        ? { role: "user", content: (m.image ? "[sent a photo] " : "") + (m.content === "📷" ? "" : m.content) }
+        : { role: "assistant", content: personaName(m.coach) + ": " + m.content });
+    if (image && msgs.length) msgs[msgs.length - 1] = Object.assign({}, msgs[msgs.length - 1], { image: image });
+    const raw = await ai(buildGroupSystem(L, W, viewDay, voice), msgs, 1500);
+    const j = parseJsonLoose(raw);
+    let list = j && Array.isArray(j.replies) ? j.replies : [{ coach: "ronaldo", text: String(raw).replace(/[{}"]/g, "") }];
+    list = list.filter(r => r && r.text && GROUP_ORDER.includes(r.coach)).slice(0, voice ? 2 : 3);
+    return list.map(r => {
+        const mem = extractTeamMemory(String(r.text));
+        addTeamMemoryFacts(mem.facts, r.coach);
+        const text = applyCommitTags(String(mem.clean || r.text).replace(/<\/?handoff>[\s\S]*?(<\/handoff>)?/gi, ""), r.coach) || String(r.text).replace(/<[^>]+>/g, "").trim();
+        return { coach: r.coach, text: text };
+    }).filter(r => r.text);
+}
+function speakSequence(list, onEach, onDone) {
+    let i = 0;
+    const next = () => {
+        if (i >= list.length) { if (onDone) onDone(); return; }
+        const r = list[i++];
+        if (onEach) onEach(r);
+        speakCoach(r.coach, r.text, null, next);
+    };
+    next();
+}
+function coachColor(id) { return (COACHES.find(c => c.id === id) || {}).color || "#D4AF37"; }
+function GroupScreen({ T, CH, setCH, L, W, viewDay, onBack, onOpenCoach }) {
+    const font = "Inter,system-ui,sans-serif";
+    const hist = CH[GROUP_ID] || [];
+    const [inp, setInp] = React.useState("");
+    const [typing, setTyping] = React.useState(null);
+    const [busy, setBusy] = React.useState(false);
+    const [photo, setPhoto] = React.useState(null);
+    const [inCall, setInCall] = React.useState(false);
+    const [voiceOn, setVoiceOn] = React.useState(voiceAutoOn());
+    const endRef = React.useRef(null);
+    const fileRef = React.useRef(null);
+    React.useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: "smooth" }); }, [hist.length, typing]);
+    React.useEffect(() => () => stopCoachVoice(), []);
+    const save = (list) => setCH(prev => { const up = Object.assign({}, prev, { [GROUP_ID]: list }); store.set("jos_ch", slimChatImages(up)); return up; });
+    const histRef = React.useRef(hist);
+    histRef.current = hist;
+    const send = async (text, opts) => {
+        const voice = !!(opts && opts.voice);
+        const pic = photo;
+        if ((!String(text).trim() && !pic) || busy) return [];
+        unlockCoachAudio();
+        const um = { role: "user", content: String(text).trim() || "📷", ts: Date.now() };
+        if (pic) um.image = pic.thumb;
+        let list = histRef.current.concat([um]);
+        save(list); setInp(""); setPhoto(null); setBusy(true);
+        let replies = [];
+        try {
+            setTyping("…");
+            replies = await groupTurn(list, L, W, viewDay, voice, pic && pic.full);
+            if (voiceOn && !voice) speakSequence(replies);
+            for (let i = 0; i < replies.length; i++) {
+                setTyping(personaName(replies[i].coach));
+                if (!voice) await new Promise(r => setTimeout(r, i === 0 ? 400 : typingDelay(replies[i].text)));
+                list = list.concat([{ role: "assistant", coach: replies[i].coach, content: replies[i].text, ts: Date.now() }]);
+                save(list);
+            }
+        } catch (e) {
+            list = list.concat([{ role: "assistant", coach: "ronaldo", content: "Network down lag raha hai. Thodi der mein phir try kar.", ts: Date.now() }]);
+            save(list);
+            replies = [{ coach: "ronaldo", text: "Network down lag raha hai. Phir try kar." }];
+        } finally { setTyping(null); setBusy(false); }
+        return replies;
+    };
+    const sendRef = React.useRef(send);
+    sendRef.current = send;
+    const pickPhoto = async (e) => {
+        const f = e.target.files && e.target.files[0]; e.target.value = "";
+        if (!f) return;
+        try { setPhoto({ full: await resizeImage(f, 1024, 0.8), thumb: await resizeImage(f, 320, 0.6) }); } catch (_a) { }
+    };
+    if (inCall) return React.createElement(GroupCallOverlay, { T: T, onUserText: (t) => sendRef.current(t, { voice: true }), onEnd: () => setInCall(false) });
+    const iconBtn = (label, content, on, active, color) => React.createElement("button", { onClick: on, "aria-label": label, title: label, style: { width: 32, height: 32, borderRadius: "50%", border: "1px solid " + (active ? color || T.gold : T.border2), background: active ? (color || T.gold) + "22" : "transparent", cursor: "pointer", fontSize: 14, flexShrink: 0 } }, content);
+    return React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", height: "100vh", background: T.ink, fontFamily: font, display: "flex", flexDirection: "column", overflow: "hidden" } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "16px 16px 12px", borderBottom: "1px solid " + T.border, flexShrink: 0 } },
+            React.createElement("button", { onClick: onBack, "aria-label": "Back", style: { width: 34, height: 34, borderRadius: "50%", border: "1px solid " + T.border2, background: T.card, color: T.ivory, cursor: "pointer", fontSize: 16, flexShrink: 0 } }, "←"),
+            React.createElement("div", { style: { display: "flex", flexShrink: 0 } }, ["fitness", "nutrition", "mind"].map((id, i) => React.createElement("div", { key: id, style: { marginLeft: i ? -10 : 0, borderRadius: "50%", border: "2px solid " + T.ink } }, React.createElement(CoachAvatar, { coachId: id, color: coachColor(id), size: 26 })))),
+            React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+                React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 17, color: T.ivory } }, "Team Jeet"),
+                React.createElement("div", { style: { fontSize: 10, color: typing ? T.green : T.ivoryD, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, typing ? (typing === "…" ? "team is typing…" : typing + " typing…") : GROUP_ORDER.map(personaName).join(", "))),
+            iconBtn("Group call", "📞", () => { unlockCoachAudio(); setInCall(true); }, true, T.green),
+            iconBtn(voiceOn ? "Voice off" : "Voice on", voiceOn ? "🔊" : "🔈", () => { unlockCoachAudio(); const v = !voiceOn; setVoiceOn(v); store.set(VOICE_AUTO_KEY, v); if (!v) stopCoachVoice(); }, voiceOn),
+            hist.length > 0 && iconBtn("Clear group chat", "🗑", () => { stopCoachVoice(); save([]); }, false)),
+        React.createElement("div", { style: { flex: 1, overflowY: "auto", scrollbarWidth: "none", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8 } },
+            hist.length === 0 && React.createElement("div", { style: { textAlign: "center", fontSize: 12, color: T.ivoryD, lineHeight: 1.6, padding: "30px 10px" } }, "Saare coaches ek group mein 👥", React.createElement("br"), "Kuch bhi poocho — jiska area hai wo jawab dega, aur wo aapas mein bhi baat karenge. @naam likh ke kisi ek ko bula sakte ho."),
+            hist.map((m, i) => {
+                if (m.role === "user") return React.createElement("div", { key: i, style: { alignSelf: "flex-end", maxWidth: "82%", padding: "10px 14px", borderRadius: 14, fontSize: 13, lineHeight: 1.6, background: "rgba(212,175,55,.1)", border: "1px solid rgba(212,175,55,.2)", color: T.gold } },
+                    m.image && React.createElement("img", { src: m.image, alt: "Photo", style: { display: "block", width: "100%", maxWidth: 200, borderRadius: 10, marginBottom: m.content === "📷" ? 0 : 6 } }), m.content === "📷" && m.image ? null : m.content, msgTime(m));
+                const col = coachColor(m.coach);
+                const prevSame = i > 0 && hist[i - 1].role === "assistant" && hist[i - 1].coach === m.coach;
+                return React.createElement("div", { key: i, style: { display: "flex", gap: 8, alignItems: "flex-start", maxWidth: "88%" } },
+                    React.createElement("div", { onClick: () => onOpenCoach && onOpenCoach(m.coach), style: { width: 28, flexShrink: 0, cursor: "pointer", visibility: prevSame ? "hidden" : "visible" } }, React.createElement(CoachAvatar, { coachId: m.coach, color: col, size: 28 })),
+                    React.createElement("div", { style: { padding: "8px 12px", borderRadius: 14, background: T.card2, border: "1px solid " + T.border, fontSize: 13, lineHeight: 1.6, color: T.ivory } },
+                        !prevSame && React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: col, marginBottom: 2 } }, personaName(m.coach)),
+                        m.content,
+                        React.createElement("div", { style: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10 } }, React.createElement(SpeakButton, { coachId: m.coach, text: m.content, color: col }), msgTime(m))));
+            }),
+            typing && React.createElement("div", { style: { alignSelf: "flex-start", padding: "9px 14px", borderRadius: 14, background: T.card2, border: "1px solid " + T.border, fontSize: 11, color: T.ivoryD } }, (typing === "…" ? "" : typing + " ") + "typing…"),
+            React.createElement("div", { ref: endRef })),
+        photo && React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 16px 0" } },
+            React.createElement("img", { src: photo.thumb, alt: "Photo to send", style: { width: 44, height: 44, objectFit: "cover", borderRadius: 8 } }),
+            React.createElement("span", { style: { flex: 1, fontSize: 10, color: T.ivoryD } }, "Photo ready"),
+            React.createElement("button", { onClick: () => setPhoto(null), "aria-label": "Remove photo", style: { background: "transparent", border: "none", color: T.ivoryD, cursor: "pointer" } }, "✕")),
+        React.createElement("div", { style: { display: "flex", gap: 8, padding: "8px 16px 16px", alignItems: "flex-end" } },
+            React.createElement(MicButton, { T: T, onText: (t) => setInp(prev => (prev ? prev + " " : "") + t) }),
+            React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", onChange: pickPhoto, style: { display: "none" } }),
+            React.createElement("button", { onClick: () => fileRef.current && fileRef.current.click(), "aria-label": "Send a photo", style: { width: 40, height: 40, borderRadius: "50%", background: T.card2, border: "1px solid " + T.border2, cursor: "pointer", fontSize: 16, flexShrink: 0 } }, "📷"),
+            React.createElement("input", { value: inp, onChange: e => setInp(e.target.value), onKeyDown: e => { if (e.key === "Enter") send(inp); }, placeholder: "Message Team Jeet…", style: { flex: 1, minWidth: 0, background: T.card2, border: "1px solid " + T.border2, borderRadius: 22, color: T.ivory, fontFamily: font, fontSize: 12, padding: "11px 16px", outline: "none" } }),
+            React.createElement("button", { onClick: () => send(inp), disabled: busy || (!inp.trim() && !photo), "aria-label": "Send", style: { width: 40, height: 40, borderRadius: "50%", border: "none", background: inp.trim() || photo ? "linear-gradient(135deg,#D4AF37,#F0D080)" : "rgba(255,255,255,.06)", cursor: "pointer", flexShrink: 0, fontSize: 14 } }, "➤")));
+}
+// Group voice call: he talks, 1-2 coaches answer one after another, each in their own voice.
+function GroupCallOverlay({ T, onUserText, onEnd }) {
+    const font = "Inter,system-ui,sans-serif";
+    const Ctor = speechRecognitionCtor();
+    const [state, setState] = React.useState("speaking");
+    const [speaker, setSpeaker] = React.useState("ronaldo");
+    const [said, setSaid] = React.useState("");
+    const [heard, setHeard] = React.useState("");
+    const [secs, setSecs] = React.useState(0);
+    const alive = React.useRef(true);
+    const recRef = React.useRef(null);
+    const silent = React.useRef(0);
+    const turn = React.useRef(0);
+    const stopRec = () => { const r = recRef.current; recRef.current = null; if (r) { r.onend = null; r.onresult = null; r.onerror = null; try { r.abort(); } catch (_a) { } } };
+    const speakAll = (list) => {
+        const my = ++turn.current;
+        setState("speaking");
+        speakSequence(list, (r) => { setSpeaker(r.coach); setSaid(r.text); }, () => { if (alive.current && turn.current === my) listen(); });
+    };
+    const listen = () => {
+        if (!alive.current || !Ctor) return;
+        turn.current++;
+        stopRec();
+        setState("listening"); setHeard(""); setSpeaker(null);
+        const rec = new Ctor();
+        rec.lang = "en-IN"; rec.interimResults = true; rec.continuous = false;
+        let finalText = "";
+        rec.onresult = (e) => {
+            let interim = "";
+            for (let i = 0; i < e.results.length; i++) { const r = e.results[i]; if (r.isFinal) finalText = (finalText + " " + r[0].transcript).trim(); else interim += r[0].transcript; }
+            setHeard((finalText + " " + interim).trim());
+        };
+        rec.onerror = () => { };
+        rec.onend = async () => {
+            if (!alive.current || recRef.current !== rec) return;
+            recRef.current = null;
+            const text = finalText.trim();
+            if (!text) { silent.current += 1; if (silent.current >= 3) { setState("paused"); return; } setTimeout(listen, 250); return; }
+            silent.current = 0;
+            setState("thinking");
+            let replies = [];
+            try { replies = await onUserText(text); } catch (_a) { }
+            if (!alive.current) return;
+            speakAll(replies && replies.length ? replies : [{ coach: "ronaldo", text: "Connection mein dikkat hai. Phir se bol." }]);
+        };
+        recRef.current = rec;
+        try { rec.start(); } catch (_a) { setState("paused"); }
+    };
+    React.useEffect(() => {
+        unlockCoachAudio();
+        if (Ctor) speakAll([{ coach: "ronaldo", text: "Poori team yahan hai. Bol Jeet." }, { coach: "nutrition", text: "Haan, sab sun rahe hain!" }]);
+        const t = setInterval(() => setSecs(s => s + 1), 1000);
+        return () => { alive.current = false; clearInterval(t); stopRec(); stopCoachVoice(); };
+    }, []);
+    const tap = () => {
+        if (state === "speaking") { stopCoachVoice(); listen(); }
+        else if (state === "paused") { silent.current = 0; listen(); }
+        else if (state === "listening") { const r = recRef.current; if (r) try { r.stop(); } catch (_a) { } }
+    };
+    const hangUp = () => { alive.current = false; stopRec(); stopCoachVoice(); onEnd(); };
+    return React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 300, background: "radial-gradient(ellipse at 50% 35%, rgba(59,209,111,.12) 0%, transparent 60%), #07060A", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-between", padding: "40px 20px 36px", fontFamily: font } },
+        React.createElement("div", { style: { textAlign: "center" } },
+            React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 22, color: T.ivory } }, "Team Jeet"),
+            React.createElement("div", { style: { fontSize: 12, color: T.ivoryD, marginTop: 4 } }, "Group call · " + Math.floor(secs / 60) + ":" + String(secs % 60).padStart(2, "0"))),
+        React.createElement("div", { onClick: tap, style: { display: "grid", gridTemplateColumns: "repeat(3, 84px)", gap: 14, cursor: "pointer" } }, GROUP_ORDER.map(id => {
+            const on = speaker === id && state === "speaking";
+            const col = coachColor(id);
+            return React.createElement("div", { key: id, style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, opacity: state === "speaking" && !on ? .45 : 1, transition: "opacity .3s" } },
+                React.createElement("div", { style: { borderRadius: "50%", padding: 3, border: "2px solid " + (on ? col : "transparent"), boxShadow: on ? "0 0 24px " + col + "88" : "none", animation: on ? "pulse 1.4s ease-in-out infinite" : "none" } }, React.createElement(CoachAvatar, { coachId: id, color: col, size: 58 })),
+                React.createElement("div", { style: { fontSize: 10, color: on ? col : T.ivoryD, whiteSpace: "nowrap" } }, personaName(id).replace(/^(Dr\.|Coach) /, "")));
+        })),
+        React.createElement("div", { style: { minHeight: 70, maxWidth: 340, textAlign: "center" } },
+            !Ctor ? React.createElement("div", { style: { fontSize: 13, color: T.ivoryD } }, "Is browser mein voice call support nahi hai — Chrome ya Safari mein kholo.")
+                : state === "listening" ? React.createElement("div", { style: { fontSize: heard ? 15 : 13, color: heard ? T.gold : "#3BD16F", lineHeight: 1.5 } }, heard ? "“" + heard + "”" : "Sab sun rahe hain… bolo")
+                : state === "thinking" ? React.createElement("div", { style: { fontSize: 13, color: T.ivoryD } }, "Team soch rahi hai…")
+                : state === "paused" ? React.createElement("div", { style: { fontSize: 13, color: T.ivoryD } }, "Tap karke bolo")
+                : said && React.createElement("div", { style: { fontSize: 14, color: T.ivory, lineHeight: 1.6 } }, React.createElement("span", { style: { color: coachColor(speaker), fontWeight: 600 } }, personaName(speaker) + ": "), said)),
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 28 } },
+            React.createElement("button", { onClick: () => { if (state === "paused") { silent.current = 0; listen(); } else { turn.current++; stopRec(); stopCoachVoice(); setState("paused"); } }, "aria-label": state === "paused" ? "Resume" : "Pause", style: { width: 58, height: 58, borderRadius: "50%", border: "1px solid " + T.border2, background: "rgba(255,255,255,.08)", color: T.ivory, fontSize: 20, cursor: "pointer" } }, state === "paused" ? "🎤" : "⏸"),
+            React.createElement("button", { onClick: hangUp, "aria-label": "End call", style: { width: 70, height: 70, borderRadius: "50%", border: "none", background: "#E5383B", color: "#fff", fontSize: 26, cursor: "pointer", boxShadow: "0 6px 20px rgba(229,56,59,.45)" } }, "📞")));
+}
+function GroupEntryCard({ T, CH, onOpen }) {
+    const font = "Inter,system-ui,sans-serif";
+    const last = (CH[GROUP_ID] || []).slice(-1)[0];
+    return React.createElement("div", { onClick: onOpen, style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 16px", marginBottom: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 12 } },
+        React.createElement("div", { style: { display: "flex" } }, ["fitness", "nutrition", "mind", "style"].map((id, i) => React.createElement("div", { key: id, style: { marginLeft: i ? -12 : 0, borderRadius: "50%", border: "2px solid " + T.card } }, React.createElement(CoachAvatar, { coachId: id, color: coachColor(id), size: 30 })))),
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+            React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontFamily: font, fontWeight: 600 } }, "👥 Team Jeet"),
+            React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, fontFamily: font, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, last ? (last.role === "user" ? "You: " : personaName(last.coach) + ": ") + last.content : "Group chat + group call with all coaches")),
+        React.createElement("span", { style: { fontSize: 16 } }, "📞"));
+}
 function GoalStrip({ coachId, color, T }) {
     const goals = loadGoals().filter(g => g.coach === coachId && g.status === "active");
     if (!goals.length) return null;
@@ -6286,6 +6537,9 @@ function JeetOS() {
             return () => clearTimeout(t);
         }
     }, [siuuu]);
+    if (screen === "group") {
+        return React.createElement(GroupScreen, { T: T, CH: CH, setCH: setCH, L: L, W: W, viewDay: viewDay, onBack: () => setScreen("home"), onOpenCoach: (cid) => { setActiveCoach(cid); setScreen("coach"); } });
+    }
     if (screen === "checkin") {
         return React.createElement(CheckinScreen, { T: T, W: W, setCH: setCH, onBack: () => setScreen("home"),
             onOpenCoach: (cid) => { setActiveCoach(cid); setScreen("coach"); },
@@ -6947,6 +7201,7 @@ function JeetOS() {
                     TROPHY_DEFS.filter(t => trophyStatus[t.id]).length + " of " + TROPHY_DEFS.length + " unlocked")),
             React.createElement("div", { style: { padding: "12px 20px" } },
                 React.createElement(CheckinEntryCard, { T: T, onOpen: () => setScreen("checkin") }),
+                React.createElement(GroupEntryCard, { T: T, CH: CH, onOpen: () => setScreen("group") }),
                 React.createElement(Label, { c: T.gold }, "Your Coaches"),
                 React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 } }, COACHES.map(c => {
                     const grads = { skin: "linear-gradient(135deg,#1E1524,#150F1C)", hair: "linear-gradient(135deg,#141C2C,#0E1420)", fitness: "linear-gradient(135deg,#141E14,#0E160E)", nutrition: "linear-gradient(135deg,#1E1808,#161206)", sleep: "linear-gradient(135deg,#0C1420,#080E18)", style: "linear-gradient(135deg,#1E1208,#160E06)", grooming: "linear-gradient(135deg,#101C1C,#0A1414)" };
