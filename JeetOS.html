@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-49";
+const APP_BUILD = "2026.10.14-50";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -842,7 +842,8 @@ async function callBackendAI(sys, msgs, max, provider, opts) {
         throw new Error((d && d.error) || ("AI backend " + r.status));
     return d.text;
 }
-// opts.tier "smart" = the coaches' main brain (better model), default = fast/cheap.
+// opts.tier "pro" = strongest model (real questions, assessments, reviews),
+// "smart" = casual coach chat and the group, default = fast/cheap.
 async function ai(sys, msgs, max, opts) {
     return callBackendAI(sys, msgs, max, "claude", opts);
 }
@@ -1016,7 +1017,7 @@ function extractHandoff(reply) {
 // check-in / therapist rules + shared team memory + today's data.
 // Text before PROMPT_LIVE never changes for a coach, so the server can cache it.
 const PROMPT_LIVE = "\n\n<<<LIVE>>>\n\n";
-function buildCoachSystem(coach, CH, ctx) {
+function buildCoachSystem(coach, CH, ctx, W) {
     const parts = [coach.sys, COACH_CHAT_STYLE];
     if (COACH_VOICES[coach.id]) parts.push("YOUR PERSONALITY (keep it consistent, make it fun to talk to you): " + COACH_VOICES[coach.id]);
     parts.push(championPrompt(coach.id));
@@ -1034,6 +1035,10 @@ function buildCoachSystem(coach, CH, ctx) {
     if (scans) parts.push(scans);
     const past = pastConvosPrompt(coach.id);
     if (past) parts.push(past);
+    const team = teamViewText(coach.id);
+    if (team) parts.push(team);
+    const pat = patternsText(W);
+    if (pat) parts.push(pat);
     parts.push(teamMemoryPrompt(CH, coach.id));
     parts.push(commitmentsPrompt(coach.id));
     parts.push(goalsPrompt(coach.id));
@@ -1581,6 +1586,59 @@ const COACH_CHAMPION = {
     mind: { cred: "a clinical psychologist (CBT, ACT, habit psychology)", thinks: "how he's really feeling, patterns in his mood and energy, what's underneath the skipping, small doable steps, his strengths",
         ex: ["kuch karne ka mann nahi karta", "Samajh rahi hoon. Aur ye pichle kuch dinon se hai na — mood 2-3 pe chal raha hai, neend bhi kam hai.\n\nAaj kuch bada mat soch. Bas ek chhoti cheez: 10 minute walk, phone ghar pe.\n\nBatao, aaj din ka sabse bhaari pal kaunsa tha?"] },
 };
+// Real questions, problems, plans and photos get the strongest model and more
+// thinking; quick banter stays on the fast-replying one.
+function coachBrain(text, hasPhoto) {
+    const t = String(text || "");
+    const deep = hasPhoto || t.length > 70 || /\?|kya kar|kaise|kaisa|kyu|kyon|why|how|plan|judge|rate|score|batao|bata|help|problem|issue|samjha|explain|kitna|kitne|routine|diet|workout|progress|stuck|atka|nahi ho|improve|better|best|suggest|should/i.test(t);
+    return deep ? { tier: "pro", effort: "medium" } : { tier: "smart", effort: "low" };
+}
+// Patterns hidden in his logs — what a sharp coach would notice.
+function patternsText(W) {
+    const days = (W || []).filter(d => d && d.date).slice().sort((a, b) => new Date(a.date) - new Date(b.date)).slice(-60);
+    if (days.length < 6) return "";
+    const avg = (arr, k) => arr.length ? arr.reduce((s, d) => s + (+d[k] || 0), 0) / arr.length : null;
+    const f1 = x => Math.round(x * 10) / 10;
+    const out = [];
+    const slept = days.filter(d => +d.sleepHours > 0);
+    const good = slept.filter(d => +d.sleepHours >= 7), bad = slept.filter(d => +d.sleepHours < 7);
+    if (good.length >= 2 && bad.length >= 2) {
+        const e = [avg(good, "energy"), avg(bad, "energy")], m = [avg(good, "mood"), avg(bad, "mood")];
+        const g = [good.filter(d => d.gymDone).length / good.length, bad.filter(d => d.gymDone).length / bad.length];
+        out.push("- Sleep 7h+ days (" + good.length + ") vs under 7h (" + bad.length + "): energy " + f1(e[0]) + " vs " + f1(e[1]) + "/5, mood " + f1(m[0]) + " vs " + f1(m[1]) + "/5, trained " + Math.round(g[0] * 100) + "% vs " + Math.round(g[1] * 100) + "% of days.");
+    }
+    const gym = days.filter(d => d.gymDone), rest = days.filter(d => !d.gymDone);
+    if (gym.length >= 2 && rest.length >= 2) out.push("- Mood on gym days " + f1(avg(gym, "mood")) + "/5 vs " + f1(avg(rest, "mood")) + "/5 on other days; protein " + Math.round(avg(gym, "totalProtein")) + "g vs " + Math.round(avg(rest, "totalProtein")) + "g.");
+    const wd = {};
+    days.forEach(d => { const n = new Date(d.date).toLocaleDateString("en-US", { weekday: "long" }); (wd[n] = wd[n] || []).push(d); });
+    const skipDays = Object.keys(wd).filter(n => n !== "Sunday" && wd[n].length >= 2 && wd[n].filter(d => d.gymDone).length / wd[n].length <= 0.34);
+    if (skipDays.length) out.push("- He usually skips the gym on " + skipDays.join(", ") + " (" + skipDays.map(n => wd[n].filter(d => d.gymDone).length + "/" + wd[n].length).join(", ") + ").");
+    const streak = k => { let n = 0; for (let i = days.length - 1; i >= 0 && days[i][k]; i--) n++; return n; };
+    const best = k => { let b = 0, n = 0; days.forEach(d => { n = d[k] ? n + 1 : 0; b = Math.max(b, n); }); return b; };
+    out.push("- Streaks (logged days): gym " + streak("gymDone") + " now / best " + best("gymDone") + ", skincare " + streak("skincareDone") + " now / best " + best("skincareDone") + ".");
+    if (days.length >= 20) {
+        const a = days.slice(-14), b = days.slice(-28, -14);
+        const ch = (k, name, u) => { const x = avg(a, k), y = avg(b, k); return x == null || y == null ? "" : name + " " + f1(y) + u + " → " + f1(x) + u; };
+        out.push("- Last 2 weeks vs 2 weeks before: " + [ch("sleepHours", "sleep", "h"), ch("totalProtein", "protein", "g"), ch("mood", "mood", "/5"), "gym " + b.filter(d => d.gymDone).length + " → " + a.filter(d => d.gymDone).length + " days"].filter(Boolean).join(", ") + ".");
+    }
+    const span = Math.round((new Date(days[days.length - 1].date) - new Date(days[0].date)) / 86400000) + 1;
+    if (span > days.length + 3) out.push("- He logged " + days.length + " of " + span + " days — gaps usually mean the off days weren't logged, so real numbers are probably a bit worse.");
+    return "PATTERNS IN HIS LOGS (connect causes across fields — this is where the real insights are):\n" + out.join("\n");
+}
+// What the rest of the team currently thinks of him, so coaches connect the dots.
+function teamViewText(coachId) {
+    const all = loadAssessments();
+    const lines = Object.keys(all).filter(k => k !== coachId).map(k => {
+        const last = (all[k] || []).slice().sort((a, b) => a.ts - b.ts).pop();
+        if (!last) return null;
+        const scored = (last.parameters || []).filter(p => p.score != null).sort((a, b) => a.score - b.score);
+        return "- " + threadName(k) + " (" + last.date + "): " + last.overall + "/100" + (scored[0] ? ", weakest: " + scored[0].name + " " + scored[0].score + "/10" : "") + (last.timeline && last.timeline.status ? ", " + last.timeline.status : "");
+    }).filter(Boolean);
+    const ck = loadCheckins(), lc = ck[ck.length - 1];
+    if (lc && lc.reviews) Object.keys(lc.reviews).filter(k => k !== coachId).forEach(k => { const r = lc.reviews[k]; if (r && r.didnt_go_well && r.didnt_go_well[0]) lines.push("- " + threadName(k) + " at the last check-in: " + r.didnt_go_well[0]); });
+    if (!lines.length) return "";
+    return "WHAT YOUR TEAMMATES SEE IN HIM (use it when their field explains yours — \"Sam bol raha tha neend 5h pe hai, isliye tera bench atka hai\"):\n" + lines.slice(0, 12).join("\n");
+}
 function championPrompt(id) {
     const c = COACH_CHAMPION[id];
     if (!c) return "";
@@ -1593,6 +1651,13 @@ HOW A CHAMPION ANSWERS (in your own voice, as normal texts — never as headings
 - Be honest even when it stings, and hype him for real when he earns it. No sugar-coating, no lectures.
 - If you need a number or photo you don't have, say what you're assuming and ask for it.
 - For casual chat, just be a fun, real person: banter, callbacks, inside jokes, light roasting when he slacks.
+
+THINK LIKE THE BEST IN THE WORLD (silently, before any real answer — never show these as steps):
+1. Root cause, not symptom. Look across fields: sleep, food, stress, training, skin and mood all feed each other — use PATTERNS IN HIS LOGS and WHAT YOUR TEAMMATES SEE to find the real reason.
+2. Evidence. Base the call on what actually works (mechanisms, studies, real numbers) and on HIS history — what worked or failed for him before.
+3. One lever. Pick the single highest-impact change for him right now instead of a list of ten tips.
+4. Predict and track. Say what will change and by when ("2 hafte mein energy 3 → 4 dikhegi"), and how you'll check it.
+5. Challenge him. If his plan or belief is wrong, say so and why; if he's sandbagging, push him. A great coach is strong, not soft.
 
 EXAMPLE OF YOUR STYLE (the numbers are made up — always use HIS real data instead):
 Jeet: ${c.ex[0]}
@@ -1829,7 +1894,7 @@ PHOTOS: ${labels.length ? "attached in this order — " + labels.map((l, i) => (
 ${assessmentSchemaText(id)}`;
     const msg = { role: "user", content: "Mera full assessment karo — har parameter pe judge karo aur timeline do." };
     if (images.length) msg.images = images.slice(-4);
-    const raw = await ai(sys, [msg], 4000, { tier: "smart", effort: "medium" });
+    const raw = await ai(sys, [msg], 4000, { tier: "pro", effort: "high" });
     const j = parseJsonLoose(raw);
     if (!j) throw new Error("Assessment could not be read — try again");
     const a = normalizeAssessment(id, j, prev);
@@ -1971,7 +2036,7 @@ FACTORS: ${pf.factors.join(", ")}.
 Reply with ONLY JSON (no markdown):
 ${scanSchemaText(slot)}`;
     const msg = { role: "user", content: "Meri " + pf.label.toLowerCase() + " photo scan karo.", images: prevImg ? [prevImg, image] : [image] };
-    const raw = await ai(sys, [msg], 3000, { tier: "smart", effort: "medium" });
+    const raw = await ai(sys, [msg], 3000, { tier: "pro", effort: "medium" });
     const j = parseJsonLoose(raw);
     if (!j || !Array.isArray(j.factors)) throw new Error("Scan could not be read — try again");
     const sc = normalizeScan(slot, j, prev, "scan");
@@ -3306,7 +3371,7 @@ Reply with ONLY a JSON object (no markdown, no extra text), written in his Hingl
 "score": ${id === "mind" ? "null" : "1-10 for your area this week"}, "trend": "up|same|down|first", "photo_notes": "detailed observations from the photos and how they compare with the previous one; empty string if no photos", "went_well": ["specific things"], "didnt_go_well": ["specific things"], "why": "honest root cause, 1-3 sentences", "plan": ["exactly 3 specific actions for next week"], "message": "2-3 lines straight to him in your own voice"}`;
     const msg = { role: "user", content: "Here's my week. Review it." };
     if (images.length) msg.images = images;
-    const raw = await ai(sys, [msg], 5000, { tier: "smart", effort: "medium" });
+    const raw = await ai(sys, [msg], 5000, { tier: "pro", effort: "medium" });
     const j = parseJsonLoose(raw) || { message: String(raw).replace(/[{}"]/g, "").slice(0, 600) };
     // Photo factor scans from the check-in go into the scan history too.
     if (j.photo_scans && typeof j.photo_scans === "object") {
@@ -3412,7 +3477,7 @@ You are ${coach.name}. ${COACH_VOICES[coach.id] || ""}
 IGNORE any length or format rules above. This is Jeet's TRANSFORMATION REVIEW for his ${sl.label.toLowerCase()} — the photos are in date order: ${picks.map((p, i) => (i + 1) + ") " + p.date + (p.score != null ? " (you scored " + p.score + "/10)" : "")).join("; ")}.
 Look at them side by side like a real coach. Say honestly what has visibly changed from the first to the latest photo (be specific — and say so if nothing has changed), what improved most, what hasn't moved, and the 2 things to focus on next month. If lighting or pose differ, mention it. ${coach.id === "skin" ? "Observations only, not a diagnosis." : ""}${coach.id === "fitness" ? "Objective, never body-shaming." : ""}
 Write 5-7 short lines in his Hinglish, in your own voice. Plain text, no headings, no markdown.`;
-    const raw = await ai(sys, [{ role: "user", content: "Mera transformation dekho.", images: picks.map(p => p.img) }], 1500, { tier: "smart", effort: "medium" });
+    const raw = await ai(sys, [{ role: "user", content: "Mera transformation dekho.", images: picks.map(p => p.img) }], 1500, { tier: "pro", effort: "medium" });
     return { coach: coach.id, text: String(raw).replace(/<[^>]+>/g, "").trim(), date: localIsoDate(), count: items.length };
 }
 function TransformView({ T, setCH }) {
@@ -3718,6 +3783,7 @@ HIDDEN TAGS (inside a coach's text, at its end; the app strips them):
 ${profilePrompt()}
 ${pastConvosPrompt("team")}
 ${statusReport(null, W, L)}
+${patternsText(W)}
 Every coach here is a champion in their field: judge him from his real condition and goals, specific numbers, no generic advice — and keep it fun, like a real group of friends.
 OTHER NOTES THE TEAM SAVED: ${loadTeamMemory().map(f => f.text).join("; ") || "none"}
 OPEN PROMISES (today ${today}):
@@ -3734,7 +3800,7 @@ async function groupTurn(hist, L, W, viewDay, voice, image) {
         ? { role: "user", content: ((m.image || m.imageKey) ? "[sent a photo] " : "") + (m.content === "📷" ? "" : m.content) }
         : { role: "assistant", content: personaName(m.coach) + ": " + m.content });
     if (image && msgs.length) msgs[msgs.length - 1] = Object.assign({}, msgs[msgs.length - 1], { image: image });
-    const raw = await ai(buildGroupSystem(L, W, viewDay, voice), msgs, 1500, { tier: "smart" });
+    const raw = await ai(buildGroupSystem(L, W, viewDay, voice), msgs, 1500, { tier: "smart", effort: "medium" });
     const j = parseJsonLoose(raw);
     let list = j && Array.isArray(j.replies) ? j.replies : [{ coach: "ronaldo", text: String(raw).replace(/[{}"]/g, "") }];
     list = list.filter(r => r && r.text && GROUP_ORDER.includes(r.coach)).slice(0, voice ? 2 : 3);
@@ -6514,12 +6580,12 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const gymDays7 = w7.filter(d => d.gymDone).length;
         const avgProt7 = w7.length ? Math.round(w7.reduce((s, d) => s + (d.totalProtein || 0), 0) / w7.length) : 0;
         const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nLast 7 days: " + (w7.length ? gymDays7 + "/7 gym days | avg sleep " + avgSl + "h | avg protein " + avgProt7 + "g" : "not logged yet") + (L.dayNotes ? "\nHis note today: " + L.dayNotes : "") + "\nLIFTS HE LOGGED (recent sessions):\n" + recentLiftsText(21) + "\nMEALS LOGGED TODAY:\n" + todaysMealsText() + "\nUse these when they matter for what he asked — they're what makes your answer his, not generic.\n\n" + statusReport(id, W, L);
-        const fullSys = buildCoachSystem(coach, CH, ctx) + (voice ? VOICE_CALL_NOTE : "");
+        const fullSys = buildCoachSystem(coach, CH, ctx, W) + (voice ? VOICE_CALL_NOTE : "");
         try {
             // Only the photo just sent travels to the model; older ones become a note.
             const aiMsgs = newHistUser.filter(m => !m.error).slice(-20).map(m => (m.image || m.imageKey) ? { role: m.role, content: m.content === "📷" ? "[sent a photo]" : "[sent a photo] " + m.content } : m);
             if (pic) aiMsgs[aiMsgs.length - 1] = { role: "user", content: msg.trim() || "(sent a photo)", image: pic.full };
-            const raw = await ai(fullSys, aiMsgs, 1500, { tier: "smart" });
+            const raw = await ai(fullSys, aiMsgs, 1500, coachBrain(msg, !!pic));
             const reply = processCoachReply(raw, id);
             if (reply.milestone) { setMilestone(reply.milestone); setTimeout(() => setMilestone(null), 3200); }
             // With voice on, the coach starts talking as the first text lands.
@@ -7396,7 +7462,7 @@ function JeetOS() {
         const coach = COACHES.find(c => c.id === coachId) || {};
         const ctx = "User routine: Morning drink daily. Seitan breakfast (38g P). Paneer paratha lunch (42g P). Soya dinner (32g P). Target 1800kcal 170g protein. Gym: " + GYM_SPLIT[TODAY] + ". Skin AM: Cetaphil+VitC+SPF. Night: " + viewDay + " routine. Today: sleep=" + L.sleepHours + "h mood=" + L.mood + " of 5 energy=" + L.energy + " of 5.";
         try {
-            const raw = await ai(buildCoachSystem(coach, CH, ctx), nh.slice(-20), 800);
+            const raw = await ai(buildCoachSystem(coach, CH, ctx, W), nh.slice(-20), 800);
             const { clean, facts } = extractTeamMemory(raw);
             addTeamMemoryFacts(facts, coachId);
             const final = Object.assign({}, CH, { [coachId]: [...nh, { role: "assistant", content: applyCommitTags(extractHandoff(clean || raw).clean || clean || raw, coachId), ts: Date.now() }] });

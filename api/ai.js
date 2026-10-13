@@ -14,9 +14,12 @@
 
 const PROVIDER_ORDER = ["claude", "groq", "gemini"];
 
-// Two Claude tiers. "smart" answers the coach chats, group, check-ins and
-// reviews; "fast" is the cheap model for everything else and the fallback if
-// the smart one fails. Override either with CLAUDE_CHAT_MODEL / CLAUDE_FAST_MODEL.
+// Three Claude tiers. "pro" (the strongest model) handles real coaching
+// questions, assessments, photo scans and check-in reviews; "smart" answers
+// casual chat and the group; "fast" is the cheap model for everything else.
+// Each falls back to the next one down if it fails. Override with
+// CLAUDE_PRO_MODEL / CLAUDE_CHAT_MODEL / CLAUDE_FAST_MODEL.
+const PRO_MODEL = (process.env.CLAUDE_PRO_MODEL || "claude-opus-5-5").trim();
 const SMART_MODEL = (process.env.CLAUDE_CHAT_MODEL || "claude-sonnet-5-5").trim();
 const FAST_MODEL = (process.env.CLAUDE_FAST_MODEL || "claude-haiku-5-5").trim();
 const EFFORTS = ["low", "medium", "high"];
@@ -153,6 +156,7 @@ module.exports = async function handler(req, res) {
       claudeKey: !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY),
       groqKey: !!process.env.GROQ_API_KEY,
       geminiKey: !!process.env.GEMINI_API_KEY,
+      proModel: PRO_MODEL,
       chatModel: SMART_MODEL,
       fastModel: FAST_MODEL,
     };
@@ -162,6 +166,8 @@ module.exports = async function handler(req, res) {
         status.claude = "ok";
         try { await callClaude("Reply with one word.", [{ role: "user", content: "ping" }], 50, { model: SMART_MODEL }); status.chat = "ok"; }
         catch (e) { status.chat = redact(e.message); }
+        try { await callClaude("Reply with one word.", [{ role: "user", content: "ping" }], 50, { model: PRO_MODEL }); status.pro = "ok"; }
+        catch (e) { status.pro = redact(e.message); }
       } catch (e) {
         status.claude = redact(e.message);
       }
@@ -204,10 +210,9 @@ module.exports = async function handler(req, res) {
 
   const errors = [];
   for (const p of order) {
-    // Claude: the smart model first when asked for, then the fast one.
-    const attempts = p === "claude"
-      ? (tier === "smart" && SMART_MODEL !== FAST_MODEL ? [SMART_MODEL, FAST_MODEL] : [FAST_MODEL]).map(model => ({ model, effort }))
-      : [null];
+    // Claude: start at the asked-for tier and step down on failure.
+    const chain = tier === "pro" ? [PRO_MODEL, SMART_MODEL, FAST_MODEL] : tier === "smart" ? [SMART_MODEL, FAST_MODEL] : [FAST_MODEL];
+    const attempts = p === "claude" ? [...new Set(chain)].map(model => ({ model, effort })) : [null];
     for (const opts of attempts) {
       try {
         const text = await CALLERS[p](system, messages, max, opts);
