@@ -21,6 +21,8 @@
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 body{background-color:#050508;background-image:repeating-linear-gradient(135deg,rgba(190,10,10,.025) 0px,rgba(190,10,10,.025) 2px,transparent 2px,transparent 42px),repeating-linear-gradient(45deg,rgba(20,110,60,.018) 0px,rgba(20,110,60,.018) 2px,transparent 2px,transparent 42px);color:#F2EFE6;font-family:'Inter',system-ui,sans-serif;max-width:430px;margin:0 auto;min-height:100vh;overflow-x:hidden;padding-top:env(safe-area-inset-top,0px);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;}
 input,textarea,button{font-family:inherit;}
+/* iOS zooms the page when an input under 16px gets focus; keep every field at 16px on phones. */
+@media (max-width:768px){input,textarea,select{font-size:16px !important;}}
 input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;}
 input[type=time]::-webkit-calendar-picker-indicator{filter:invert(1);opacity:.5;}
 ::-webkit-scrollbar{display:none;}
