@@ -854,6 +854,67 @@ const COACH_CHAT_STYLE = `HOW YOU TALK (this overrides any length or format rule
 - Have opinions and a personality. React like a human would — surprised, impressed, blunt, playful — when it fits.
 - Never say you're an AI, a model or a bot, and never mention "data provided" or "context". But if he sincerely asks whether you're a real person, be honest that you're his AI coach in JeetOS — then carry on in the same voice.`;
 
+// ── TEAM MEMORY: one memory shared by every coach ──────────────────────
+// Coaches tag durable facts as <memory>…</memory> at the end of a reply; the
+// app strips the tags, stores the facts on this device, and gives the whole
+// list (plus what Jeet recently told the other coaches) to every coach.
+const TEAM_MEMORY_KEY = "jos_team_memory";
+const TEAM_MEMORY_MAX = 80;
+function loadTeamMemory() {
+    const m = store.get(TEAM_MEMORY_KEY);
+    return Array.isArray(m) ? m : [];
+}
+function saveTeamMemory(list) {
+    store.set(TEAM_MEMORY_KEY, list.slice(-TEAM_MEMORY_MAX));
+}
+function addTeamMemoryFacts(facts, coachId) {
+    if (!facts.length) return;
+    const list = loadTeamMemory();
+    const seen = new Set(list.map(f => f.text.toLowerCase()));
+    const date = new Date().toISOString().slice(0, 10);
+    facts.forEach(text => {
+        const t = text.replace(/\s+/g, " ").trim().slice(0, 200);
+        if (t && !seen.has(t.toLowerCase())) {
+            seen.add(t.toLowerCase());
+            list.push({ text: t, from: coachId, date: date });
+        }
+    });
+    saveTeamMemory(list);
+}
+function extractTeamMemory(reply) {
+    const facts = [];
+    const clean = String(reply).replace(/<memory>([\s\S]*?)<\/memory>/gi, (_, f) => {
+        if (f.trim()) facts.push(f.trim());
+        return "";
+    }).replace(/<\/?memory>/gi, "").trim();
+    return { clean: clean, facts: facts.slice(0, 3) };
+}
+function coachLabel(id) {
+    const c = COACHES.find(x => x.id === id);
+    return c ? c.name + " coach" : "a coach";
+}
+function teamMemoryPrompt(CH, coachId) {
+    const facts = loadTeamMemory();
+    const factLines = facts.length
+        ? facts.map(f => "- " + f.text + " (told to " + coachLabel(f.from) + ", " + f.date + ")").join("\n")
+        : "- Nothing saved yet.";
+    // What Jeet said most recently to each of the other coaches — mental-health
+    // chats stay private to Dr. Meher.
+    const recent = COACHES.filter(c => c.id !== coachId && c.id !== "mind").map(c => {
+        const h = (CH && CH[c.id]) || [];
+        const lastUser = [...h].reverse().find(m => m.role === "user");
+        return lastUser ? "- To " + c.name + " coach: \"" + String(lastUser.content).slice(0, 140) + "\"" : null;
+    }).filter(Boolean).join("\n");
+    return `SHARED TEAM MEMORY — you're one of Jeet's coaches and the whole team shares this memory:
+${factLines}
+${recent ? "\nWhat Jeet recently told your teammates:\n" + recent + "\n" : ""}
+How to use it:
+- Know these things the way a teammate who read the notes would. Bring one up only when it's relevant, naturally ("Kai mentioned you're switching shampoos…"). Never recite the list.
+- When Jeet tells you something durable that any coach should know — a goal, preference, routine change, injury, event, product he uses, progress, schedule — add it at the very end of your reply as <memory>short fact about Jeet, third person</memory>. Max 2 per reply, only facts not already in memory, nothing trivial.
+- Never save passwords, API keys, crisis or self-harm details, or deeply private feelings.
+- Never mention the tags, the memory list, or that you're saving anything.`;
+}
+
 const COACHES = [
     {
         id: "skin", name: "Skin", icon: "sparkle", color: "#B06ECC",
@@ -1566,6 +1627,30 @@ function Stp({ val, dec, inc }) { return (React.createElement("div", { style: { 
     React.createElement("button", { style: { width: 28, height: 28, borderRadius: "50%", border: "1px solid " + T.border2, background: T.card2, color: T.ivory, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }, onClick: dec }, "-"),
     React.createElement("div", { style: { fontSize: 13, color: T.gold, minWidth: 32, textAlign: "center", fontFamily: "Fraunces,Georgia,serif" } }, val),
     React.createElement("button", { style: { width: 28, height: 28, borderRadius: "50%", border: "1px solid " + T.border2, background: T.card2, color: T.ivory, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }, onClick: inc }, "+"))); }
+function TeamMemoryCard({ T }) {
+    const [open, setOpen] = React.useState(false);
+    const [list, setList] = React.useState(loadTeamMemory());
+    React.useEffect(() => { if (open) setList(loadTeamMemory()); }, [open]);
+    const remove = (i) => { const next = list.filter((_, j) => j !== i); saveTeamMemory(next); setList(next); };
+    const font = "Inter,system-ui,sans-serif";
+    return React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 14px", marginBottom: 16 } },
+        React.createElement("div", { onClick: () => setOpen(!open), style: { display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" } },
+            React.createElement("div", null,
+                React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontFamily: font, fontWeight: 500 } }, "🧠 Team Memory"),
+                React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, fontFamily: font, marginTop: 2 } }, list.length + (list.length === 1 ? " thing" : " things") + " your coaches know about you · shared by all")),
+            React.createElement("span", { style: { color: T.ivoryD, fontSize: 12 } }, open ? "▴" : "▾")),
+        open && React.createElement("div", { style: { marginTop: 10 } },
+            list.length === 0
+                ? React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, fontFamily: font, lineHeight: 1.6 } }, "Nothing yet. Tell any coach about your goals, routine or changes — every coach will remember it.")
+                : list.slice().reverse().map((f, ri) => {
+                    const i = list.length - 1 - ri;
+                    return React.createElement("div", { key: i, style: { display: "flex", alignItems: "flex-start", gap: 8, padding: "7px 0", borderTop: "1px solid " + T.border } },
+                        React.createElement("div", { style: { flex: 1 } },
+                            React.createElement("div", { style: { fontSize: 12, color: T.ivory, fontFamily: font, lineHeight: 1.5 } }, f.text),
+                            React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: font, marginTop: 2 } }, "via " + coachLabel(f.from) + " · " + f.date)),
+                        React.createElement("button", { onClick: () => remove(i), "aria-label": "Forget this", style: { background: "transparent", border: "none", color: T.ivoryD, fontSize: 14, cursor: "pointer", padding: "0 4px" } }, "✕"));
+                })));
+}
 function Label({ c, children }) { return (React.createElement("div", { style: { fontSize: 11, letterSpacing: ".04em", textTransform: "uppercase", color: c || T.ivoryM, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, marginBottom: 10, marginTop: 14 } }, children)); }
 function Divider() { return (React.createElement("div", { style: { height: 1, background: "linear-gradient(90deg,transparent,rgba(201,162,74,.2),transparent)", margin: "10px 0" } })); }
 function CheckItem({ label, sub, done, onToggle, accent }) {
@@ -3757,10 +3842,12 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const gymDays7 = w7.filter(d => d.gymDone).length;
         const avgProt7 = w7.length ? Math.round(w7.reduce((s, d) => s + (d.totalProtein || 0), 0) / w7.length) : 0;
         const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nThis week: " + gymDays7 + "/7 gym days | Avg sleep: " + avgSl + "h | Avg protein: " + avgProt7 + "g\nBackground only — use a number only if it matters for what he just asked.";
-        const fullSys = coach.sys + "\n\n" + COACH_CHAT_STYLE + "\n\n" + ctx;
+        const fullSys = coach.sys + "\n\n" + COACH_CHAT_STYLE + "\n\n" + teamMemoryPrompt(CH, id) + "\n\n" + ctx;
         try {
-            const response = await ai(fullSys, newHistUser.slice(-20), 800);
-            const assistantMsg = { role: "assistant", content: response };
+            const raw = await ai(fullSys, newHistUser.slice(-20), 800);
+            const { clean, facts } = extractTeamMemory(raw);
+            addTeamMemoryFacts(facts, id);
+            const assistantMsg = { role: "assistant", content: clean || raw };
             const newHist = [...newHistUser, assistantMsg];
             const up2 = Object.assign({}, CH, { [id]: newHist });
             setCH(up2);
@@ -4560,8 +4647,10 @@ function JeetOS() {
         const coach = COACHES.find(c => c.id === coachId) || {};
         const ctx = "User routine: Morning drink daily. Seitan breakfast (38g P). Paneer paratha lunch (42g P). Soya dinner (32g P). Target 1800kcal 170g protein. Gym: " + GYM_SPLIT[TODAY] + ". Skin AM: Cetaphil+VitC+SPF. Night: " + viewDay + " routine. Today: sleep=" + L.sleepHours + "h mood=" + L.mood + " of 5 energy=" + L.energy + " of 5.";
         try {
-            const r = await ai(coach.sys + "\n\n" + COACH_CHAT_STYLE + "\n\n" + ctx, nh.slice(-20), 800);
-            const final = Object.assign({}, CH, { [coachId]: [...nh, { role: "assistant", content: r }] });
+            const raw = await ai(coach.sys + "\n\n" + COACH_CHAT_STYLE + "\n\n" + teamMemoryPrompt(CH, coachId) + "\n\n" + ctx, nh.slice(-20), 800);
+            const { clean, facts } = extractTeamMemory(raw);
+            addTeamMemoryFacts(facts, coachId);
+            const final = Object.assign({}, CH, { [coachId]: [...nh, { role: "assistant", content: clean || raw }] });
             setCH(final);
             store.set("jos_ch", final);
         }
@@ -5600,6 +5689,7 @@ function JeetOS() {
                         getCoachLevel(chats).next && React.createElement("div", { style: { height: 3, background: T.border, borderRadius: 2, overflow: "hidden" } },
                             React.createElement("div", { style: { height: "100%", width: getCoachLevel(chats).progress + "%", background: c.color, borderRadius: 2 } }))));
                 })),
+                React.createElement(TeamMemoryCard, { T: T }),
                 React.createElement(Label, { c: T.gold }, "Quick Log"),
                 React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 12, padding: "14px 16px", marginBottom: 10 } },
                     React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 } }, [{ l: "Skincare", k: "skincareDone", i: "✨" }, { l: "Gym", k: "gymDone", i: "🏋️" }, { l: "Hair", k: "haircareDone", i: "💈" }, { l: "Supps", k: "supplementsDone", i: "💊" }].map(it => (React.createElement("div", { key: it.k, style: { display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: L[it.k] ? "rgba(74,122,90,.1)" : "rgba(255,255,255,.03)", border: "1px solid " + (L[it.k] ? "rgba(74,122,90,.3)" : T.border2), borderRadius: 18 } },
