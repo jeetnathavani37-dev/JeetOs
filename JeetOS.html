@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-45";
+const APP_BUILD = "2026.10.14-46";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1028,6 +1028,8 @@ function buildCoachSystem(coach, CH, ctx) {
     const h = coach.id === "mind" ? freshMeherHandoff() : null;
     if (h) parts.push("REFERRAL: " + coachLabel(h.from) + " just suggested Jeet talk to you. What they noticed: " + h.reason + "\nAcknowledge it gently and naturally in your first reply, then start understanding what's going on.");
     parts.push(profilePrompt());
+    const assess = assessmentContextText(coach.id);
+    if (assess) parts.push(assess);
     const past = pastConvosPrompt(coach.id);
     if (past) parts.push(past);
     parts.push(teamMemoryPrompt(CH, coach.id));
@@ -1578,7 +1580,8 @@ const COACH_CHAMPION = {
 function championPrompt(id) {
     const c = COACH_CHAMPION[id];
     if (!c) return "";
-    return `YOU ARE A CHAMPION IN YOUR FIELD: ${c.cred}. You think in ${c.thinks}. Jeet is lucky to have you and you know it — answer like the smartest person in your field who also happens to be his friend.
+    return `YOU ARE A CHAMPION IN YOUR FIELD: PhD in ${PHD_FIELD[id] || "your field"} — ${c.cred}. You think in ${c.thinks}.
+YOU JUDGE HIM ON THESE ${(COACH_PARAMS[id] || []).length} PARAMETERS (1-10 each): ${(COACH_PARAMS[id] || []).join(", ")}. When you judge his progress, name the parameters that moved, by how much and why, and tie it to his goal timeline (where he is vs where he should be by now). Jeet is lucky to have you and you know it — answer like the smartest person in your field who also happens to be his friend.
 
 HOW A CHAMPION ANSWERS (in your own voice, as normal texts — never as headings):
 - For any real question about his body, progress, a plan, a problem or "kya karu": first JUDGE where he stands right now from his status report (numbers, trend, last check-in, photos, goals) — then what's working (strength), the #1 thing holding him back (weakness, with the reason), and the exact fix (numbers, exercises, foods, products, times). End with what you'll check next.
@@ -1693,7 +1696,7 @@ function lifePrompt(id) {
 - If he asks about you, answer from these details and stay consistent. Never invent big new facts about yourself.
 - If he sincerely asks whether you're a real person, be honest that you're his AI coach in JeetOS, then carry on in the same voice.`;
 }
-function CoachProfileSheet({ T, id, CH, onClose, onCall }) {
+function CoachProfileSheet({ T, id, CH, onClose, onCall, onAssess }) {
     const b = COACH_BIO[id] || {};
     const coach = COACHES.find(c => c.id === id) || {};
     const info = bondInfo(id, CH[id]);
@@ -1707,16 +1710,194 @@ function CoachProfileSheet({ T, id, CH, onClose, onCall }) {
             b.catch && React.createElement("div", { style: { fontSize: 14, color: T.ivory, fontFamily: "Fraunces,Georgia,serif", fontStyle: "italic", margin: "12px 0 4px" } }, "“" + b.catch + "”"),
             React.createElement("div", { style: { display: "flex", gap: 8, margin: "12px 0 6px" } },
                 onCall && React.createElement("button", { onClick: onCall, style: { padding: "9px 18px", borderRadius: 20, border: "none", background: coach.color, color: "#0B0B0E", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: font } }, "📞 Call"),
+                onAssess && React.createElement("button", { onClick: onAssess, style: { padding: "9px 14px", borderRadius: 20, border: "1px solid " + coach.color, background: "transparent", color: coach.color, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: font } }, "📊 Assess me"),
                 React.createElement("button", { onClick: onClose, style: { padding: "9px 18px", borderRadius: 20, border: "1px solid rgba(255,255,255,.18)", background: "transparent", color: T.ivory, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: font } }, "💬 Message"))),
         React.createElement("div", { style: { marginTop: 10, fontFamily: font } },
             React.createElement("div", { style: { fontSize: 14, color: T.ivory, lineHeight: 1.6 } }, b.about),
             b.life && React.createElement("div", { style: { fontSize: 13.5, color: T.ivoryM, lineHeight: 1.6, marginTop: 8 } }, b.life),
+            PHD_FIELD[id] && React.createElement("div", { style: { fontSize: 12.5, color: coach.color, marginTop: 10, fontWeight: 600 } }, "🎓 PhD-level: " + PHD_FIELD[id] + " · judges you on " + (COACH_PARAMS[id] || []).length + " parameters"),
             b.skills && React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 } }, b.skills.map(s => React.createElement("span", { key: s, style: { padding: "6px 11px", borderRadius: 14, background: coach.color + "1F", border: "1px solid " + coach.color + "55", color: T.ivory, fontSize: 12 } }, s))),
             b.facts && React.createElement("div", { style: { marginTop: 14 } },
                 React.createElement("div", { style: { fontSize: 11, color: T.gold, letterSpacing: ".08em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 } }, "Fun facts"),
                 b.facts.map(f => React.createElement("div", { key: f, style: { fontSize: 13.5, color: T.ivory, lineHeight: 1.55, padding: "3px 0" } }, "• " + f))),
             React.createElement("div", { style: { marginTop: 14, padding: "10px 12px", borderRadius: 12, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.06)", fontSize: 12.5, color: T.ivoryM } },
                 "🤝 You two: " + info.level + " · " + info.days + " day" + (info.days === 1 ? "" : "s") + " · " + info.msgs + " messages")));
+}
+// ── PhD ASSESSMENTS: 8-10 parameters per field + goal timeline ──────────
+const COACH_PARAMS = {
+    skin: ["Active acne", "Marks & pigmentation (PIH)", "Texture & pores", "Oil control", "Hydration & barrier", "Even tone & glow", "Under-eye area", "AM routine adherence", "PM routine adherence", "SPF consistency"],
+    hair: ["Density", "Hairline", "Crown", "Shedding", "Scalp health", "Hair quality & shine", "Routine adherence", "Cut & style for his face", "Nutrition support"],
+    fitness: ["Strength progression", "Training consistency", "Volume per muscle group", "Muscle size & symmetry", "Leanness / body fat", "Posture", "Technique & form", "Recovery", "Conditioning & cardio", "Protein support"],
+    nutrition: ["Protein vs 170 g target", "Calories vs goal", "Meal timing & structure", "Pre/post-workout fuel", "Food quality & micronutrients", "Fibre & vegetables", "Hydration", "Junk & sugar control", "Logging consistency", "Supplement use"],
+    sleep: ["Sleep duration", "Bedtime consistency", "Sleep quality", "Morning freshness", "Caffeine timing", "Screens & light at night", "Daytime energy", "Recovery for training"],
+    style: ["Fit & tailoring", "Colour harmony with skin tone", "Wardrobe versatility", "Occasion appropriateness", "Footwear", "Accessories", "Grooming matches outfits", "Signature style consistency"],
+    grooming: ["Beard line & shape", "Haircut freshness", "Skin grooming", "Eyebrows & details", "Nails", "Oral hygiene", "Fragrance", "Overall sharpness"],
+    ronaldo: ["Training consistency", "Promises kept", "Intensity", "Diet discipline", "Sleep discipline", "Recovery habits", "Excuse control", "Goal focus", "Streaks", "Standards vs CR7"],
+    mind: ["Mood", "Stress load", "Energy", "Motivation", "Self-talk", "Focus", "Social connection", "Sleep–mood link", "Coping skills"],
+};
+const PHD_FIELD = { skin: "dermatology", hair: "trichology and hair biology", fitness: "exercise science and hypertrophy", nutrition: "sports nutrition", sleep: "sleep science", style: "fashion and image consulting", grooming: "men's grooming (master craftsman)", ronaldo: "elite-athlete performance and discipline", mind: "clinical psychology" };
+const ASSESS_KEY = "jos_assessments";
+function loadAssessments() { const a = store.get(ASSESS_KEY); return a && typeof a === "object" && !Array.isArray(a) ? a : {}; }
+function coachAssessments(id) { return (loadAssessments()[id] || []).slice().sort((a, b) => a.ts - b.ts); }
+function saveAssessment(id, a) {
+    const all = loadAssessments();
+    all[id] = (all[id] || []).filter(x => x.id !== a.id).concat([a]).slice(-20);
+    store.set(ASSESS_KEY, all);
+    if (supabaseReady()) fetch(SUPABASE_URL + "/rest/v1/jeetos_assessments?on_conflict=id", { method: "POST", headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }), body: JSON.stringify({ id: a.id, coach: id, data: a }) }).catch(() => { });
+}
+async function syncAssessments() {
+    if (!supabaseReady()) return loadAssessments();
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_assessments?select=id,coach,data&order=created_at.asc&limit=200", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        if (!r.ok || !Array.isArray(rows)) return loadAssessments();
+        const all = loadAssessments();
+        rows.forEach(row => { const list = all[row.coach] = all[row.coach] || []; if (!list.some(x => x.id === row.id)) list.push(row.data); });
+        Object.keys(all).forEach(k => { all[k] = all[k].sort((a, b) => a.ts - b.ts).slice(-20); });
+        store.set(ASSESS_KEY, all);
+    } catch (_a) { }
+    return loadAssessments();
+}
+// Turns whatever the model returned into a clean scorecard against this coach's parameters.
+function normalizeAssessment(id, j, prev) {
+    const names = COACH_PARAMS[id] || [];
+    const got = Array.isArray(j.parameters) ? j.parameters : [];
+    const prevMap = {};
+    (prev && prev.parameters || []).forEach(p => { prevMap[p.name] = p.score; });
+    const params = names.map(n => {
+        const p = got.find(x => x && String(x.name || "").toLowerCase().trim() === n.toLowerCase()) || got.find(x => x && String(x.name || "").toLowerCase().includes(n.toLowerCase().split(" ")[0])) || {};
+        const sc = p.score == null || p.score === "" || isNaN(+p.score) ? null : Math.max(1, Math.min(10, Math.round(+p.score)));
+        return { name: n, score: sc, prev: prevMap[n] != null ? prevMap[n] : null, evidence: String(p.evidence || ""), target: String(p.target || ""), confidence: ["high", "medium", "low"].includes(p.confidence) ? p.confidence : (sc == null ? "low" : "medium") };
+    });
+    const scored = params.filter(p => p.score != null);
+    const t = j.timeline || {};
+    return { id: "as" + Date.now().toString(36), ts: Date.now(), date: localIsoDate(), coach: id,
+        overall: Math.max(0, Math.min(100, Math.round(+j.overall) || (scored.length ? Math.round(scored.reduce((s, p) => s + p.score, 0) / scored.length * 10) : 0))),
+        parameters: params, strengths: (j.strengths || []).map(String).slice(0, 4), weaknesses: (j.weaknesses || []).map(String).slice(0, 4),
+        timeline: { goal: String(t.goal || ""), eta: String(t.eta || ""), status: ["ahead", "on track", "behind", "not started"].includes(t.status) ? t.status : "", now: String(t.now || ""),
+            milestones: (Array.isArray(t.milestones) ? t.milestones : []).filter(m => m && m.target).map(m => ({ when: String(m.when || ""), target: String(m.target) })).slice(0, 6) },
+        focus: (j.focus || []).map(String).slice(0, 3), verdict: String(j.verdict || ""), missing: (j.missing || []).map(String).slice(0, 4), prevOverall: prev ? prev.overall : null };
+}
+function assessmentSchemaText(id) {
+    return `Reply with ONLY a JSON object (no markdown):
+{"parameters": [${(COACH_PARAMS[id] || []).map(n => `{"name":"${n}","score":1-10 or null if you truly can't judge,"confidence":"high|medium|low","evidence":"what in his data/photos/chats shows this, with numbers","target":"the next concrete target for this parameter"}`).join(",")}],
+ "overall": 0-100, "strengths": ["his top 2-3 strengths in your field, specific"], "weaknesses": ["his top 2-3 weaknesses / limiters, with the reason"],
+ "timeline": {"goal": "his goal in your field (from his profile/goals; if none, the realistic goal you'd set for him)", "now": "where he is today in one line", "eta": "realistic time to reach it, e.g. '14-16 weeks (by mid-Feb)'", "status": "ahead|on track|behind|not started", "milestones": [{"when":"Week 2","target":"..."},{"when":"Week 4","target":"..."},{"when":"Week 8","target":"..."},{"when":"Week 12","target":"..."}]},
+ "focus": ["exactly 3 highest-impact actions for the next 2 weeks, with numbers"], "verdict": "2-3 lines straight to him in your voice, Hinglish", "missing": ["data or photos you need to judge better next time"]}`;
+}
+function assessmentContextText(id) {
+    const hist = coachAssessments(id);
+    const last = hist[hist.length - 1];
+    if (!last) return "";
+    return `YOUR LAST FULL ASSESSMENT (${last.date}, overall ${last.overall}/100${last.prevOverall != null ? ", before that " + last.prevOverall : ""}):
+${last.parameters.map(p => "- " + p.name + ": " + (p.score != null ? p.score + "/10" : "n/a") + (p.prev != null && p.score != null ? " (was " + p.prev + ")" : "") + (p.target ? " → target: " + p.target : "")).join("\n")}
+Timeline: ${last.timeline.goal || "-"} — ${last.timeline.eta || "-"} (${last.timeline.status || "?"}). Milestones: ${last.timeline.milestones.map(m => m.when + ": " + m.target).join("; ") || "-"}
+Judge every update against these scores, targets and milestones ("waist 2 cm down — Week 4 milestone on track"). If he asks to be judged or rated fully, tell him to tap ⋮ → Full assessment for a fresh scorecard.`;
+}
+async function runAssessment(id, W, L) {
+    const coach = COACHES.find(c => c.id === id) || {};
+    const hist = coachAssessments(id);
+    const prev = hist[hist.length - 1] || null;
+    const slots = CHECKIN_SLOTS.filter(s => s.coaches.includes(id) || (id === "ronaldo" && s.id === "body") || (id === "grooming" && s.id === "hair"));
+    const images = [], labels = [];
+    for (const s of slots) {
+        const list = loadCheckins().filter(c => (c.slots || []).includes(s.id));
+        const latest = list[list.length - 1], first = list[0];
+        if (first && first !== latest) { const im = await getPhoto(first.id + ":" + s.id); if (im) { images.push(im); labels.push(s.label + " photo, first check-in " + first.created_on); } }
+        if (latest) { const im = await getPhoto(latest.id + ":" + s.id); if (im) { images.push(im); labels.push(s.label + " photo, latest check-in " + latest.created_on); } }
+    }
+    const sys = `${coach.sys || ""}
+
+You are ${personaName(id)} — PhD in ${PHD_FIELD[id] || "your field"} and one of the best in the world at it. ${COACH_VOICES[id] || ""}
+IGNORE any length or format rules above. This is Jeet's FULL ASSESSMENT in your field: judge him like a world-class specialist on each parameter below, using his real data, logs, measurements, photos, past check-ins and what he has told the team. Be precise and honest — a 6 is a 6. Score a parameter null only if there is truly no evidence (and list it under "missing"); otherwise make your best expert judgement and set confidence.
+Then build his goal TIMELINE in your field: where he is now, his goal, a realistic ETA based on evidence-based rates of change, whether he's on track, and dated milestones.
+
+PARAMETERS TO SCORE (1-10): ${(COACH_PARAMS[id] || []).join(", ")}.
+
+${profilePrompt()}
+
+${statusReport(id, W, L)}
+${(() => { const g = loadGoals().filter(x => x.coach === id && x.status === "active"); return g.length ? "\nGOALS WITH YOU: " + g.map(goalLine).join("; ") : ""; })()}
+LIFTS LOGGED:\n${recentLiftsText(28)}
+${prev ? `\nYOUR PREVIOUS ASSESSMENT (${prev.date}, overall ${prev.overall}): ${prev.parameters.map(p => p.name + " " + (p.score != null ? p.score : "n/a")).join(", ")}. Timeline then: ${prev.timeline.eta} (${prev.timeline.status}). Judge what improved or slipped since.` : "\nThis is your first full assessment of him."}
+PHOTOS: ${labels.length ? "attached in this order — " + labels.map((l, i) => (i + 1) + ") " + l).join("; ") : "none available — tell him which photos you need in 'missing'."}
+
+${assessmentSchemaText(id)}`;
+    const msg = { role: "user", content: "Mera full assessment karo — har parameter pe judge karo aur timeline do." };
+    if (images.length) msg.images = images.slice(-4);
+    const raw = await ai(sys, [msg], 4000, { tier: "smart", effort: "medium" });
+    const j = parseJsonLoose(raw);
+    if (!j) throw new Error("Assessment could not be read — try again");
+    const a = normalizeAssessment(id, j, prev);
+    saveAssessment(id, a);
+    return a;
+}
+function scoreColor(v, T) { return v == null ? "rgba(255,255,255,.3)" : v >= 8 ? T.green : v >= 6 ? T.gold : v >= 4 ? "#E8964A" : T.red; }
+function AssessmentSheet({ T, id, W, L, onClose, onDiscuss }) {
+    const font = "Inter,system-ui,sans-serif";
+    const coach = COACHES.find(c => c.id === id) || {};
+    const [list, setList] = React.useState(coachAssessments(id));
+    const [idx, setIdx] = React.useState(list.length - 1);
+    const [busy, setBusy] = React.useState(false);
+    const [err, setErr] = React.useState("");
+    const [open, setOpen] = React.useState(null);
+    React.useEffect(() => { syncAssessments().then(() => { const l = coachAssessments(id); setList(l); setIdx(l.length - 1); }); }, [id]);
+    const a = list[idx];
+    const run = async () => {
+        setBusy(true); setErr("");
+        try { await runAssessment(id, W, L); const l = coachAssessments(id); setList(l); setIdx(l.length - 1); }
+        catch (e) { setErr(aiErrorText(e)); }
+        setBusy(false);
+    };
+    const runBtn = React.createElement("button", { onClick: run, disabled: busy, style: { width: "100%", padding: "13px", borderRadius: 14, border: "none", background: busy ? "rgba(255,255,255,.08)" : coach.color, color: busy ? T.ivoryD : "#0B0B0E", fontWeight: 700, fontSize: 14, cursor: busy ? "default" : "pointer", fontFamily: font, marginTop: 12 } },
+        busy ? personaName(id) + " judge kar " + ((VOICE_PROFILE[id] || {}).female ? "rahi" : "raha") + " hai… (30-60 sec)" : a ? "🔄 Naya assessment karo" : "📊 Mera full assessment karo");
+    return React.createElement(ChatSheet, { T: T, title: "📊 " + personaName(id) + "'s assessment", onClose: onClose },
+        React.createElement("div", { style: { fontFamily: font } },
+            !a && React.createElement("div", { style: { fontSize: 13.5, color: T.ivoryM, lineHeight: 1.6 } },
+                personaName(id) + " (PhD, " + (PHD_FIELD[id] || "") + ") tumhe " + (COACH_PARAMS[id] || []).length + " parameters pe 1-10 judge " + ((VOICE_PROFILE[id] || {}).female ? "karegi" : "karega") + " — tumhare logs, measurements, check-in photos aur chats se — aur tumhare goal ki timeline + milestones banayega.",
+                React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 } }, (COACH_PARAMS[id] || []).map(n => React.createElement("span", { key: n, style: { padding: "5px 10px", borderRadius: 12, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.08)", fontSize: 12, color: T.ivory } }, n)))),
+            a && React.createElement(React.Fragment, null,
+                list.length > 1 && React.createElement("div", { style: { display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none", marginBottom: 10 } }, list.map((x, i) => React.createElement("button", { key: x.id, onClick: () => setIdx(i), style: { flexShrink: 0, padding: "6px 11px", borderRadius: 14, border: "1px solid " + (i === idx ? coach.color : "rgba(255,255,255,.1)"), background: i === idx ? coach.color + "22" : "transparent", color: i === idx ? T.ivory : T.ivoryD, fontSize: 12, cursor: "pointer" } }, x.date.slice(5) + " · " + x.overall))),
+                React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "12px 14px", borderRadius: 16, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)" } },
+                    React.createElement("div", { style: { fontSize: 40, fontWeight: 800, color: scoreColor(a.overall / 10, T), lineHeight: 1 } }, a.overall, React.createElement("span", { style: { fontSize: 14, color: T.ivoryD, fontWeight: 500 } }, "/100")),
+                    React.createElement("div", { style: { flex: 1 } },
+                        React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryD } }, a.date + (a.prevOverall != null ? " · pichli baar " + a.prevOverall : " · first assessment")),
+                        a.prevOverall != null && React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: a.overall >= a.prevOverall ? T.green : T.red, marginTop: 2 } }, (a.overall >= a.prevOverall ? "▲ +" : "▼ ") + (a.overall - a.prevOverall)))),
+                a.verdict && React.createElement("div", { style: { fontSize: 14, color: T.ivory, lineHeight: 1.6, fontStyle: "italic", margin: "12px 2px" } }, "“" + a.verdict + "”"),
+                React.createElement("div", { style: { fontSize: 11, color: T.gold, letterSpacing: ".08em", textTransform: "uppercase", fontWeight: 700, margin: "6px 0" } }, a.parameters.length + " parameters"),
+                a.parameters.map((p, i) => React.createElement("div", { key: p.name, onClick: () => setOpen(open === i ? null : i), style: { padding: "9px 0", borderTop: "1px solid rgba(255,255,255,.06)", cursor: "pointer" } },
+                    React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                        React.createElement("div", { style: { flex: 1, fontSize: 13.5, color: T.ivory } }, p.name),
+                        p.prev != null && p.score != null && p.score !== p.prev && React.createElement("span", { style: { fontSize: 11.5, color: p.score > p.prev ? T.green : T.red, fontWeight: 700 } }, (p.score > p.prev ? "▲" : "▼") + Math.abs(p.score - p.prev)),
+                        React.createElement("span", { style: { fontSize: 14, fontWeight: 800, color: scoreColor(p.score, T), minWidth: 34, textAlign: "right" } }, p.score != null ? p.score + "/10" : "—")),
+                    React.createElement("div", { style: { height: 5, borderRadius: 3, background: "rgba(255,255,255,.07)", marginTop: 6, overflow: "hidden" } },
+                        React.createElement("div", { style: { height: "100%", width: (p.score || 0) * 10 + "%", background: scoreColor(p.score, T), borderRadius: 3 } })),
+                    open === i && React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, lineHeight: 1.55, marginTop: 7 } },
+                        p.evidence && React.createElement("div", null, "🔎 " + p.evidence),
+                        p.target && React.createElement("div", { style: { marginTop: 4, color: T.ivory } }, "🎯 " + p.target),
+                        React.createElement("div", { style: { marginTop: 4, fontSize: 11, color: T.ivoryD } }, "confidence: " + p.confidence)))),
+                React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, marginTop: 4 } }, "Kisi bhi parameter pe tap karo — saboot aur agla target dikhega."),
+                (a.strengths.length > 0 || a.weaknesses.length > 0) && React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, marginTop: 14 } },
+                    React.createElement("div", { style: { padding: 10, borderRadius: 12, background: "rgba(59,209,111,.07)", border: "1px solid rgba(59,209,111,.25)" } }, React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: T.green, marginBottom: 4 } }, "💪 Strengths"), a.strengths.map(x => React.createElement("div", { key: x, style: { fontSize: 12.5, color: T.ivory, lineHeight: 1.45, marginBottom: 3 } }, "• " + x))),
+                    React.createElement("div", { style: { padding: 10, borderRadius: 12, background: "rgba(229,56,59,.07)", border: "1px solid rgba(229,56,59,.25)" } }, React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: "#FF7B7B", marginBottom: 4 } }, "⚠️ Weaknesses"), a.weaknesses.map(x => React.createElement("div", { key: x, style: { fontSize: 12.5, color: T.ivory, lineHeight: 1.45, marginBottom: 3 } }, "• " + x)))),
+                a.timeline && (a.timeline.goal || a.timeline.milestones.length > 0) && React.createElement("div", { style: { marginTop: 16 } },
+                    React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                        React.createElement("div", { style: { flex: 1, fontSize: 11, color: T.gold, letterSpacing: ".08em", textTransform: "uppercase", fontWeight: 700 } }, "🗓 Goal timeline"),
+                        a.timeline.status && React.createElement("span", { style: { fontSize: 11.5, fontWeight: 700, padding: "3px 9px", borderRadius: 10, color: a.timeline.status === "behind" ? "#FF7B7B" : a.timeline.status === "not started" ? T.ivoryD : T.green, background: "rgba(255,255,255,.05)" } }, a.timeline.status)),
+                    a.timeline.goal && React.createElement("div", { style: { fontSize: 14, color: T.ivory, fontWeight: 600, marginTop: 6 } }, "🎯 " + a.timeline.goal),
+                    a.timeline.now && React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, marginTop: 3 } }, "Abhi: " + a.timeline.now),
+                    a.timeline.eta && React.createElement("div", { style: { fontSize: 12.5, color: coach.color, marginTop: 3, fontWeight: 600 } }, "⏱ " + a.timeline.eta),
+                    React.createElement("div", { style: { marginTop: 10, paddingLeft: 12, borderLeft: "2px solid " + coach.color + "66" } }, a.timeline.milestones.map((m, i) => React.createElement("div", { key: i, style: { position: "relative", padding: "0 0 10px 10px" } },
+                        React.createElement("span", { style: { position: "absolute", left: -18, top: 4, width: 10, height: 10, borderRadius: "50%", background: coach.color } }),
+                        React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.ivory } }, m.when),
+                        React.createElement("div", { style: { fontSize: 13, color: T.ivoryM, lineHeight: 1.45 } }, m.target))))),
+                a.focus.length > 0 && React.createElement("div", { style: { marginTop: 6, padding: 12, borderRadius: 12, background: coach.color + "14", border: "1px solid " + coach.color + "44" } },
+                    React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: coach.color, marginBottom: 5 } }, "Next 2 weeks — focus"),
+                    a.focus.map((x, i) => React.createElement("div", { key: i, style: { fontSize: 13, color: T.ivory, lineHeight: 1.5, marginBottom: 3 } }, (i + 1) + ". " + x))),
+                a.missing.length > 0 && React.createElement("div", { style: { fontSize: 12, color: T.ivoryD, marginTop: 10, lineHeight: 1.5 } }, "📎 Better judge karne ke liye chahiye: " + a.missing.join(", ")),
+                onDiscuss && React.createElement("button", { onClick: () => onDiscuss(a), style: { width: "100%", padding: "11px", borderRadius: 14, border: "1px solid " + coach.color, background: "transparent", color: coach.color, fontWeight: 700, fontSize: 13.5, cursor: "pointer", fontFamily: font, marginTop: 12 } }, "💬 Iske baare mein " + personaName(id).split(" ").pop() + " se baat karo")),
+            err && React.createElement("div", { style: { fontSize: 12.5, color: "#FF9B9B", marginTop: 10 } }, err),
+            runBtn));
 }
 function typingDelay(text) { return Math.min(2400, 500 + String(text).length * 18); }
 function msgTime(m) {
@@ -2773,12 +2954,21 @@ ${statusReport(id, null, null).split("\n").filter(l => /Body now|measurements|tr
 His own note about the week: ${note ? "\"" + note + "\"" : "none"}.
 PHOTOS: ${labels.length ? "attached in this order — " + labels.map((l, i) => (i + 1) + ") " + l).join("; ") + ". Compare them carefully." : "none for your area this week — judge on the numbers."}
 
+Also score him on your ${(COACH_PARAMS[id] || []).length} PARAMETERS (1-10, null only with no evidence): ${(COACH_PARAMS[id] || []).join(", ")} — and update his goal timeline.
 Reply with ONLY a JSON object (no markdown, no extra text), written in his Hinglish:
-{"score": ${id === "mind" ? "null" : "1-10 for your area this week"}, "trend": "up|same|down|first", "photo_notes": "detailed observations from the photos and how they compare with the previous one; empty string if no photos", "went_well": ["specific things"], "didnt_go_well": ["specific things"], "why": "honest root cause, 1-3 sentences", "plan": ["exactly 3 specific actions for next week"], "message": "2-3 lines straight to him in your own voice"}`;
+{"parameters": [{"name":"exact parameter name","score":1-10,"confidence":"high|medium|low","evidence":"short, with numbers","target":"next target"}], "timeline": {"goal":"...","now":"...","eta":"...","status":"ahead|on track|behind|not started","milestones":[{"when":"Week 2","target":"..."},{"when":"Week 4","target":"..."},{"when":"Week 8","target":"..."}]}, "overall": 0-100,
+"score": ${id === "mind" ? "null" : "1-10 for your area this week"}, "trend": "up|same|down|first", "photo_notes": "detailed observations from the photos and how they compare with the previous one; empty string if no photos", "went_well": ["specific things"], "didnt_go_well": ["specific things"], "why": "honest root cause, 1-3 sentences", "plan": ["exactly 3 specific actions for next week"], "message": "2-3 lines straight to him in your own voice"}`;
     const msg = { role: "user", content: "Here's my week. Review it." };
     if (images.length) msg.images = images;
-    const raw = await ai(sys, [msg], 3000, { tier: "smart", effort: "medium" });
+    const raw = await ai(sys, [msg], 5000, { tier: "smart", effort: "medium" });
     const j = parseJsonLoose(raw) || { message: String(raw).replace(/[{}"]/g, "").slice(0, 600) };
+    // The check-in doubles as a scorecard: keep the parameters + timeline as this coach's latest assessment.
+    if (Array.isArray(j.parameters) && j.parameters.length) {
+        const hist = coachAssessments(id);
+        const asm = normalizeAssessment(id, Object.assign({}, j, { strengths: j.went_well, weaknesses: j.didnt_go_well, focus: j.plan, verdict: j.message }), hist[hist.length - 1] || null);
+        asm.source = "check-in";
+        saveAssessment(id, asm);
+    }
     const score = j.score == null || id === "mind" ? null : Math.max(1, Math.min(10, Math.round(+j.score) || 0)) || null;
     const arr = v => Array.isArray(v) ? v.map(String).filter(Boolean).slice(0, 5) : (v ? [String(v)] : []);
     return { score: score, trend: ["up", "same", "down", "first"].includes(j.trend) ? j.trend : (prevRev ? "same" : "first"), photo_notes: String(j.photo_notes || ""),
@@ -3603,13 +3793,15 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
         React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } },
             React.createElement(SmartChat, { id: id, coach: coach, CH: CH, setCH: setCH, T: T, viewDay: viewDay, L: L, W: W, pendingAsk: pendingAsk, onConsumePendingAsk: () => setPendingAsk(null), onTypingChange: setTyping, inCall: inCall, onEndCall: () => setInCall(false), onTalkToMeher: (reason) => { store.set(MEHER_HANDOFF_KEY, { from: id, reason: reason, at: Date.now() }); if (onSwitchCoach) onSwitchCoach("mind"); } })),
         menu && React.createElement(ChatMenu, { T: T, onClose: () => setMenu(false), items: [
+                { icon: "📊", label: "Full assessment (" + (COACH_PARAMS[id] || []).length + " parameters)", onClick: () => setSheet("assess") },
                 { icon: "👤", label: "View profile", onClick: openProfile },
                 { icon: voiceOn ? "🔇" : "🔊", label: voiceOn ? "Voice replies off" : "Voice replies on", onClick: toggleVoice },
                 coachTips.length ? { icon: "💡", label: "Expert tips", onClick: () => setSheet("tips") } : null,
                 { icon: "👥", label: "Team Jeet group", onClick: () => { if (onSwitchCoach) onSwitchCoach("__group"); } },
                 (CH[id] || []).length ? { icon: "🗑", label: "Clear chat", danger: true, onClick: () => { stopCoachVoice(); onClear(id); } } : null,
             ] }),
-        sheet === "profile" && React.createElement(CoachProfileSheet, { T: T, id: id, CH: CH, onClose: () => setSheet(null), onCall: () => { setSheet(null); unlockCoachAudio(); setInCall(true); } }),
+        sheet === "profile" && React.createElement(CoachProfileSheet, { T: T, id: id, CH: CH, onClose: () => setSheet(null), onCall: () => { setSheet(null); unlockCoachAudio(); setInCall(true); }, onAssess: () => setSheet("assess") }),
+        sheet === "assess" && React.createElement(AssessmentSheet, { T: T, id: id, W: W, L: L, onClose: () => setSheet(null), onDiscuss: () => { setSheet(null); setPendingAsk("Maine tumhara assessment dekha. Sabse pehle kya fix karun aur kyun?"); } }),
         sheet === "tips" && React.createElement(ChatSheet, { T: T, title: "💡 " + personaName(id) + "'s tips", onClose: () => setSheet(null) },
             coachTips.map((tip, i) => React.createElement("div", { key: i, style: { display: "flex", gap: 12, padding: "12px 0", borderTop: i ? "1px solid rgba(255,255,255,.06)" : "none" } },
                 React.createElement("div", { style: { width: 24, height: 24, borderRadius: "50%", background: coach.color + "26", color: coach.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, flexShrink: 0 } }, i + 1),
@@ -6581,6 +6773,7 @@ function JeetOS() {
         syncMoments();
         // Long-term memory: pull the profile/summaries, then learn from anything new.
         Promise.all([syncProfile(), syncSummaries()]).then(() => runMemoryPass(keptCH));
+        syncAssessments();
         syncCheckins();
         // Messages coaches texted first while the app was closed.
         fetchCoachInbox().then(rows => {
