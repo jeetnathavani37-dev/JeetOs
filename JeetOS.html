@@ -850,7 +850,8 @@ const COACH_CHAT_STYLE = `HOW YOU TALK (this overrides any length or format rule
 - Answer exactly what he asked first. Bring up his live data (sleep, water, protein, gym etc.) only when it genuinely relates to his question — never list his numbers by habit, and never repeat the same nudge you already gave earlier in this chat.
 - Remember this conversation: refer back to what he said earlier, don't re-ask things he already told you, don't restart with a greeting every message.
 - Ask at most one follow-up question, and only when you actually need the answer. It's fine to just reply without a question.
-- No filler like "Great question!", "I understand", "As your coach", "Here's a breakdown". No emojis unless he uses them. Never sound like a template.
+- No filler like "Great question!", "I understand", "As your coach", "Here's a breakdown". Never sound like a template.
+- Text like a real person: you can split a reply into 2-3 separate short texts by putting a blank line between them. An emoji now and then is fine (😂🔥💪), and sometimes a one-word or emoji-only reply is the most human answer — don't overdo it.
 - Have opinions and a personality. React like a human would — surprised, impressed, blunt, playful — when it fits.
 - Teammates' genders: Dr. Aria, Maya and Dr. Meher are women; Kai, Marcus, Dr. Sam, Lex, Blade and Cristiano are men — use the right Hindi forms when you mention them ("Meher help karegi", "Marcus bata raha tha").
 - Never say you're an AI, a model or a bot, and never mention "data provided" or "context". But if he sincerely asks whether you're a real person, be honest that you're his AI coach in JeetOS — then carry on in the same voice.`;
@@ -1007,8 +1008,119 @@ function buildCoachSystem(coach, CH, ctx) {
     const h = coach.id === "mind" ? freshMeherHandoff() : null;
     if (h) parts.push("REFERRAL: " + coachLabel(h.from) + " just suggested Jeet talk to you. What they noticed: " + h.reason + "\nAcknowledge it gently and naturally in your first reply, then start understanding what's going on.");
     parts.push(teamMemoryPrompt(CH, coach.id));
+    parts.push(commitmentsPrompt(coach.id));
     parts.push(ctx);
     return parts.join("\n\n");
+}
+
+// ── COMMITMENTS: coaches remember what Jeet promised and follow up ──────
+// A coach tags a promise as <commit due="YYYY-MM-DD">text</commit> and closes
+// it with <resolve id="...">done|missed</resolve>. Stored locally and in
+// Supabase (jeetos_commitments) so the server-side nudges can follow up too.
+const COMMIT_KEY = "jos_commitments";
+function localIsoDate(d) {
+    d = d || new Date();
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function loadCommitments() { const l = store.get(COMMIT_KEY); return Array.isArray(l) ? l : []; }
+function saveCommitments(l) { store.set(COMMIT_KEY, l.slice(-60)); }
+async function pushCommitment(c) {
+    if (!supabaseReady()) return;
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_commitments?on_conflict=id", {
+            method: "POST",
+            headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }),
+            body: JSON.stringify({ id: c.id, coach: c.coach, text: c.text, due: c.due, status: c.status, resolved_at: c.status === "open" ? null : new Date().toISOString() }),
+        });
+        if (r.ok) { const l = loadCommitments(); const f = l.find(x => x.id === c.id); if (f) { f.synced = true; saveCommitments(l); } }
+    } catch (_a) { }
+}
+async function syncCommitments() {
+    if (!supabaseReady()) return loadCommitments();
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_commitments?select=id,coach,text,due,status&order=created_at.asc&limit=60", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        if (!r.ok || !Array.isArray(rows)) return loadCommitments();
+        const merged = rows.map(x => Object.assign({}, x, { synced: true }));
+        const have = new Set(merged.map(x => x.id));
+        const pending = loadCommitments().filter(x => !x.synced && !have.has(x.id));
+        saveCommitments(merged.concat(pending));
+        pending.forEach(pushCommitment);
+        return loadCommitments();
+    } catch (_a) { return loadCommitments(); }
+}
+function applyCommitTags(text, coachId) {
+    const list = loadCommitments();
+    const changed = [];
+    let clean = String(text).replace(/<commit(?:\s+due="([^"]*)")?\s*>([\s\S]*?)<\/commit>/gi, (_, due, body) => {
+        const t = body.trim().slice(0, 200);
+        if (t && !list.some(c => c.status === "open" && c.text.toLowerCase() === t.toLowerCase())) {
+            const c = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), coach: coachId, text: t,
+                due: /^\d{4}-\d{2}-\d{2}$/.test(due || "") ? due : localIsoDate(new Date(Date.now() + 86400000)), status: "open", synced: false };
+            list.push(c); changed.push(c);
+        }
+        return "";
+    });
+    clean = clean.replace(/<resolve\s+id="([^"]+)"\s*>\s*(done|missed)\s*<\/resolve>/gi, (_, id, st) => {
+        const c = list.find(x => x.id === id);
+        if (c && c.status === "open") { c.status = st.toLowerCase(); c.synced = false; changed.push(c); }
+        return "";
+    }).replace(/<\/?(commit|resolve)[^>]*>/gi, "").trim();
+    if (changed.length) { saveCommitments(list); changed.forEach(pushCommitment); }
+    return clean;
+}
+function commitmentsPrompt(coachId) {
+    const today = localIsoDate();
+    const open = loadCommitments().filter(c => c.status === "open");
+    const lines = open.map(c => "- [id " + c.id + "] \"" + c.text + "\" — promised to " + coachLabel(c.coach) + ", check on " + c.due + (c.due < today ? " (OVERDUE)" : c.due === today ? " (DUE TODAY)" : ""));
+    return `PROMISES (today is ${new Date().toLocaleDateString("en-IN", { weekday: "long" })} ${today}):
+${lines.length ? lines.join("\n") : "- None open."}
+- When Jeet commits to something concrete ("kal se 6 baje uthunga", "is hafte 4 din gym", "Sunday tak shampoo badal dunga"), save it: add <commit due="YYYY-MM-DD">short promise in third person</commit> at the very end of your reply, with the date you'd check on it.
+- If one of YOUR promises is due today or overdue and you haven't asked yet in this chat, bring it up naturally ("6 baje uthe aaj? sach bata 😄"). Promises to other coaches you may mention lightly, but let their coach chase them.
+- When he tells you how a promise went, close it: <resolve id="ID">done</resolve> or <resolve id="ID">missed</resolve>. Celebrate a done one for real; for a missed one ask why, kindly, and help him reset.
+- Never mention the tags.`;
+}
+// Strips every hidden tag from a coach reply, applies them, and splits the
+// reply into the separate texts the coach "sent".
+function processCoachReply(raw, coachId) {
+    const mem = extractTeamMemory(raw);
+    addTeamMemoryFacts(mem.facts, coachId);
+    const ho = extractHandoff(mem.clean || raw);
+    const clean = applyCommitTags(ho.clean || mem.clean || raw, coachId) || String(raw).replace(/<[^>]+>/g, "").trim();
+    let parts = clean.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
+    if (parts.length > 3) parts = parts.slice(0, 2).concat([parts.slice(2).join("\n\n")]);
+    return { parts: parts.length ? parts : [clean], handoff: ho.handoff };
+}
+function typingDelay(text) { return Math.min(2400, 500 + String(text).length * 18); }
+function msgTime(m) {
+    return m && m.ts ? React.createElement("span", { style: { display: "block", fontSize: 9, opacity: .45, textAlign: "right", marginTop: 4 } },
+        new Date(m.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) : null;
+}
+function lastSeenText(hist) {
+    const last = [...(hist || [])].reverse().find(m => m.role === "assistant" && m.ts);
+    if (!last || Date.now() - last.ts < 3 * 60000) return "online";
+    const d = new Date(last.ts), now = new Date();
+    const t = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    if (d.toDateString() === now.toDateString()) return "last seen today at " + t;
+    if (d.toDateString() === new Date(Date.now() - 86400000).toDateString()) return "last seen yesterday at " + t;
+    return "last seen " + d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
+// ── COACH INBOX: messages coaches sent first (api/coach-nudge.js) ──────
+async function fetchCoachInbox() {
+    if (!supabaseReady()) return [];
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_coach_inbox?read=eq.false&select=id,coach,text,created_at&order=created_at.asc&limit=30", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        return r.ok && Array.isArray(rows) ? rows : [];
+    } catch (_a) { return []; }
+}
+async function markInboxRead(coachId) {
+    if (!supabaseReady()) return;
+    try {
+        await fetch(SUPABASE_URL + "/rest/v1/jeetos_coach_inbox?coach=eq." + encodeURIComponent(coachId) + "&read=eq.false", {
+            method: "PATCH", headers: SUPA_HEADERS(), body: JSON.stringify({ read: true }),
+        });
+    } catch (_a) { }
 }
 
 const COACHES = [
@@ -1733,7 +1845,8 @@ function Stp({ val, dec, inc }) { return (React.createElement("div", { style: { 
 function TeamMemoryCard({ T }) {
     const [open, setOpen] = React.useState(false);
     const [list, setList] = React.useState(loadTeamMemory());
-    React.useEffect(() => { if (open) { setList(loadTeamMemory()); syncTeamMemory().then(setList); } }, [open]);
+    const [promises, setPromises] = React.useState(loadCommitments());
+    React.useEffect(() => { if (open) { setList(loadTeamMemory()); syncTeamMemory().then(setList); setPromises(loadCommitments()); syncCommitments().then(setPromises); } }, [open]);
     const remove = (i) => { const gone = list[i]; const next = list.filter((_, j) => j !== i); saveTeamMemory(next); setList(next); if (gone) deleteTeamMemoryFact(gone.text); };
     const font = "Inter,system-ui,sans-serif";
     return React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 14px", marginBottom: 16 } },
@@ -1752,7 +1865,13 @@ function TeamMemoryCard({ T }) {
                             React.createElement("div", { style: { fontSize: 12, color: T.ivory, fontFamily: font, lineHeight: 1.5 } }, f.text),
                             React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: font, marginTop: 2 } }, "via " + coachLabel(f.from) + " · " + f.date)),
                         React.createElement("button", { onClick: () => remove(i), "aria-label": "Forget this", style: { background: "transparent", border: "none", color: T.ivoryD, fontSize: 14, cursor: "pointer", padding: "0 4px" } }, "✕"));
-                })));
+                }),
+            promises.length > 0 && React.createElement("div", { style: { marginTop: 12 } },
+                React.createElement("div", { style: { fontSize: 10, color: T.gold, fontFamily: font, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 } }, "📌 Your promises"),
+                promises.slice().reverse().slice(0, 12).map(c => React.createElement("div", { key: c.id, style: { display: "flex", justifyContent: "space-between", gap: 8, padding: "6px 0", borderTop: "1px solid " + T.border } },
+                    React.createElement("div", { style: { fontSize: 12, color: c.status === "open" ? T.ivory : T.ivoryD, fontFamily: font, lineHeight: 1.5 } }, c.text,
+                        React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, marginTop: 2 } }, "to " + coachLabel(c.coach) + " · check " + c.due)),
+                    React.createElement("span", { style: { fontSize: 11, whiteSpace: "nowrap", color: c.status === "done" ? T.green : c.status === "missed" ? T.red : T.ivoryD, fontFamily: font } }, c.status === "done" ? "✅ done" : c.status === "missed" ? "✗ missed" : "⏳ open"))))));
 }
 function Label({ c, children }) { return (React.createElement("div", { style: { fontSize: 11, letterSpacing: ".04em", textTransform: "uppercase", color: c || T.ivoryM, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, marginBottom: 10, marginTop: 14 } }, children)); }
 function Divider() { return (React.createElement("div", { style: { height: 1, background: "linear-gradient(90deg,transparent,rgba(201,162,74,.2),transparent)", margin: "10px 0" } })); }
@@ -1849,6 +1968,7 @@ function FoodMacros({ food, qty, calc, T }) {
 }
 function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onClear, viewDay, onSwitchCoach }) {
     const [cTab, setCTab] = React.useState("ask");
+    const [typing, setTyping] = React.useState(false);
     const [pendingAsk, setPendingAsk] = React.useState(null);
     const coach = COACHES.find(c => c.id === id) || {};
     const tips = { mind: ["Name the feeling — \"I feel anxious\" calms the brain more than fighting it.", "Box breathing: in 4, hold 4, out 4, hold 4. Repeat 4 rounds when stressed.", "5-4-3-2-1 grounding: 5 things you see, 4 hear, 3 touch, 2 smell, 1 taste.", "Stuck on a task? Do just 2 minutes. Starting is the hardest part.", "Brain dump at night — write every worry on paper so it stops looping in bed.", "A missed day is data, not failure. Ask why, not what's wrong with me.", "Talking to a real friend or therapist is strength, not weakness."], skin: ["SPF every morning. #1 anti-aging step.", "Niacinamide and Vit C not at same time. One AM one PM.", "Moisturizer on damp skin — locks hydration.", "Retinol at night only — start 2x per week.", "If skin tight after cleanser it is too harsh."], hair: ["Wash 2-3x per week max — overwashing strips oils.", "Condition ends only, never scalp.", "Pat dry, never rub — use microfiber towel.", "Oil on lengths only, not scalp — 30 min before wash.", "Hairstyle should match face shape."], fitness: ["Progressive overload — lift more every week.", "Protein 2g per kg bodyweight every day.", "Rest day is not lazy — muscle grows during rest.", "Sleep 7-8h is part of training. Non-negotiable.", "Compounds first — squat deadlift bench row."], nutrition: ["One glass water first thing in morning.", "Protein in every meal — full and builds muscle.", "Never skip breakfast on training mornings.", "Caffeine after 2pm ruins sleep even if fine.", "Carbs around workout — before energy after recovery."], sleep: ["Same bedtime every night including weekends.", "No screens 1 hour before sleep — melatonin blocked.", "Cool dark room — 18-20 degrees for best sleep.", "Caffeine half-life 6 hours. Last by 2-3pm.", "Cannot sleep? Get up and do something calm."], style: ["Fit beats price — well-fitted cheap wins.", "Capsule: 3 tees 2 jeans 1 chino 2 shirts 2 shoes.", "Shoes and belt same tone — always.", "One statement piece max per outfit.", "Grooming completes the outfit."], grooming: ["Bath every day — non-negotiable.", "Beard oil after shower on slightly damp beard.", "Neckline trim separates sharp from sloppy.", "Fresh clothes daily.", "Oral: 2 min brush tongue scraper floss at night."], ronaldo: ["Train like it's session one, not session five thousand — intensity doesn't get to fade.", "Extra reps after the set ends is where the gap between good and great gets made.", "Discipline in food is discipline everywhere else — protect it even on the hard days.", "Protect your sleep like it's part of training, because it is.", "Review your own day harder than anyone else would — that's how standards rise."] };
@@ -1862,7 +1982,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
                 React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 17, color: T.ivory, fontWeight: 300 } },
                     coach.name,
                     " Coach"),
-                React.createElement("div", { style: { fontSize: 8, color: coach.color, letterSpacing: ".1em", textTransform: "uppercase", fontFamily: "Inter,system-ui,sans-serif" } }, "AI Specialist")),
+                React.createElement("div", { style: { fontSize: 10, color: typing ? coach.color : T.ivoryD, fontFamily: "Inter,system-ui,sans-serif" } }, typing ? "typing…" : lastSeenText(CH[id]))),
             (CH[id] || []).length > 0 && React.createElement("button", { onClick: () => onClear(id), style: { fontSize: 9, color: T.ivoryD, background: "transparent", border: "1px solid " + T.border2, borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontFamily: "Inter,system-ui,sans-serif" } }, "CLEAR")),
         React.createElement("div", { style: { display: "flex", padding: "0 16px", borderBottom: "1px solid " + T.border, overflowX: "auto", scrollbarWidth: "none", flexShrink: 0 } }, ["ask", "tips"].map(t => React.createElement("button", { key: t, style: { padding: "9px 14px", fontSize: 9, letterSpacing: ".1em", textTransform: "uppercase", color: cTab === t ? T.gold : T.ivoryD, cursor: "pointer", border: "none", background: "transparent", borderBottom: cTab === t ? "2px solid " + T.gold : "2px solid transparent", whiteSpace: "nowrap", flexShrink: 0, fontFamily: "Inter,system-ui,sans-serif", fontWeight: cTab === t ? 500 : 300 }, onClick: () => setCTab(t) }, t))),
         React.createElement("div", { style: { flex: 1, overflowY: "auto", scrollbarWidth: "none" } },
@@ -1879,7 +1999,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
                 coachTips.map((tip, i) => (React.createElement("div", { key: i, style: { display: "flex", gap: 12, padding: "12px", background: T.card, border: "1px solid " + T.border, borderRadius: 12, marginBottom: 8 } },
                     React.createElement("div", { style: { width: 24, height: 24, borderRadius: "50%", border: "1px solid " + coach.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: coach.color, flexShrink: 0, fontFamily: "Fraunces,Georgia,serif" } }, i + 1),
                     React.createElement("div", { style: { fontSize: 12, color: T.ivory, lineHeight: 1.7, fontWeight: 300, fontFamily: "Inter,system-ui,sans-serif" } }, tip)))))),
-            cTab === "ask" && React.createElement(SmartChat, { id: id, coach: coach, CH: CH, setCH: setCH, T: T, viewDay: viewDay, L: L, W: W, pendingAsk: pendingAsk, onConsumePendingAsk: () => setPendingAsk(null), onTalkToMeher: (reason) => { store.set(MEHER_HANDOFF_KEY, { from: id, reason: reason, at: Date.now() }); if (onSwitchCoach) onSwitchCoach("mind"); } }))));
+            cTab === "ask" && React.createElement(SmartChat, { id: id, coach: coach, CH: CH, setCH: setCH, T: T, viewDay: viewDay, L: L, W: W, pendingAsk: pendingAsk, onConsumePendingAsk: () => setPendingAsk(null), onTypingChange: setTyping, onTalkToMeher: (reason) => { store.set(MEHER_HANDOFF_KEY, { from: id, reason: reason, at: Date.now() }); if (onSwitchCoach) onSwitchCoach("mind"); } }))));
 }
 // Body part data with muscle group descriptions
 const MUSCLE_INFO = {
@@ -3561,7 +3681,7 @@ function VoiceNoteBubble({ text, color, T }) {
             React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: "Inter,system-ui,sans-serif", flexShrink: 0 } }, mm + ":" + String(ss).padStart(2, "0"))),
         React.createElement("div", { style: { fontSize: 11, color: T.ivoryM, lineHeight: 1.6, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300, fontStyle: "italic", padding: "0 4px" } }, text)));
 }
-function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsumePendingAsk, onTalkToMeher }) {
+function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsumePendingAsk, onTalkToMeher, onTypingChange }) {
 
     const [inp, setInp] = React.useState("");
     // Arriving at Dr. Meher from another coach's "Talk to Dr. Meher" button:
@@ -3662,6 +3782,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         return qa.def || "Ask me something more specific — I know your complete " + id + " routine in detail.";
     };
     const [thinking, setThinking] = React.useState(false);
+    React.useEffect(() => { if (onTypingChange) onTypingChange(thinking); }, [thinking]);
     // ── SMART LOCAL RESPONSE ENGINE ──────────────────────────
     const buildResponse = (msg, coachId, L, viewDay, W) => {
         const m = msg.toLowerCase().trim();
@@ -3941,10 +4062,11 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
     const send = async (msg) => {
         if (!msg.trim() || thinking)
             return;
-        const userMsg = { role: "user", content: msg };
+        const userMsg = { role: "user", content: msg, ts: Date.now() };
         const newHistUser = [...hist, userMsg];
         const up1 = Object.assign({}, CH, { [id]: newHistUser });
         setCH(up1);
+        store.set("jos_ch", up1);
         setInp("");
         setThinking(true);
         // Rich context for the AI coach
@@ -3957,15 +4079,17 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const fullSys = buildCoachSystem(coach, CH, ctx);
         try {
             const raw = await ai(fullSys, newHistUser.slice(-20), 800);
-            const mem = extractTeamMemory(raw);
-            addTeamMemoryFacts(mem.facts, id);
-            const ho = extractHandoff(mem.clean || raw);
-            const assistantMsg = { role: "assistant", content: ho.clean || mem.clean || raw };
-            if (ho.handoff && id !== "mind") assistantMsg.handoff = ho.handoff;
-            const newHist = [...newHistUser, assistantMsg];
-            const up2 = Object.assign({}, CH, { [id]: newHist });
-            setCH(up2);
-            store.set("jos_ch", up2);
+            const reply = processCoachReply(raw, id);
+            // Deliver the coach's texts one by one, with typing time in between.
+            let newHist = newHistUser;
+            for (let pi = 0; pi < reply.parts.length; pi++) {
+                if (pi > 0) await new Promise(r => setTimeout(r, typingDelay(reply.parts[pi])));
+                const am = { role: "assistant", content: reply.parts[pi], ts: Date.now() };
+                if (pi === reply.parts.length - 1 && reply.handoff && id !== "mind") am.handoff = reply.handoff;
+                newHist = [...newHist, am];
+                const snapshot = newHist;
+                setCH(prev => { const up = Object.assign({}, prev, { [id]: snapshot }); store.set("jos_ch", up); return up; });
+            }
             const bLvl = getCoachLevel(Math.floor(hist.length / 2));
             const aLvl = getCoachLevel(Math.floor(newHist.length / 2));
             if (aLvl.current.name !== bLvl.current.name) {
@@ -3977,7 +4101,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
             // Fallback to smart local response
             const response = buildResponse(msg, id, L, viewDay, W);
             const reason = String((e && e.message) || "AI unavailable").slice(0, 160);
-            const assistantMsg = { role: "assistant", content: "[Local · " + reason + "] " + response };
+            const assistantMsg = { role: "assistant", content: "[Local · " + reason + "] " + response, ts: Date.now() };
             const newHist = [...newHistUser, assistantMsg];
             const up2 = Object.assign({}, CH, { [id]: newHist });
             setCH(up2);
@@ -4009,7 +4133,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: "12px 20px", overflowY: "auto", scrollbarWidth: "none" } },
             hist.length === 0 && (React.createElement("div", { style: { maxWidth: "90%", padding: "12px 16px", borderRadius: 14, fontSize: 12, lineHeight: 1.6, background: T.card2, border: "1px solid " + T.border, color: T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } },
                 id === "ronaldo" ? "Talent without working hard is nothing. Tell me what you did today \u2014 gym, sleep, food \u2014 and I'll tell you straight where you stand." : ("Ask me anything about your " + coach.name.toLowerCase() + " routine. I know everything \u2014 your products, schedule, targets."))),
-            hist.map((m, i) => React.createElement(React.Fragment, { key: i }, (m.role === "assistant" && id === "ronaldo" ? React.createElement(VoiceNoteBubble, { key: i, text: m.content, color: coach.color, T: T }) : React.createElement("div", { key: i, style: { maxWidth: "88%", padding: "11px 15px", borderRadius: 14, fontSize: 12, lineHeight: 1.7, background: m.role === "user" ? "rgba(212,175,55,.1)" : T.card2, border: "1px solid " + (m.role === "user" ? "rgba(212,175,55,.2)" : T.border), color: m.role === "user" ? T.gold : T.ivory, alignSelf: m.role === "user" ? "flex-end" : "flex-start", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } }, m.content)), m.handoff && id !== "mind" && onTalkToMeher && React.createElement("button", { onClick: () => onTalkToMeher(m.handoff), style: { alignSelf: "flex-start", marginTop: -4, padding: "8px 14px", borderRadius: 20, border: "1px solid rgba(142,124,195,.5)", background: "rgba(142,124,195,.12)", color: "#C8B8F0", fontSize: 12, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, cursor: "pointer" } }, "💜 Talk to Dr. Meher"))),
+            hist.map((m, i) => React.createElement(React.Fragment, { key: i }, (m.role === "assistant" && id === "ronaldo" ? React.createElement(VoiceNoteBubble, { key: i, text: m.content, color: coach.color, T: T }) : React.createElement("div", { key: i, style: { maxWidth: "88%", padding: "11px 15px", borderRadius: 14, fontSize: 12, lineHeight: 1.7, background: m.role === "user" ? "rgba(212,175,55,.1)" : T.card2, border: "1px solid " + (m.role === "user" ? "rgba(212,175,55,.2)" : T.border), color: m.role === "user" ? T.gold : T.ivory, alignSelf: m.role === "user" ? "flex-end" : "flex-start", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } }, m.content, msgTime(m))), m.handoff && id !== "mind" && onTalkToMeher && React.createElement("button", { onClick: () => onTalkToMeher(m.handoff), style: { alignSelf: "flex-start", marginTop: -4, padding: "8px 14px", borderRadius: 20, border: "1px solid rgba(142,124,195,.5)", background: "rgba(142,124,195,.12)", color: "#C8B8F0", fontSize: 12, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, cursor: "pointer" } }, "💜 Talk to Dr. Meher"))),
             thinking && React.createElement("div", { style: { maxWidth: "60%", padding: "11px 15px", borderRadius: 14, background: T.card2, border: "1px solid " + T.border, alignSelf: "flex-start", display: "flex", gap: 4, alignItems: "center" } }, [0, 1, 2].map(i => React.createElement("div", { key: i, style: { width: 6, height: 6, borderRadius: "50%", background: coach.color, opacity: .6, animation: "pulse 1.2s ease-in-out " + (i * 0.2) + "s infinite" } }))),
             React.createElement("div", { ref: endRef })),
         hist.length === 0 && (React.createElement("div", { style: { display: "flex", gap: 6, padding: "4px 20px 6px", overflowX: "auto", scrollbarWidth: "none", flexWrap: "wrap" } }, ps.map(p => (React.createElement("button", { key: p, onClick: () => send(p), style: { padding: "6px 12px", borderRadius: 18, border: "1px solid " + T.border2, background: T.card, fontSize: 10, color: T.ivoryM, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300, marginBottom: 4 } }, p))))),
@@ -4454,6 +4578,7 @@ function FormCard({ sc, items, T }) {
 
 function JeetOS() {
     const [screen, setScreen] = React.useState("home");
+    const [unread, setUnread] = React.useState(store.get("jos_unread") || {});
     const [tab, setTab] = React.useState("today");
     React.useEffect(() => {
         if (tab === "today") {
@@ -4475,6 +4600,12 @@ function JeetOS() {
     const [CH, setCH] = React.useState({});
     const [CL, setCL] = React.useState(false);
     const [activeCoach, setActiveCoach] = React.useState(null);
+    React.useEffect(() => {
+        if (screen === "coach" && activeCoach && unread[activeCoach]) {
+            setUnread(prev => { const up = Object.assign({}, prev, { [activeCoach]: 0 }); store.set("jos_unread", up); return up; });
+            markInboxRead(activeCoach);
+        }
+    }, [screen, activeCoach, unread]);
     const [toast, setToast] = React.useState(null);
     const [streaks, setStreaks] = React.useState({});
     const [customMeals, setCustomMeals] = React.useState([]);
@@ -4528,9 +4659,35 @@ function JeetOS() {
         if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
             scheduleAllNotifs();
         }
-        // Clear old API error history and start fresh
-        store.set("jos_ch", {});
-        setCH({});
+        // Keep chat history so coaches remember past conversations; drop only
+        // old offline/error replies.
+        const savedCH = store.get("jos_ch") || {};
+        const keptCH = {};
+        Object.keys(savedCH).forEach(k => {
+            keptCH[k] = (savedCH[k] || []).filter(m => !(m.role === "assistant" && /^(\[Local|Connection error)/.test(String(m.content))));
+        });
+        store.set("jos_ch", keptCH);
+        setCH(keptCH);
+        syncCommitments();
+        // Messages coaches texted first while the app was closed.
+        fetchCoachInbox().then(rows => {
+            const seen = new Set(store.get("jos_inbox_seen") || []);
+            const fresh = rows.filter(r => !seen.has(r.id) && COACHES.some(c => c.id === r.coach));
+            if (!fresh.length) return;
+            setCH(prev => {
+                const up = Object.assign({}, prev);
+                fresh.forEach(r => { up[r.coach] = [...(up[r.coach] || []), { role: "assistant", content: r.text, ts: Date.parse(r.created_at) || Date.now(), inbox: true }]; });
+                store.set("jos_ch", up);
+                return up;
+            });
+            setUnread(prev => {
+                const up = Object.assign({}, prev);
+                fresh.forEach(r => { up[r.coach] = (up[r.coach] || 0) + 1; });
+                store.set("jos_unread", up);
+                return up;
+            });
+            store.set("jos_inbox_seen", [...seen, ...fresh.map(r => r.id)].slice(-200));
+        });
         const sgs = store.get("jos_sets_" + dateKey);
         if (sgs)
             setGymSets(sgs);
@@ -4765,7 +4922,7 @@ function JeetOS() {
             const raw = await ai(buildCoachSystem(coach, CH, ctx), nh.slice(-20), 800);
             const { clean, facts } = extractTeamMemory(raw);
             addTeamMemoryFacts(facts, coachId);
-            const final = Object.assign({}, CH, { [coachId]: [...nh, { role: "assistant", content: extractHandoff(clean || raw).clean || clean || raw }] });
+            const final = Object.assign({}, CH, { [coachId]: [...nh, { role: "assistant", content: applyCommitTags(extractHandoff(clean || raw).clean || clean || raw, coachId), ts: Date.now() }] });
             setCH(final);
             store.set("jos_ch", final);
         }
@@ -5795,7 +5952,7 @@ function JeetOS() {
                     const chats = Math.floor((CH[c.id] || []).length / 2);
                     return (React.createElement("div", { key: c.id, onClick: () => { setActiveCoach(c.id); setScreen("coach"); }, style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: 14, cursor: "pointer", position: "relative" } },
                         React.createElement("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 } },
-                            React.createElement(CoachAvatar, { coachId: c.id, color: c.color, size: 52 }),
+                            React.createElement("div", { style: { position: "relative" } }, React.createElement(CoachAvatar, { coachId: c.id, color: c.color, size: 52 }), unread[c.id] > 0 && React.createElement("div", { style: { position: "absolute", top: -4, right: -6, minWidth: 18, height: 18, padding: "0 5px", borderRadius: 9, background: "#25D366", color: "#04110A", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter,system-ui,sans-serif", boxShadow: "0 0 0 2px " + T.card } }, unread[c.id])),
                             chats > 0 && React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 3, padding: "3px 7px", background: "rgba(255,255,255,.04)", borderRadius: 10 } },
                                 React.createElement(Icon, { name: getCoachLevel(chats).current.icon, size: 10, color: T.ivoryD }),
                                 React.createElement("span", { style: { fontSize: 8, color: T.ivoryD, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 600 } }, chats))),

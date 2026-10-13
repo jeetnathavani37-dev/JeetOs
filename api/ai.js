@@ -124,10 +124,20 @@ module.exports = async function handler(req, res) {
   }
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { system, messages, max, provider } = req.body || {};
+  const { system, max, provider } = req.body || {};
+  let { messages } = req.body || {};
   if (!system || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "system and messages[] are required" });
   }
+  // Coaches can send several texts in a row (and text first), so the chat can
+  // hold consecutive assistant messages — fold same-role runs into one turn.
+  messages = messages.reduce((out, m) => {
+    const last = out[out.length - 1];
+    if (last && last.role === m.role) last.content = String(last.content) + "\n\n" + String(m.content);
+    else out.push({ role: m.role, content: String(m.content) });
+    return out;
+  }, []);
+  if (messages[0].role !== "user") messages.unshift({ role: "user", content: "(Jeet opened the chat)" });
 
   const order = provider && CALLERS[provider]
     ? [provider, ...PROVIDER_ORDER.filter(p => p !== provider)]

@@ -1,10 +1,38 @@
 {
   "rewrites": [
-    { "source": "/", "destination": "/JeetOS.html" }
+    {
+      "source": "/",
+      "destination": "/JeetOS.html"
+    }
   ],
   "crons": [
-    { "path": "/api/telegram-checkin?type=morning", "schedule": "30 1 * * *" },
-    { "path": "/api/telegram-checkin?type=night", "schedule": "30 15 * * *" },
-    { "path": "/api/telegram-weekly-report", "schedule": "30 15 * * 0" }
+    {
+      "path": "/api/telegram-checkin?type=morning",
+      "schedule": "30 1 * * *"
+    },
+    {
+      "path": "/api/telegram-checkin?type=night",
+      "schedule": "30 15 * * *"
+    },
+    {
+      "path": "/api/telegram-weekly-report",
+      "schedule": "30 15 * * 0"
+    },
+    {
+      "path": "/api/coach-nudge?slot=morning",
+      "schedule": "45 2 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=afternoon",
+      "schedule": "15 8 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=evening",
+      "schedule": "45 11 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=night",
+      "schedule": "0 17 * * *"
+    }
   ]
 }

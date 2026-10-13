@@ -91,3 +91,32 @@ create table if not exists public.jeetos_team_memory (
 );
 alter table public.jeetos_team_memory enable row level security;
 create policy "allow all for anon" on public.jeetos_team_memory for all to public using (true) with check (true);
+
+-- Promises Jeet makes to a coach in chat ("kal 6 baje gym"), so the coach
+-- follows up when due. Written by the app with the publishable key.
+create table if not exists public.jeetos_commitments (
+  id text primary key,
+  coach text not null,
+  text text not null,
+  due date not null,
+  status text not null default 'open' check (status in ('open','done','missed')),
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
+alter table public.jeetos_commitments enable row level security;
+create policy "allow all for anon" on public.jeetos_commitments for all to public using (true) with check (true);
+
+-- Coaches text first: api/coach-nudge.js (Vercel Cron) writes one message per
+-- coach per slot per day; the app shows them as unread chats.
+create table if not exists public.jeetos_coach_inbox (
+  id bigserial primary key,
+  coach text not null,
+  slot text not null,
+  text text not null,
+  created_on date not null,
+  created_at timestamptz not null default now(),
+  read boolean not null default false,
+  unique (coach, slot, created_on)
+);
+alter table public.jeetos_coach_inbox enable row level security;
+create policy "allow all for anon" on public.jeetos_coach_inbox for all to public using (true) with check (true);
