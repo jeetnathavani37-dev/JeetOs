@@ -716,6 +716,8 @@ const T = {
 };
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
+// Bump on every release: the app compares it with the live page to offer an update.
+const APP_BUILD = "2026.10.13-43";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1434,6 +1436,10 @@ function applyProfileOps(ops, src) {
     (ops.add || []).forEach(o => { const list = p[o.section]; const t = String(o.text || "").trim(); if (!list || !t || list.some(x => norm(x.t) === norm(t))) return; list.push({ t: t.slice(0, 220), d: localIsoDate(), src: src }); n++; });
     PROFILE_SECTIONS.forEach(s => { if (p[s.k].length > 14) p[s.k] = p[s.k].slice(-14); });
     if (n) saveProfile(p);
+    if (n && src === "memory") {
+        const learned = (ops.add || []).concat(ops.update || []).map(o => o.text || o.new).filter(Boolean);
+        try { window.dispatchEvent(new CustomEvent("jos-memory", { detail: learned })); } catch (_a) { }
+    }
     return n;
 }
 function loadSummaries() { const l = store.get(SUMMARIES_KEY); return Array.isArray(l) ? l : []; }
@@ -1490,7 +1496,7 @@ async function runMemoryPass(CH, force) {
     const st = store.get(MEMSTATE_KEY) || { lastTs: 0 };
     const fresh = [];
     Object.keys(CH || {}).forEach(k => (CH[k] || []).forEach(m => { if (m && m.ts > st.lastTs && !m.error && m.content) fresh.push({ k: k, m: m }); }));
-    if (fresh.filter(x => x.m.role === "user").length < (force ? 1 : 4)) return 0;
+    if (fresh.filter(x => x.m.role === "user").length < (force ? 1 : 3)) return 0;
     fresh.sort((a, b) => a.m.ts - b.m.ts);
     const slice = fresh.slice(-80);
     memoryBusy = true;
@@ -3074,6 +3080,7 @@ function GroupScreen({ T, CH, setCH, L, W, viewDay, onBack, onOpenCoach }) {
     if (inCall) return React.createElement(GroupCallOverlay, { T: T, onUserText: (t) => sendRef.current(t, { voice: true }), onEnd: () => setInCall(false) });
     const sender = m => m.role === "user" ? "me" : m.coach;
     return React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", height: "100dvh", background: "#0B0B0E", fontFamily: CHAT_FONT, display: "flex", flexDirection: "column", overflow: "hidden" } },
+        React.createElement(AppNotices, null),
         React.createElement(ChatHeader, { T: T, onBack: onBack, avatar: stack, title: "Team Jeet", subtitle: typing ? (typing === "…" ? "team is typing…" : typing + " is typing…") : GROUP_ORDER.map(cid => personaName(cid).replace(/^(Dr\.|Coach) /, "")).join(", "), subtitleColor: typing ? "#3BD16F" : null,
             actions: React.createElement(React.Fragment, null,
                 React.createElement(ChatHeaderBtn, { label: "Group call", icon: React.createElement(ChatIcon, { name: "phone", size: 20 }), onClick: () => { unlockCoachAudio(); setInCall(true); } }),
@@ -3416,6 +3423,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
         !typing && lastSeenText(CH[id]) === "online" && React.createElement("span", { style: { position: "absolute", right: 0, bottom: 0, width: 11, height: 11, borderRadius: "50%", background: "#3BD16F", border: "2px solid #0E0E11" } }));
     const toggleVoice = () => { unlockCoachAudio(); const v = !voiceOn; setVoiceOn(v); store.set(VOICE_AUTO_KEY, v); if (!v) stopCoachVoice(); };
     return React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", height: "100dvh", background: "#0B0B0E", fontFamily: CHAT_FONT, display: "flex", flexDirection: "column", overflow: "hidden" } },
+        React.createElement(AppNotices, null),
         React.createElement(ChatHeader, { T: T, onBack: onBack, avatar: avatar, title: personaName(id), subtitle: typing ? "typing…" : (lastSeenText(CH[id]) === "online" ? coach.name + " coach · online" : lastSeenText(CH[id])), subtitleColor: typing ? "#3BD16F" : null,
             actions: React.createElement(React.Fragment, null,
                 React.createElement(ChatHeaderBtn, { label: "Voice call " + personaName(id), icon: React.createElement(ChatIcon, { name: "phone", size: 20 }), onClick: () => { unlockCoachAudio(); setInCall(true); } }),
@@ -4916,6 +4924,38 @@ function AppTopBar({ T, tab, sc, level, xp, onLevel }) {
 // Bottom nav: the four places he goes most + "More" for the rest.
 const NAV_MAIN = [{ id: "today", l: "Today", i: "clipboard" }, { id: "gym", l: "Gym", i: "weights" }, { id: "diet", l: "Diet", i: "meal" }, { id: "coaches", l: "Coaches", i: "trophy" }];
 const NAV_MORE = [{ id: "drinks", l: "Drinks", i: "cup", d: "Water & drinks" }, { id: "supps", l: "Supps", i: "pill", d: "Supplement schedule" }, { id: "care", l: "Care", i: "sparkle", d: "Skin, hair, grooming" }, { id: "wardrobe", l: "Style", i: "shirt", d: "Wardrobe & looks" }, { id: "analytics", l: "Stats", i: "chart", d: "Progress & records" }, { id: "edits", l: "Edits", i: "edit", d: "Rename tasks" }];
+// Floating notices on every screen: a new version is live, or the coaches just learned something.
+function AppNotices() {
+    const [update, setUpdate] = React.useState(false);
+    const [learned, setLearned] = React.useState(null);
+    React.useEffect(() => {
+        const check = async () => {
+            try {
+                const r = await fetch("/?build=" + Date.now(), { cache: "no-store" });
+                const live = ((await r.text()).match(/APP_BUILD = "([^"]+)"/) || [])[1];
+                if (live && live !== APP_BUILD) setUpdate(true);
+            } catch (_a) { }
+        };
+        check();
+        const onVis = () => { if (document.visibilityState === "visible") check(); };
+        document.addEventListener("visibilitychange", onVis);
+        const t = setInterval(check, 10 * 60 * 1000);
+        let hide;
+        const onMem = (e) => { const list = (e.detail || []).filter(Boolean); if (!list.length) return; setLearned(list); clearTimeout(hide); hide = setTimeout(() => setLearned(null), 5000); };
+        window.addEventListener("jos-memory", onMem);
+        return () => { document.removeEventListener("visibilitychange", onVis); clearInterval(t); window.removeEventListener("jos-memory", onMem); clearTimeout(hide); };
+    }, []);
+    const box = { position: "fixed", left: "50%", transform: "translateX(-50%)", width: "calc(100% - 24px)", maxWidth: 406, zIndex: 500, borderRadius: 16, padding: "11px 14px", fontFamily: "Inter,system-ui,sans-serif", boxShadow: "0 10px 30px rgba(0,0,0,.55)", animation: "josMsgIn .2s ease-out", display: "flex", alignItems: "center", gap: 10 };
+    return React.createElement(React.Fragment, null,
+        update && React.createElement("div", { style: Object.assign({}, box, { top: "calc(70px + env(safe-area-inset-top))", border: "1px solid rgba(212,175,55,.5)", background: "#1F1A0E", color: "#F2EFE6" }) },
+            React.createElement("span", { style: { fontSize: 20 } }, "✨"),
+            React.createElement("span", { style: { flex: 1, fontSize: 13.5, lineHeight: 1.4 } }, React.createElement("b", null, "Naya update aaya"), " — reload karo"),
+            React.createElement("button", { onClick: () => { try { window.location.replace(window.location.pathname + "?v=" + Date.now()); } catch (_a) { window.location.reload(); } }, style: { border: "none", borderRadius: 12, background: "#D4AF37", color: "#16120A", fontWeight: 700, fontSize: 13, padding: "7px 12px", cursor: "pointer" } }, "Update"),
+            React.createElement("button", { onClick: () => setUpdate(false), "aria-label": "Later", style: { border: "none", background: "transparent", color: "rgba(255,255,255,.6)", fontSize: 15, cursor: "pointer", padding: "0 2px" } }, "✕")),
+        learned && React.createElement("div", { role: "status", onClick: () => setLearned(null), style: Object.assign({}, box, { bottom: "calc(84px + env(safe-area-inset-bottom))", border: "1px solid rgba(142,124,195,.45)", background: "#1A1726", color: "#ECE8DE" }) },
+            React.createElement("span", { style: { fontSize: 20 } }, "🧠"),
+            React.createElement("span", { style: { flex: 1, fontSize: 13, lineHeight: 1.45 } }, React.createElement("b", null, "Coaches ne yaad rakha: "), learned[0] + (learned.length > 1 ? " (+" + (learned.length - 1) + " aur)" : ""))));
+}
 function SmartNav({ tab, setTab, T, unread }) {
     const [more, setMore] = React.useState(false);
     const inMore = NAV_MORE.find(x => x.id === tab);
@@ -4934,7 +4974,8 @@ function SmartNav({ tab, setTab, T, unread }) {
                         React.createElement(Icon, { name: it.i, size: 24, color: active ? T.gold : T.ivory, strokeWidth: 1.7 }),
                         React.createElement("span", { style: { fontSize: 13, fontWeight: 600, color: active ? T.gold : T.ivory, fontFamily: "Inter,system-ui,sans-serif" } }, it.l),
                         React.createElement("span", { style: { fontSize: 10.5, color: "rgba(255,255,255,.5)", fontFamily: "Inter,system-ui,sans-serif", textAlign: "center", lineHeight: 1.3 } }, it.d));
-                })))),
+                })),
+                React.createElement("div", { style: { textAlign: "center", fontSize: 10.5, color: "rgba(255,255,255,.35)", fontFamily: "Inter,system-ui,sans-serif", marginTop: 10 } }, "JeetOS · build " + APP_BUILD))),
         React.createElement("nav", { style: { position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, zIndex: 100, background: "rgba(10,9,16,.94)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", borderTop: "1px solid rgba(255,255,255,.07)" } },
             React.createElement("div", { style: { display: "flex", padding: "4px 6px", paddingBottom: "calc(env(safe-area-inset-bottom) + 4px)" } },
                 NAV_MAIN.map(it => item(it, tab === it.id, () => go(it.id), it.id === "coaches" ? unread : 0)),
@@ -8168,6 +8209,7 @@ function JeetOS() {
                         editRow("diet_lunch", "Lunch \u2014 Paneer Paratha", customLabels["diet_lunch"] || "", v => updateLabel("diet_lunch", v)),
                         editRow("diet_dinner", "Dinner \u2014 Soya Chunks", customLabels["diet_dinner"] || "", v => updateLabel("diet_dinner", v))));
             })())),
+        React.createElement(AppNotices, null),
         React.createElement(SmartNav, { tab: tab, setTab: setTab, T: T, unread: Object.values(unread || {}).reduce((a, b) => a + (+b || 0), 0) })));
 }
 try{
