@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-46";
+const APP_BUILD = "2026.10.14-47";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1030,6 +1030,8 @@ function buildCoachSystem(coach, CH, ctx) {
     parts.push(profilePrompt());
     const assess = assessmentContextText(coach.id);
     if (assess) parts.push(assess);
+    const scans = scanContextText(coach.id);
+    if (scans) parts.push(scans);
     const past = pastConvosPrompt(coach.id);
     if (past) parts.push(past);
     parts.push(teamMemoryPrompt(CH, coach.id));
@@ -1322,7 +1324,9 @@ const COACH_PHOTO_RULES = {
     mind: "Respond to what the photo means to him — ask gently what he wanted to share with it.",
 };
 function photoPrompt(coachId) {
-    return "PHOTOS: Jeet can send you photos (meals, outfits, skin, gym, anything). When a message has a photo, actually look at it and react like a real coach texting back — specific to what's in it, never generic. " + (COACH_PHOTO_RULES[coachId] || "") + " If it's unclear, ask about it. Earlier photos in the chat appear as \"[sent a photo]\" — you can't see those anymore.";
+    const own = Object.keys(PHOTO_FACTORS).filter(s => PHOTO_FACTORS[s].coach === coachId);
+    const factorRule = own.map(s => " For a " + PHOTO_FACTORS[s].label.toLowerCase() + " photo, judge it on these factors (1-10, 10 = best / none of the problem): " + PHOTO_FACTORS[s].factors.join(", ") + " — give the scores that stand out with a short reason, then the top fix. For a full tracked scan he can tap ⋮ → Photo scan.").join("");
+    return factorRule + " PHOTOS: Jeet can send you photos (meals, outfits, skin, gym, anything). When a message has a photo, actually look at it and react like a real coach texting back — specific to what's in it, never generic. " + (COACH_PHOTO_RULES[coachId] || "") + " If it's unclear, ask about it. Earlier photos in the chat appear as \"[sent a photo]\" — you can't see those anymore.";
 }
 // Downscales a picked image so it fits a chat request (full) and localStorage (thumb).
 function resizeImage(file, maxSide, quality) {
@@ -1898,6 +1902,153 @@ function AssessmentSheet({ T, id, W, L, onClose, onDiscuss }) {
                 onDiscuss && React.createElement("button", { onClick: () => onDiscuss(a), style: { width: "100%", padding: "11px", borderRadius: 14, border: "1px solid " + coach.color, background: "transparent", color: coach.color, fontWeight: 700, fontSize: 13.5, cursor: "pointer", fontFamily: font, marginTop: 12 } }, "💬 Iske baare mein " + personaName(id).split(" ").pop() + " se baat karo")),
             err && React.createElement("div", { style: { fontSize: 12.5, color: "#FF9B9B", marginTop: 10 } }, err),
             runBtn));
+}
+// ── PHOTO SCAN: 10 visual factors per photo type, tracked over time ─────
+// 10 = best. For problems (pimples, puffiness…) 10 means "none / perfect".
+const PHOTO_FACTORS = {
+    face: { coach: "skin", label: "Face", icon: "🙂", hint: "Front-facing, no filter, daylight from a window, same distance every time",
+        factors: ["Pimples / active acne", "Marks & dark spots", "Glow & radiance", "Puffiness (face & under-eye)", "Dark circles", "Texture & pores", "Oiliness / shine", "Redness & irritation", "Even skin tone", "Jawline & facial leanness"] },
+    hair: { coach: "hair", label: "Hair", icon: "💇", hint: "Top of head + hairline, dry hair, bright light",
+        factors: ["Density on top", "Hairline shape", "Crown coverage", "Scalp visibility", "Volume", "Shine & health", "Frizz control", "Dandruff / flakes", "Haircut freshness", "Style suits face shape"] },
+    body: { coach: "fitness", label: "Body", icon: "💪", hint: "Front, relaxed then flexed, same light and pose each time",
+        factors: ["Overall leanness", "Abs visibility", "Chest development", "Shoulders (width & caps)", "Arms", "V-taper", "Waist / love handles", "Muscle definition", "Symmetry", "Posture"] },
+    outfit: { coach: "style", label: "Outfit", icon: "👔", hint: "Full-length mirror pic, whole outfit and shoes visible",
+        factors: ["Fit & tailoring", "Colour harmony", "Colours vs skin tone", "Proportions", "Layering", "Footwear", "Accessories", "Grooming matches the look", "Occasion fit", "Overall impression"] },
+};
+const SCANS_KEY = "jos_photo_scans";
+function loadScans() { const s = store.get(SCANS_KEY); return s && typeof s === "object" && !Array.isArray(s) ? s : {}; }
+function slotScans(slot) { return (loadScans()[slot] || []).slice().sort((a, b) => a.ts - b.ts); }
+function saveScan(slot, sc) {
+    const all = loadScans();
+    all[slot] = (all[slot] || []).filter(x => x.id !== sc.id).concat([sc]).slice(-30);
+    store.set(SCANS_KEY, all);
+    if (supabaseReady()) fetch(SUPABASE_URL + "/rest/v1/jeetos_assessments?on_conflict=id", { method: "POST", headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }), body: JSON.stringify({ id: sc.id, coach: "scan:" + slot, data: sc }) }).catch(() => { });
+}
+async function syncScans() {
+    if (!supabaseReady()) return;
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_assessments?coach=like.scan:*&select=id,coach,data&order=created_at.asc&limit=200", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        if (!r.ok || !Array.isArray(rows)) return;
+        const all = loadScans();
+        rows.forEach(row => { const slot = row.coach.slice(5); const list = all[slot] = all[slot] || []; if (!list.some(x => x.id === row.id)) list.push(row.data); });
+        Object.keys(all).forEach(k => { all[k] = all[k].sort((a, b) => a.ts - b.ts).slice(-30); });
+        store.set(SCANS_KEY, all);
+    } catch (_a) { }
+}
+function normalizeScan(slot, j, prev, source) {
+    const names = PHOTO_FACTORS[slot].factors;
+    const got = Array.isArray(j.factors) ? j.factors : [];
+    const prevMap = {};
+    (prev && prev.factors || []).forEach(f => { prevMap[f.name] = f.score; });
+    const factors = names.map(n => {
+        const f = got.find(x => x && String(x.name || "").toLowerCase().trim() === n.toLowerCase()) || got.find(x => x && String(x.name || "").toLowerCase().includes(n.toLowerCase().split(/[ /(&]/)[0])) || {};
+        const sc = f.score == null || f.score === "" || isNaN(+f.score) ? null : Math.max(1, Math.min(10, Math.round(+f.score)));
+        return { name: n, score: sc, prev: prevMap[n] != null ? prevMap[n] : null, note: String(f.note || "") };
+    });
+    const scored = factors.filter(f => f.score != null);
+    return { id: "sc" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), ts: Date.now(), date: localIsoDate(), slot: slot, source: source || "scan",
+        overall: Math.max(0, Math.min(100, Math.round(+j.overall) || (scored.length ? Math.round(scored.reduce((s, f) => s + f.score, 0) / scored.length * 10) : 0))),
+        factors: factors, summary: String(j.summary || ""), fixes: (j.fixes || []).map(String).slice(0, 3), photo_quality: String(j.photo_quality || ""), prevOverall: prev ? prev.overall : null };
+}
+function scanSchemaText(slot) {
+    return `{"factors": [${PHOTO_FACTORS[slot].factors.map(n => `{"name":"${n}","score":1-10 or null if not visible,"note":"what you see, specific (where, how much, vs last photo)"}`).join(",")}], "overall": 0-100, "summary": "2 lines in your voice, Hinglish — honest", "fixes": ["3 specific fixes for the weakest factors, with products/numbers/timing"], "photo_quality": "one line: was the light/angle good enough, what to change next time"}`;
+}
+async function runPhotoScan(slot, image) {
+    const pf = PHOTO_FACTORS[slot];
+    const coach = COACHES.find(c => c.id === pf.coach) || {};
+    const hist = slotScans(slot);
+    const prev = hist[hist.length - 1] || null;
+    const prevImg = prev ? await getPhoto("scan:" + prev.id) : null;
+    const sys = `${coach.sys || ""}
+
+You are ${personaName(pf.coach)} — PhD in ${PHD_FIELD[pf.coach] || "your field"}. ${COACH_VOICES[pf.coach] || ""}
+IGNORE any length or format rules above. This is a PHOTO SCAN of Jeet's ${pf.label.toLowerCase()}. Look closely at the photo like a world-class specialist and score each factor 1-10, where 10 is the best possible for that factor (for problems like pimples, puffiness, dark circles or dandruff: 10 = none at all). Be honest and consistent — the same face in the same light should get the same scores. Use null only if a factor is not visible.
+${prev ? `A previous scan photo from ${prev.date} is attached FIRST, the new one SECOND. Previous scores: ${prev.factors.map(f => f.name + " " + (f.score != null ? f.score : "n/a")).join(", ")}. Compare carefully and say what changed — and if lighting/angle differ, account for it.` : "This is his first scan of this — set an honest baseline."}
+${profilePrompt()}
+
+FACTORS: ${pf.factors.join(", ")}.
+Reply with ONLY JSON (no markdown):
+${scanSchemaText(slot)}`;
+    const msg = { role: "user", content: "Meri " + pf.label.toLowerCase() + " photo scan karo.", images: prevImg ? [prevImg, image] : [image] };
+    const raw = await ai(sys, [msg], 3000, { tier: "smart", effort: "medium" });
+    const j = parseJsonLoose(raw);
+    if (!j || !Array.isArray(j.factors)) throw new Error("Scan could not be read — try again");
+    const sc = normalizeScan(slot, j, prev, "scan");
+    await putPhoto("scan:" + sc.id, image);
+    saveScan(slot, sc);
+    return sc;
+}
+// Latest scan of each photo type a coach owns, for prompts.
+function scanContextText(coachId) {
+    const lines = Object.keys(PHOTO_FACTORS).filter(s => PHOTO_FACTORS[s].coach === coachId).map(s => {
+        const h = slotScans(s), last = h[h.length - 1];
+        if (!last) return null;
+        return PHOTO_FACTORS[s].label + " scan (" + last.date + ", overall " + last.overall + (last.prevOverall != null ? ", before " + last.prevOverall : "") + "): " + last.factors.map(f => f.name + " " + (f.score != null ? f.score : "n/a") + (f.prev != null && f.score != null && f.prev !== f.score ? (f.score > f.prev ? "▲" : "▼") : "")).join(", ");
+    }).filter(Boolean);
+    return lines.length ? "LATEST PHOTO SCANS (10 = best; for problems 10 = none):\n- " + lines.join("\n- ") + "\nUse these factor scores when judging his " + Object.keys(PHOTO_FACTORS).filter(s => PHOTO_FACTORS[s].coach === coachId).join("/") + " and say which factors moved." : "";
+}
+function PhotoScanSheet({ T, slot: initial, onClose }) {
+    const font = "Inter,system-ui,sans-serif";
+    const slots = Object.keys(PHOTO_FACTORS);
+    const [slot, setSlot] = React.useState(initial || "face");
+    const pf = PHOTO_FACTORS[slot];
+    const coach = COACHES.find(c => c.id === pf.coach) || { color: T.gold };
+    const [list, setList] = React.useState(slotScans(slot));
+    const [idx, setIdx] = React.useState(-1);
+    const [photo, setPhoto] = React.useState(null);
+    const [busy, setBusy] = React.useState(false);
+    const [err, setErr] = React.useState("");
+    const [imgs, setImgs] = React.useState({});
+    const fileRef = React.useRef(null);
+    React.useEffect(() => { const l = slotScans(slot); setList(l); setIdx(l.length - 1); setPhoto(null); setErr(""); }, [slot]);
+    React.useEffect(() => { syncScans().then(() => { const l = slotScans(slot); setList(l); setIdx(l.length - 1); }); }, []);
+    const sc = idx >= 0 ? list[idx] : null;
+    React.useEffect(() => {
+        if (!sc) return;
+        const prevSc = list[idx - 1];
+        Promise.all([getPhoto("scan:" + sc.id), prevSc ? getPhoto("scan:" + prevSc.id) : null]).then(([a, b]) => setImgs({ now: a, prev: b, prevDate: prevSc && prevSc.date }));
+    }, [sc && sc.id]);
+    const pick = async (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f) return; try { setPhoto(await resizeImage(f, 1024, 0.85)); } catch (_a) { } };
+    const run = async () => {
+        if (!photo) return;
+        setBusy(true); setErr("");
+        try { await runPhotoScan(slot, photo); const l = slotScans(slot); setList(l); setIdx(l.length - 1); setPhoto(null); }
+        catch (e) { setErr(aiErrorText(e)); }
+        setBusy(false);
+    };
+    return React.createElement(ChatSheet, { T: T, title: "🔬 Photo scan", onClose: onClose },
+        React.createElement("div", { style: { fontFamily: font } },
+            React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 12 } }, slots.map(s => React.createElement("button", { key: s, onClick: () => setSlot(s), style: { flex: 1, padding: "8px 4px", borderRadius: 12, border: "1px solid " + (s === slot ? coach.color : "rgba(255,255,255,.1)"), background: s === slot ? coach.color + "22" : "transparent", color: s === slot ? T.ivory : T.ivoryD, fontSize: 12.5, cursor: "pointer" } }, PHOTO_FACTORS[s].icon + " " + PHOTO_FACTORS[s].label))),
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, lineHeight: 1.5, marginBottom: 10 } }, personaName(pf.coach) + " judges " + pf.factors.length + " factors: " + pf.factors.join(", ") + "."),
+            React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", onChange: pick, style: { display: "none" } }),
+            photo ? React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", marginBottom: 8 } },
+                React.createElement("img", { src: photo, alt: "To scan", style: { width: 84, height: 84, objectFit: "cover", borderRadius: 12 } }),
+                React.createElement("button", { onClick: run, disabled: busy, style: { flex: 1, padding: "13px", borderRadius: 14, border: "none", background: busy ? "rgba(255,255,255,.08)" : coach.color, color: busy ? T.ivoryD : "#0B0B0E", fontWeight: 700, fontSize: 14, cursor: busy ? "default" : "pointer" } }, busy ? "Scan ho raha hai… (20-40 sec)" : "🔬 Scan karo"))
+                : React.createElement("button", { onClick: () => fileRef.current && fileRef.current.click(), style: { width: "100%", padding: "14px", borderRadius: 14, border: "1px dashed " + coach.color, background: coach.color + "10", color: T.ivory, fontSize: 14, fontWeight: 600, cursor: "pointer", marginBottom: 4 } }, "📷 " + pf.label + " photo lo / chuno"),
+            React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD, marginBottom: 12 } }, "Tip: " + pf.hint),
+            err && React.createElement("div", { style: { fontSize: 12.5, color: "#FF9B9B", marginBottom: 10 } }, err),
+            sc && React.createElement(React.Fragment, null,
+                list.length > 1 && React.createElement("div", { style: { display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none", marginBottom: 10 } }, list.map((x, i) => React.createElement("button", { key: x.id, onClick: () => setIdx(i), style: { flexShrink: 0, padding: "6px 11px", borderRadius: 14, border: "1px solid " + (i === idx ? coach.color : "rgba(255,255,255,.1)"), background: i === idx ? coach.color + "22" : "transparent", color: i === idx ? T.ivory : T.ivoryD, fontSize: 12, cursor: "pointer" } }, x.date.slice(5) + " · " + x.overall))),
+                (imgs.now || imgs.prev) && React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 10 } },
+                    imgs.prev && React.createElement("div", { style: { flex: 1 } }, React.createElement("img", { src: imgs.prev, alt: "Before", style: { width: "100%", height: 150, objectFit: "cover", borderRadius: 10 } }), React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD, textAlign: "center", marginTop: 3 } }, imgs.prevDate)),
+                    imgs.now && React.createElement("div", { style: { flex: 1 } }, React.createElement("img", { src: imgs.now, alt: "Now", style: { width: "100%", height: 150, objectFit: "cover", borderRadius: 10, border: "1px solid " + coach.color } }), React.createElement("div", { style: { fontSize: 10.5, color: coach.color, textAlign: "center", marginTop: 3 } }, sc.date))),
+                React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 14, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)" } },
+                    React.createElement("div", { style: { fontSize: 34, fontWeight: 800, color: scoreColor(sc.overall / 10, T), lineHeight: 1 } }, sc.overall, React.createElement("span", { style: { fontSize: 13, color: T.ivoryD, fontWeight: 500 } }, "/100")),
+                    React.createElement("div", { style: { flex: 1, fontSize: 12.5, color: T.ivoryD } }, pf.label + " score · " + sc.date + (sc.source === "check-in" ? " · weekly check-in" : ""),
+                        sc.prevOverall != null && React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: sc.overall >= sc.prevOverall ? T.green : T.red } }, (sc.overall >= sc.prevOverall ? "▲ +" : "▼ ") + (sc.overall - sc.prevOverall) + " vs last"))),
+                sc.summary && React.createElement("div", { style: { fontSize: 13.5, color: T.ivory, lineHeight: 1.55, fontStyle: "italic", margin: "10px 2px" } }, "“" + sc.summary + "”"),
+                sc.factors.map(f => React.createElement("div", { key: f.name, style: { padding: "8px 0", borderTop: "1px solid rgba(255,255,255,.06)" } },
+                    React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                        React.createElement("div", { style: { flex: 1, fontSize: 13.5, color: T.ivory } }, f.name),
+                        f.prev != null && f.score != null && f.prev !== f.score && React.createElement("span", { style: { fontSize: 11.5, fontWeight: 700, color: f.score > f.prev ? T.green : T.red } }, (f.score > f.prev ? "▲" : "▼") + Math.abs(f.score - f.prev)),
+                        React.createElement("span", { style: { fontSize: 14, fontWeight: 800, color: scoreColor(f.score, T), minWidth: 34, textAlign: "right" } }, f.score != null ? f.score + "/10" : "—")),
+                    React.createElement("div", { style: { height: 5, borderRadius: 3, background: "rgba(255,255,255,.07)", marginTop: 5, overflow: "hidden" } }, React.createElement("div", { style: { height: "100%", width: (f.score || 0) * 10 + "%", background: scoreColor(f.score, T), borderRadius: 3 } })),
+                    f.note && React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, lineHeight: 1.45, marginTop: 4 } }, f.note))),
+                sc.fixes.length > 0 && React.createElement("div", { style: { marginTop: 10, padding: 12, borderRadius: 12, background: coach.color + "14", border: "1px solid " + coach.color + "44" } },
+                    React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: coach.color, marginBottom: 5 } }, "Fix these first"),
+                    sc.fixes.map((x, i) => React.createElement("div", { key: i, style: { fontSize: 13, color: T.ivory, lineHeight: 1.5, marginBottom: 3 } }, (i + 1) + ". " + x))),
+                sc.photo_quality && React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD, marginTop: 8 } }, "📸 " + sc.photo_quality))));
 }
 function typingDelay(text) { return Math.min(2400, 500 + String(text).length * 18); }
 function msgTime(m) {
@@ -2954,6 +3105,7 @@ ${statusReport(id, null, null).split("\n").filter(l => /Body now|measurements|tr
 His own note about the week: ${note ? "\"" + note + "\"" : "none"}.
 PHOTOS: ${labels.length ? "attached in this order — " + labels.map((l, i) => (i + 1) + ") " + l).join("; ") + ". Compare them carefully." : "none for your area this week — judge on the numbers."}
 
+${slots.filter(s => PHOTO_FACTORS[s.id] && PHOTO_FACTORS[s.id].coach === id).map(s => `PHOTO SCAN — ${s.label}: also score the THIS-week ${s.label.toLowerCase()} photo on these factors (1-10, 10 = best / none of the problem): ${PHOTO_FACTORS[s.id].factors.join(", ")}. Put it in "photo_scans": {"${s.id}": ${scanSchemaText(s.id)}}.`).join("\n")}
 Also score him on your ${(COACH_PARAMS[id] || []).length} PARAMETERS (1-10, null only with no evidence): ${(COACH_PARAMS[id] || []).join(", ")} — and update his goal timeline.
 Reply with ONLY a JSON object (no markdown, no extra text), written in his Hinglish:
 {"parameters": [{"name":"exact parameter name","score":1-10,"confidence":"high|medium|low","evidence":"short, with numbers","target":"next target"}], "timeline": {"goal":"...","now":"...","eta":"...","status":"ahead|on track|behind|not started","milestones":[{"when":"Week 2","target":"..."},{"when":"Week 4","target":"..."},{"when":"Week 8","target":"..."}]}, "overall": 0-100,
@@ -2962,6 +3114,17 @@ Reply with ONLY a JSON object (no markdown, no extra text), written in his Hingl
     if (images.length) msg.images = images;
     const raw = await ai(sys, [msg], 5000, { tier: "smart", effort: "medium" });
     const j = parseJsonLoose(raw) || { message: String(raw).replace(/[{}"]/g, "").slice(0, 600) };
+    // Photo factor scans from the check-in go into the scan history too.
+    if (j.photo_scans && typeof j.photo_scans === "object") {
+        for (const s of slots) {
+            const raw = j.photo_scans[s.id];
+            if (!raw || !PHOTO_FACTORS[s.id] || PHOTO_FACTORS[s.id].coach !== id || !Array.isArray(raw.factors)) continue;
+            const prevScans = slotScans(s.id);
+            const sc = normalizeScan(s.id, raw, prevScans[prevScans.length - 1] || null, "check-in");
+            await putPhoto("scan:" + sc.id, photos[s.id].full);
+            saveScan(s.id, sc);
+        }
+    }
     // The check-in doubles as a scorecard: keep the parameters + timeline as this coach's latest assessment.
     if (Array.isArray(j.parameters) && j.parameters.length) {
         const hist = coachAssessments(id);
@@ -3124,6 +3287,7 @@ function CheckinScreen({ T, W, setCH, onBack, onOpenCoach, onCoachMessages }) {
     const [reportPhotos, setReportPhotos] = React.useState({});
     const [openCoach, setOpenCoach] = React.useState(null);
     const [error, setError] = React.useState("");
+    const [scanOpen, setScanOpen] = React.useState(false);
     const fileRefs = React.useRef({});
     const stats = weekStats(W, 0), prevStats = weekStats(W, 1);
     React.useEffect(() => {
@@ -3202,6 +3366,7 @@ function CheckinScreen({ T, W, setCH, onBack, onOpenCoach, onCoachMessages }) {
         React.createElement("div", { style: { flex: 1 } },
             React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 18, color: T.ivory } }, view === "report" ? "Weekly Report" : view === "history" ? "Past Check-ins" : view === "transform" ? "Transformation" : "Weekly Check-in"),
             React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, fontFamily: font } }, view === "report" && report ? new Date(report.created_on).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short" }) : list.length ? "Last check-in " + agoText(list[list.length - 1].created_on) : "Your first check-in")),
+        view === "new" && React.createElement("button", { onClick: () => setScanOpen(true), style: { fontSize: 10, color: T.ivory, background: "transparent", border: "1px solid " + T.border2, borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: font } }, "🔬 Scan"),
         view === "new" && list.some(c => (c.slots || []).length) && React.createElement("button", { onClick: () => setView("transform"), style: { fontSize: 10, color: T.gold, background: "transparent", border: "1px solid " + T.gold, borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: font } }, "🎞️ Transform"),
         view === "new" && list.length > 0 && React.createElement("button", { onClick: () => setView("history"), style: { fontSize: 10, color: T.ivoryD, background: "transparent", border: "1px solid " + T.border2, borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: font } }, "History"));
     let body;
@@ -3302,7 +3467,8 @@ function CheckinScreen({ T, W, setCH, onBack, onOpenCoach, onCoachMessages }) {
     }
     return React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", height: "100vh", background: T.ink, display: "flex", flexDirection: "column", overflow: "hidden" } },
         header,
-        React.createElement("div", { style: { flex: 1, overflowY: "auto", scrollbarWidth: "none" } }, body));
+        React.createElement("div", { style: { flex: 1, overflowY: "auto", scrollbarWidth: "none" } }, body),
+        scanOpen && React.createElement(PhotoScanSheet, { T: T, slot: "face", onClose: () => setScanOpen(false) }));
 }
 function CheckinEntryCard({ T, onOpen }) {
     const font = "Inter,system-ui,sans-serif";
@@ -3794,6 +3960,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
             React.createElement(SmartChat, { id: id, coach: coach, CH: CH, setCH: setCH, T: T, viewDay: viewDay, L: L, W: W, pendingAsk: pendingAsk, onConsumePendingAsk: () => setPendingAsk(null), onTypingChange: setTyping, inCall: inCall, onEndCall: () => setInCall(false), onTalkToMeher: (reason) => { store.set(MEHER_HANDOFF_KEY, { from: id, reason: reason, at: Date.now() }); if (onSwitchCoach) onSwitchCoach("mind"); } })),
         menu && React.createElement(ChatMenu, { T: T, onClose: () => setMenu(false), items: [
                 { icon: "📊", label: "Full assessment (" + (COACH_PARAMS[id] || []).length + " parameters)", onClick: () => setSheet("assess") },
+                ...Object.keys(PHOTO_FACTORS).filter(s => PHOTO_FACTORS[s].coach === id).map(s => ({ icon: "🔬", label: PHOTO_FACTORS[s].label + " photo scan (" + PHOTO_FACTORS[s].factors.length + " factors)", onClick: () => setSheet("scan:" + s) })),
                 { icon: "👤", label: "View profile", onClick: openProfile },
                 { icon: voiceOn ? "🔇" : "🔊", label: voiceOn ? "Voice replies off" : "Voice replies on", onClick: toggleVoice },
                 coachTips.length ? { icon: "💡", label: "Expert tips", onClick: () => setSheet("tips") } : null,
@@ -3801,6 +3968,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
                 (CH[id] || []).length ? { icon: "🗑", label: "Clear chat", danger: true, onClick: () => { stopCoachVoice(); onClear(id); } } : null,
             ] }),
         sheet === "profile" && React.createElement(CoachProfileSheet, { T: T, id: id, CH: CH, onClose: () => setSheet(null), onCall: () => { setSheet(null); unlockCoachAudio(); setInCall(true); }, onAssess: () => setSheet("assess") }),
+        sheet && sheet.indexOf("scan:") === 0 && React.createElement(PhotoScanSheet, { T: T, slot: sheet.slice(5), onClose: () => setSheet(null) }),
         sheet === "assess" && React.createElement(AssessmentSheet, { T: T, id: id, W: W, L: L, onClose: () => setSheet(null), onDiscuss: () => { setSheet(null); setPendingAsk("Maine tumhara assessment dekha. Sabse pehle kya fix karun aur kyun?"); } }),
         sheet === "tips" && React.createElement(ChatSheet, { T: T, title: "💡 " + personaName(id) + "'s tips", onClose: () => setSheet(null) },
             coachTips.map((tip, i) => React.createElement("div", { key: i, style: { display: "flex", gap: 12, padding: "12px 0", borderTop: i ? "1px solid rgba(255,255,255,.06)" : "none" } },
@@ -6774,6 +6942,7 @@ function JeetOS() {
         // Long-term memory: pull the profile/summaries, then learn from anything new.
         Promise.all([syncProfile(), syncSummaries()]).then(() => runMemoryPass(keptCH));
         syncAssessments();
+        syncScans();
         syncCheckins();
         // Messages coaches texted first while the app was closed.
         fetchCoachInbox().then(rows => {
