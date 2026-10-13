@@ -14,6 +14,16 @@
 
 const PROVIDER_ORDER = ["claude", "groq", "gemini"];
 
+// Two Claude tiers. "smart" answers the coach chats, group, check-ins and
+// reviews; "fast" is the cheap model for everything else and the fallback if
+// the smart one fails. Override either with CLAUDE_CHAT_MODEL / CLAUDE_FAST_MODEL.
+const SMART_MODEL = (process.env.CLAUDE_CHAT_MODEL || "claude-sonnet-5-5").trim();
+const FAST_MODEL = (process.env.CLAUDE_FAST_MODEL || "claude-haiku-5-5").trim();
+const EFFORTS = ["low", "medium", "high"];
+// The app puts the part of the system prompt that never changes before this
+// marker, so it can be cached and only the live part is billed in full.
+const LIVE_MARKER = "\n\n<<<LIVE>>>\n\n";
+
 // A message can carry one photo as a data URL (the app downsizes it first).
 function parseImage(image) {
   const m = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/.exec(String(image || ""));
@@ -21,7 +31,9 @@ function parseImage(image) {
 }
 const NO_PHOTO_NOTE = "(He attached a photo, but you can't see it right now — ask him to describe it.)";
 
-async function callClaude(system, messages, max) {
+async function callClaude(system, messages, max, opts) {
+  opts = opts || {};
+  const model = opts.model || FAST_MODEL;
   const key = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY || "").trim();
   if (!key) throw new Error("ANTHROPIC_API_KEY (or CLAUDE_KEY) not configured");
   // A pasted curl command or stray text instead of the bare key makes fetch
@@ -29,18 +41,17 @@ async function callClaude(system, messages, max) {
   if (!/^sk-ant-[\w-]+$/.test(key)) throw new Error("ANTHROPIC_API_KEY is malformed: paste only the sk-ant-... key, nothing else");
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: {
+    headers: Object.assign({
       "Content-Type": "application/json",
       "x-api-key": key,
       "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-5-5",
-      // Short coach chats don't need deep reasoning; low effort keeps them fast and cheap.
-      output_config: { effort: "low" },
+    }, model === "claude-sonnet-5-5" ? { "anthropic-beta": "server-side-fallback-2026-07-01" } : {}),
+    body: JSON.stringify(Object.assign({
+      model,
+      output_config: { effort: EFFORTS.includes(opts.effort) ? opts.effort : (model === FAST_MODEL ? "medium" : "low") },
       // Headroom for adaptive thinking on top of the reply itself.
-      max_tokens: Math.max(max || 1000, 2000),
-      system,
+      max_tokens: Math.max(max || 1000, 4000),
+      system: systemBlocks(system),
       messages: messages.map(m => {
         const imgs = (m.images || (m.image ? [m.image] : [])).map(parseImage).filter(Boolean);
         if (!imgs.length) return { role: m.role, content: String(m.content) };
@@ -49,17 +60,30 @@ async function callClaude(system, messages, max) {
           { type: "text", text: String(m.content) },
         ] };
       }),
-    }),
+    // If Sonnet's safety filter declines a harmless coaching message, let the API reroute it.
+    }, model === "claude-sonnet-5-5" ? { fallbacks: "default" } : {})),
   });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error("Claude " + r.status + ": " + (d && d.error && d.error.message || r.status));
   // Claude thinks adaptively by default, so content[0] can be a
   // thinking block — read the first text block instead.
+  if (d && d.stop_reason === "refusal") throw new Error("Claude declined (" + model + ")");
   const block = d && Array.isArray(d.content) && d.content.find(b => b.type === "text" && b.text);
   const text = block && block.text;
   if (!text) throw new Error("Claude: empty response");
   return text;
 }
+
+function systemBlocks(system) {
+  const s = String(system || "");
+  const i = s.indexOf(LIVE_MARKER);
+  if (i < 0) return s;
+  return [
+    { type: "text", text: s.slice(0, i), cache_control: { type: "ephemeral" } },
+    { type: "text", text: s.slice(i + LIVE_MARKER.length) },
+  ];
+}
+function plainSystem(system) { return String(system || "").replace(LIVE_MARKER, "\n\n"); }
 
 async function callGroq(system, messages, max) {
   const key = process.env.GROQ_API_KEY;
@@ -71,7 +95,7 @@ async function callGroq(system, messages, max) {
       model: "llama-3.3-70b-versatile",
       max_tokens: max || 800,
       temperature: 0.85,
-      messages: [{ role: "system", content: system }, ...messages.map(m => ({ role: m.role, content: String(m.content) + (m.image || m.images ? "\n" + NO_PHOTO_NOTE : "") }))],
+      messages: [{ role: "system", content: plainSystem(system) }, ...messages.map(m => ({ role: m.role, content: String(m.content) + (m.image || m.images ? "\n" + NO_PHOTO_NOTE : "") }))],
     }),
   });
   const d = await r.json().catch(() => ({}));
@@ -96,7 +120,7 @@ async function callGemini(system, messages, max) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: system }] },
+        system_instruction: { parts: [{ text: plainSystem(system) }] },
         contents: [...history, { role: "user", parts: [
           ...lastImgs.map(img => ({ inline_data: { mime_type: img.mediaType, data: img.data } })),
           { text: String(last.content) },
@@ -129,11 +153,15 @@ module.exports = async function handler(req, res) {
       claudeKey: !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY),
       groqKey: !!process.env.GROQ_API_KEY,
       geminiKey: !!process.env.GEMINI_API_KEY,
+      chatModel: SMART_MODEL,
+      fastModel: FAST_MODEL,
     };
     if (status.claudeKey) {
       try {
         await callClaude("Reply with one word.", [{ role: "user", content: "ping" }], 50);
         status.claude = "ok";
+        try { await callClaude("Reply with one word.", [{ role: "user", content: "ping" }], 50, { model: SMART_MODEL }); status.chat = "ok"; }
+        catch (e) { status.chat = redact(e.message); }
       } catch (e) {
         status.claude = redact(e.message);
       }
@@ -142,7 +170,7 @@ module.exports = async function handler(req, res) {
   }
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { system, max, provider } = req.body || {};
+  const { system, max, provider, tier, effort } = req.body || {};
   let { messages } = req.body || {};
   if (!system || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "system and messages[] are required" });
@@ -176,11 +204,19 @@ module.exports = async function handler(req, res) {
 
   const errors = [];
   for (const p of order) {
-    try {
-      const text = await CALLERS[p](system, messages, max);
-      return res.status(200).json({ text, provider: p });
-    } catch (e) {
-      errors.push(redact(e.message));
+    // Claude: the smart model first when asked for, then the fast one.
+    const attempts = p === "claude"
+      ? (tier === "smart" && SMART_MODEL !== FAST_MODEL ? [SMART_MODEL, FAST_MODEL] : [FAST_MODEL]).map(model => ({ model, effort }))
+      : [null];
+    for (const opts of attempts) {
+      try {
+        const text = await CALLERS[p](system, messages, max, opts);
+        return res.status(200).json({ text, provider: p, model: opts && opts.model });
+      } catch (e) {
+        errors.push(redact(e.message));
+        // A missing or bad key fails the same way on every model.
+        if (/not configured|malformed|401/.test(e.message)) break;
+      }
     }
   }
   // Report every provider's failure, not just the last one — the first

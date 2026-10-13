@@ -822,7 +822,7 @@ function scheduleAllNotifs() {
 }
 // All AI calls go through our own /api/ai serverless function — provider keys
 // live server-side as Vercel env vars, never in this client bundle.
-async function callBackendAI(sys, msgs, max, provider) {
+async function callBackendAI(sys, msgs, max, provider, opts) {
     const r = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -831,6 +831,8 @@ async function callBackendAI(sys, msgs, max, provider) {
             messages: msgs.map(m => Object.assign({ role: m.role, content: typeof m.content === "string" ? m.content : String(m.content) }, m.image ? { image: m.image } : {}, m.images ? { images: m.images } : {})),
             max,
             provider,
+            tier: opts && opts.tier,
+            effort: opts && opts.effort,
         })
     });
     const d = await r.json().catch(() => ({}));
@@ -838,8 +840,9 @@ async function callBackendAI(sys, msgs, max, provider) {
         throw new Error((d && d.error) || ("AI backend " + r.status));
     return d.text;
 }
-async function ai(sys, msgs, max) {
-    return callBackendAI(sys, msgs, max, "claude");
+// opts.tier "smart" = the coaches' main brain (better model), default = fast/cheap.
+async function ai(sys, msgs, max, opts) {
+    return callBackendAI(sys, msgs, max, "claude", opts);
 }
 async function groq(sys, msgs, max) {
     return callBackendAI(sys, msgs, max, "groq");
@@ -852,7 +855,7 @@ async function gemini(sys, msgs, max) {
 const COACH_CHAT_STYLE = `HOW YOU TALK (this overrides any length or format rule above):
 - You're texting Jeet on WhatsApp like a real coach who knows him — not writing a report. Sound like a person, not an assistant.
 - Match his language and vibe: Hinglish if he writes Hinglish, English if English, short if he's short, casual if he's casual. Use "tu/tum/bhai" naturally only if he does.
-- Usually 1-3 short sentences. Go longer only when he asks for a plan, routine or explanation. No bullet lists or headings unless he asks for a list.
+- Length follows the message: small talk or a quick reaction gets 1-2 lines. A real question ("kaise", "kya karu", "why", "plan do", a problem) gets a real expert answer — as long as it needs to be, split into 2-3 texts, short lines or a few "-" points if steps help. Never cut a useful answer short just to sound casual.
 - Answer exactly what he asked first. Bring up his live data (sleep, water, protein, gym etc.) only when it genuinely relates to his question — never list his numbers by habit, and never repeat the same nudge you already gave earlier in this chat.
 - Remember this conversation: refer back to what he said earlier, don't re-ask things he already told you, don't restart with a greeting every message.
 - Ask at most one follow-up question, and only when you actually need the answer. It's fine to just reply without a question.
@@ -860,6 +863,8 @@ const COACH_CHAT_STYLE = `HOW YOU TALK (this overrides any length or format rule
 - Text like a real person: you can split a reply into 2-3 separate short texts by putting a blank line between them. An emoji now and then is fine (😂🔥💪), and sometimes a one-word or emoji-only reply is the most human answer — don't overdo it.
 - Have opinions and a personality. React like a human would — surprised, impressed, blunt, playful — when it fits.
 - Teammates' genders: Dr. Aria, Maya and Dr. Meher are women; Kai, Marcus, Dr. Sam, Lex, Blade and Cristiano are men — use the right Hindi forms when you mention them ("Meher help karegi", "Marcus bata raha tha").
+- NO GENERIC ANSWERS. Before you send, ask yourself: "would I say this exact thing to any random guy?" If yes, rewrite it for Jeet. Use his actual routine, exercises, products, foods, numbers, logged lifts/meals, goals and history from this prompt. Give specifics — exact exercises with sets×reps and kg, foods with grams and protein, product names, times, a reason why. Banned unless followed by a specific action: "stay consistent", "listen to your body", "it depends", "eat a balanced diet", "progressive overload", "stay hydrated", "consult a professional". If you truly need one detail to answer well, ask for it — otherwise answer now with your best specific call.
+- You're an expert in your field. Have a clear opinion and commit to it ("Mera call: …"). If something he's doing is wrong, say it straight and show the fix.
 - Never say you're an AI, a model or a bot, and never mention "data provided" or "context". But if he sincerely asks whether you're a real person, be honest that you're his AI coach in JeetOS — then carry on in the same voice.`;
 
 // ── TEAM MEMORY: one memory shared by every coach ──────────────────────
@@ -1007,19 +1012,22 @@ function extractHandoff(reply) {
 }
 // Full system prompt for a coach: persona + texting style + personality +
 // check-in / therapist rules + shared team memory + today's data.
+// Text before PROMPT_LIVE never changes for a coach, so the server can cache it.
+const PROMPT_LIVE = "\n\n<<<LIVE>>>\n\n";
 function buildCoachSystem(coach, CH, ctx) {
     const parts = [coach.sys, COACH_CHAT_STYLE];
     if (COACH_VOICES[coach.id]) parts.push("YOUR PERSONALITY (keep it consistent): " + COACH_VOICES[coach.id]);
     if (coach.id !== "mind") parts.push(COACH_CHECKIN);
+    parts.push(photoPrompt(coach.id));
+    const stable = parts.splice(0).join("\n\n");
     const h = coach.id === "mind" ? freshMeherHandoff() : null;
     if (h) parts.push("REFERRAL: " + coachLabel(h.from) + " just suggested Jeet talk to you. What they noticed: " + h.reason + "\nAcknowledge it gently and naturally in your first reply, then start understanding what's going on.");
     parts.push(teamMemoryPrompt(CH, coach.id));
     parts.push(commitmentsPrompt(coach.id));
     parts.push(goalsPrompt(coach.id));
     parts.push(bondPrompt(coach.id, CH[coach.id]));
-    parts.push(photoPrompt(coach.id));
     parts.push(ctx);
-    return parts.join("\n\n");
+    return stable + PROMPT_LIVE + parts.join("\n\n");
 }
 
 // ── COMMITMENTS: coaches remember what Jeet promised and follow up ──────
@@ -1335,6 +1343,38 @@ function slimChatImages(ch, keep) {
         const m = Object.assign({}, out[r.k][r.i]); delete m.image; m.content = m.content === "📷" ? "📷 Photo" : m.content; out[r.k][r.i] = m;
     });
     return out;
+}
+// What he actually logged: recent sets per exercise and today's meals, so coaches can be specific.
+function recentLiftsText(days) {
+    const out = {};
+    for (let i = 0; i < (days || 21); i++) {
+        const d = new Date(Date.now() - i * 86400000);
+        const sets = store.get("jos_sets_" + d.toDateString());
+        const split = GYM_SPLIT[d.toLocaleDateString("en-US", { weekday: "long" })];
+        if (!sets || !EXERCISES[split]) continue;
+        Object.keys(sets).forEach(k => {
+            const ex = EXERCISES[split][+k.replace("ex_", "")];
+            const done = (sets[k] || []).filter(x => x && x.reps && x.wt);
+            if (!ex || !done.length) return;
+            (out[ex.n] = out[ex.n] || []).push((i === 0 ? "today" : i === 1 ? "yesterday" : i + "d ago") + ": " + done.map(x => x.wt + "kg×" + x.reps).join(", "));
+        });
+    }
+    const names = Object.keys(out);
+    return names.length ? names.slice(0, 18).map(n => "- " + n + " — " + out[n].slice(0, 3).join(" | ")).join("\n") : "- nothing logged in the app yet";
+}
+function todaysMealsText() {
+    const meals = store.get("jos_meals_" + new Date().toDateString()) || [];
+    return meals.length ? meals.map(m => "- " + m.food + " " + m.qty + "g (" + Math.round(m.macros.p) + "g protein, " + m.macros.cal + " kcal)").join("\n") : "- no meals logged today";
+}
+function aiErrorText(e) {
+    const r = String((e && e.message) || "");
+    const why = /Failed to fetch|NetworkError|Load failed/i.test(r) ? "internet connection nahi mila"
+        : /credit|billing|balance/i.test(r) ? "Anthropic account mein credits khatam ho gaye (console.anthropic.com → Billing)"
+        : /401|invalid x-api-key|authentication|malformed/i.test(r) ? "AI key kaam nahi kar rahi — Vercel mein ANTHROPIC_API_KEY check karo"
+        : /429|rate/i.test(r) ? "bahut saare messages ek saath — 1 minute baad bhejo"
+        : /529|overloaded|5\d\d/i.test(r) ? "AI server abhi busy hai"
+        : r.slice(0, 120) || "AI tak nahi pahunch paya";
+    return "⚠️ Message coach tak nahi pahuncha: " + why + ".";
 }
 function typingDelay(text) { return Math.min(2400, 500 + String(text).length * 18); }
 function msgTime(m) {
@@ -2365,7 +2405,7 @@ Reply with ONLY a JSON object (no markdown, no extra text), written in his Hingl
 {"score": ${id === "mind" ? "null" : "1-10 for your area this week"}, "trend": "up|same|down|first", "photo_notes": "detailed observations from the photos and how they compare with the previous one; empty string if no photos", "went_well": ["specific things"], "didnt_go_well": ["specific things"], "why": "honest root cause, 1-3 sentences", "plan": ["exactly 3 specific actions for next week"], "message": "2-3 lines straight to him in your own voice"}`;
     const msg = { role: "user", content: "Here's my week. Review it." };
     if (images.length) msg.images = images;
-    const raw = await ai(sys, [msg], 3000);
+    const raw = await ai(sys, [msg], 3000, { tier: "smart", effort: "medium" });
     const j = parseJsonLoose(raw) || { message: String(raw).replace(/[{}"]/g, "").slice(0, 600) };
     const score = j.score == null || id === "mind" ? null : Math.max(1, Math.min(10, Math.round(+j.score) || 0)) || null;
     const arr = v => Array.isArray(v) ? v.map(String).filter(Boolean).slice(0, 5) : (v ? [String(v)] : []);
@@ -2384,7 +2424,7 @@ ${lines}
 Reply with ONLY a JSON object:
 {"overall": 0-100 overall score for the week, "headline": "one punchy line about the week", "team_meeting": ["one line per coach recapping what they said, e.g. 'Marcus khush hai — 5 din gym'"], "wins": ["top 3 wins"], "fixes": [{"coach": "coach id from the list", "action": "specific action for next week"}], "focus": "THE single most important thing for next week"}
 fixes: max 3, the most impactful ones.`;
-    const raw = await ai(sys, [{ role: "user", content: "Write the recap." }], 2000);
+    const raw = await ai(sys, [{ role: "user", content: "Write the recap." }], 2000, { tier: "smart" });
     const j = parseJsonLoose(raw) || {};
     const scores = Object.values(reviews).map(r => r.score).filter(x => x != null);
     const fallback = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 10) : 50;
@@ -2453,7 +2493,7 @@ You are ${coach.name}. ${COACH_VOICES[coach.id] || ""}
 IGNORE any length or format rules above. This is Jeet's TRANSFORMATION REVIEW for his ${sl.label.toLowerCase()} — the photos are in date order: ${picks.map((p, i) => (i + 1) + ") " + p.date + (p.score != null ? " (you scored " + p.score + "/10)" : "")).join("; ")}.
 Look at them side by side like a real coach. Say honestly what has visibly changed from the first to the latest photo (be specific — and say so if nothing has changed), what improved most, what hasn't moved, and the 2 things to focus on next month. If lighting or pose differ, mention it. ${coach.id === "skin" ? "Observations only, not a diagnosis." : ""}${coach.id === "fitness" ? "Objective, never body-shaming." : ""}
 Write 5-7 short lines in his Hinglish, in your own voice. Plain text, no headings, no markdown.`;
-    const raw = await ai(sys, [{ role: "user", content: "Mera transformation dekho.", images: picks.map(p => p.img) }], 1500);
+    const raw = await ai(sys, [{ role: "user", content: "Mera transformation dekho.", images: picks.map(p => p.img) }], 1500, { tier: "smart", effort: "medium" });
     return { coach: coach.id, text: String(raw).replace(/<[^>]+>/g, "").trim(), date: localIsoDate(), count: items.length };
 }
 function TransformView({ T, setCH }) {
@@ -2762,7 +2802,7 @@ async function groupTurn(hist, L, W, viewDay, voice, image) {
         ? { role: "user", content: (m.image ? "[sent a photo] " : "") + (m.content === "📷" ? "" : m.content) }
         : { role: "assistant", content: personaName(m.coach) + ": " + m.content });
     if (image && msgs.length) msgs[msgs.length - 1] = Object.assign({}, msgs[msgs.length - 1], { image: image });
-    const raw = await ai(buildGroupSystem(L, W, viewDay, voice), msgs, 1500);
+    const raw = await ai(buildGroupSystem(L, W, viewDay, voice), msgs, 1500, { tier: "smart" });
     const j = parseJsonLoose(raw);
     let list = j && Array.isArray(j.replies) ? j.replies : [{ coach: "ronaldo", text: String(raw).replace(/[{}"]/g, "") }];
     list = list.filter(r => r && r.text && GROUP_ORDER.includes(r.coach)).slice(0, voice ? 2 : 3);
@@ -5498,13 +5538,13 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const avgSl = w7.length ? +(w7.reduce((s, d) => s + (d.sleepHours || 0), 0) / w7.length).toFixed(1) : 0;
         const gymDays7 = w7.filter(d => d.gymDone).length;
         const avgProt7 = w7.length ? Math.round(w7.reduce((s, d) => s + (d.totalProtein || 0), 0) / w7.length) : 0;
-        const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nThis week: " + gymDays7 + "/7 gym days | Avg sleep: " + avgSl + "h | Avg protein: " + avgProt7 + "g\nBackground only — use a number only if it matters for what he just asked.";
+        const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nLast 7 days: " + (w7.length ? gymDays7 + "/7 gym days | avg sleep " + avgSl + "h | avg protein " + avgProt7 + "g" : "not logged yet") + (L.dayNotes ? "\nHis note today: " + L.dayNotes : "") + "\nLIFTS HE LOGGED (recent sessions):\n" + recentLiftsText(21) + "\nMEALS LOGGED TODAY:\n" + todaysMealsText() + "\nUse these when they matter for what he asked — they're what makes your answer his, not generic.";
         const fullSys = buildCoachSystem(coach, CH, ctx) + (voice ? VOICE_CALL_NOTE : "");
         try {
             // Only the photo just sent travels to the model; older ones become a note.
-            const aiMsgs = newHistUser.slice(-20).map(m => m.image ? { role: m.role, content: m.content === "📷" ? "[sent a photo]" : "[sent a photo] " + m.content } : m);
+            const aiMsgs = newHistUser.filter(m => !m.error).slice(-20).map(m => m.image ? { role: m.role, content: m.content === "📷" ? "[sent a photo]" : "[sent a photo] " + m.content } : m);
             if (pic) aiMsgs[aiMsgs.length - 1] = { role: "user", content: msg.trim() || "(sent a photo)", image: pic.full };
-            const raw = await ai(fullSys, aiMsgs, 800);
+            const raw = await ai(fullSys, aiMsgs, 1500, { tier: "smart" });
             const reply = processCoachReply(raw, id);
             if (reply.milestone) { setMilestone(reply.milestone); setTimeout(() => setMilestone(null), 3200); }
             // With voice on, the coach starts talking as the first text lands.
@@ -5528,13 +5568,12 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
             return reply.parts.join(" ");
         }
         catch (e) {
-            // Fallback to smart local response
-            const response = buildResponse(msg, id, L, viewDay, W);
-            const reason = String((e && e.message) || "AI unavailable").slice(0, 160);
-            const assistantMsg = { role: "assistant", content: "[Local · " + reason + "] " + response, ts: Date.now() };
+            // Never fake a canned reply — show what went wrong and let him resend.
+            const response = aiErrorText(e);
+            const assistantMsg = { role: "assistant", content: response, error: true, retry: msg, ts: Date.now() };
             const newHist = [...newHistUser, assistantMsg];
             setCH(prev => { const up2 = Object.assign({}, prev, { [id]: newHist }); store.set("jos_ch", slimChatImages(up2)); return up2; });
-            return voice ? "Connection mein thodi dikkat hai. " + response : response;
+            return voice ? "Sorry, abhi connection mein dikkat hai. Thodi der mein phir try karna." : response;
         }
         finally {
             setThinking(false);
@@ -5577,7 +5616,9 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
                     const run = chatRun(hist, i, sender);
                     const mine = m.role === "user";
                     const sep = run.newDay && m.ts ? React.createElement(ChatDaySep, { key: "d" + i, ts: m.ts, T: T }) : null;
-                    if (!mine && id === "ronaldo") return React.createElement(React.Fragment, { key: i }, sep, React.createElement("div", { style: { marginTop: run.first ? 6 : 0 } }, React.createElement(VoiceNoteBubble, { text: m.content, color: coach.color, T: T })));
+                    if (!mine && id === "ronaldo" && !m.error) return React.createElement(React.Fragment, { key: i }, sep, React.createElement("div", { style: { marginTop: run.first ? 6 : 0 } }, React.createElement(VoiceNoteBubble, { text: m.content, color: coach.color, T: T })));
+                    if (m.error) return React.createElement(React.Fragment, { key: i }, sep, React.createElement("div", { style: { alignSelf: "center", maxWidth: "88%", margin: "6px 0", padding: "10px 14px", borderRadius: 14, background: "rgba(229,56,59,.1)", border: "1px solid rgba(229,56,59,.35)", color: "#FFB3B3", fontSize: 13, lineHeight: 1.5, textAlign: "center" } }, m.content,
+                        m.retry && i === hist.length - 1 && React.createElement("button", { onClick: () => { const keep = hist.slice(0, i - (hist[i - 1] && hist[i - 1].role === "user" ? 1 : 0)); setCH(prev => { const up = Object.assign({}, prev, { [id]: keep }); store.set("jos_ch", slimChatImages(up)); return up; }); setTimeout(() => sendRef.current(m.retry), 50); }, style: { display: "block", margin: "8px auto 0", padding: "7px 16px", borderRadius: 16, border: "1px solid rgba(255,255,255,.2)", background: "rgba(255,255,255,.06)", color: "#ECE8DE", fontSize: 12.5, cursor: "pointer" } }, "↻ Dobara bhejo")));
                     const meta = React.createElement(React.Fragment, null, !mine && React.createElement(ChatSpeak, { coachId: id, text: m.content, color: coach.color }), chatTime(m.ts), mine && React.createElement("span", { style: { color: i < hist.length - 1 ? "#2F6FD6" : "rgba(22,18,10,.5)", letterSpacing: -3, marginRight: 3 } }, "✓✓"));
                     return React.createElement(React.Fragment, { key: i }, sep,
                         React.createElement(ChatBubble, { T: T, mine: mine, first: run.first, last: run.last, meta: meta },
@@ -6111,7 +6152,7 @@ function JeetOS() {
         const savedCH = store.get("jos_ch") || {};
         const keptCH = {};
         Object.keys(savedCH).forEach(k => {
-            keptCH[k] = (savedCH[k] || []).filter(m => !(m.role === "assistant" && /^(\[Local|Connection error)/.test(String(m.content))));
+            keptCH[k] = (savedCH[k] || []).filter(m => !m.error && !(m.role === "assistant" && /^(\[Local|Connection error)/.test(String(m.content))));
         });
         store.set("jos_ch", keptCH);
         setCH(keptCH);

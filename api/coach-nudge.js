@@ -10,12 +10,21 @@
 
 const { COACHES, personaPrompt } = require("./_coach-personas");
 
-// Same public project/key the app already uses; env vars override.
-const SUPABASE_URL = process.env.SUPABASE_URL || "https://qzripzgbstvxkfobzhyv.supabase.co";
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
-const supa = (path, init = {}) => fetch(`${SUPABASE_URL}/rest/v1/${path}`, Object.assign({}, init, {
-  headers: Object.assign({ apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json" }, init.headers || {}),
-}));
+// The jeetos_* tables are open to the app's public key. Env keys are tried
+// first, but an old/rotated one answers 401 — then fall back to the public key.
+const SUPABASE_URL = "https://qzripzgbstvxkfobzhyv.supabase.co";
+const PUBLIC_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
+const SUPABASE_KEYS = [...new Set([process.env.SUPABASE_SERVICE_ROLE_KEY, process.env.SUPABASE_ANON_KEY, PUBLIC_KEY].filter(Boolean).map(k => k.trim()))];
+async function supa(path, init = {}) {
+  let r;
+  for (const key of SUPABASE_KEYS) {
+    r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, Object.assign({}, init, {
+      headers: Object.assign({ apikey: key, Authorization: "Bearer " + key, "Content-Type": "application/json" }, init.headers || {}),
+    }));
+    if (r.status !== 401) return r;
+  }
+  return r;
+}
 async function supaJson(path) {
   try { const r = await supa(path); const d = await r.json(); return Array.isArray(d) ? d : []; } catch (_) { return []; }
 }
@@ -57,19 +66,25 @@ const SLOT_MOMENT = {
   night: "It's night (around 10:30 pm), close to his bedtime.",
 };
 
+// Same models as the chat (api/ai.js): the smart one, then the fast one if it fails.
+const MODELS = [...new Set([(process.env.CLAUDE_CHAT_MODEL || "claude-sonnet-5-5").trim(), (process.env.CLAUDE_FAST_MODEL || "claude-haiku-5-5").trim()])];
 async function callClaude(system, user) {
   const key = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY || "").trim();
   if (!key) throw new Error("ANTHROPIC_API_KEY not configured");
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-haiku-5-5", output_config: { effort: "low" }, max_tokens: 1000, system, messages: [{ role: "user", content: user }] }),
-  });
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error("Claude " + r.status);
-  const block = Array.isArray(d.content) && d.content.find(b => b.type === "text" && b.text);
-  if (!block) throw new Error("Claude: empty response");
-  return block.text.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, "").trim();
+  let last;
+  for (const model of MODELS) {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model, output_config: { effort: "low" }, max_tokens: 3000, system, messages: [{ role: "user", content: user }] }),
+    });
+    const d = await r.json().catch(() => ({}));
+    const block = r.ok && d.stop_reason !== "refusal" && Array.isArray(d.content) && d.content.find(b => b.type === "text" && b.text);
+    if (block) return block.text.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, "").trim();
+    last = new Error("Claude " + r.status + " (" + model + ")");
+    if (r.status === 401) break;
+  }
+  throw last;
 }
 
 function agoText(iso, today) {
