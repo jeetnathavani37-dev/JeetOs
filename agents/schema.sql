@@ -166,3 +166,24 @@ create table if not exists public.jeetos_checkins (
 );
 alter table public.jeetos_checkins enable row level security;
 create policy "allow all for anon" on public.jeetos_checkins for all to public using (true) with check (true);
+
+-- Long-term memory: one evolving profile of Jeet (built by the app's memory
+-- pass from all chats) and short dated summaries of older conversations.
+create table if not exists public.jeetos_profile (
+  id text primary key default 'jeet',
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.jeetos_profile enable row level security;
+create policy "allow all for anon" on public.jeetos_profile for all to public using (true) with check (true);
+
+create table if not exists public.jeetos_convo_summaries (
+  id text primary key,
+  coach text not null,
+  from_ts bigint not null,
+  to_ts bigint not null,
+  summary text not null,
+  created_at timestamptz not null default now()
+);
+alter table public.jeetos_convo_summaries enable row level security;
+create policy "allow all for anon" on public.jeetos_convo_summaries for all to public using (true) with check (true);

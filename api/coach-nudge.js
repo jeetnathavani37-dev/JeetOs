@@ -101,6 +101,11 @@ function goalText(g, today) {
   return `"${g.text}"` + (g.target != null ? `: started ${g.start_value}${u}, now ${g.current_value}${u}, target ${g.target}${u}` : "")
     + (g.deadline ? `, by ${g.deadline}` : "") + (hist ? `. Log: ${hist}` : "");
 }
+const PROFILE_LABELS = { about: "who he is", goals: "what he wants", routine: "routine & constraints", preferences: "likes/dislikes", struggles: "what gets in the way", wins: "wins", style: "how to coach him", life: "life & people" };
+function profileText(p) {
+  if (!p) return "";
+  return Object.keys(PROFILE_LABELS).filter(k => Array.isArray(p[k]) && p[k].length).map(k => PROFILE_LABELS[k] + ": " + p[k].map(x => x.t).join("; ")).join(" | ");
+}
 function logLine(log) {
   return `gym ${log.gym_done ? "done" : "not done"}, skincare ${log.skincare_done ? "done" : "not done"}, sleep ${log.sleep_hours}h, protein ${log.total_protein}g, water ${log.water} glasses, mood ${log.mood}/5, energy ${log.energy}/5`;
 }
@@ -122,8 +127,11 @@ async function sendTelegram(coachId, text) {
 // Writes one text in a coach's voice, saves it to the inbox (once per coach
 // per slot per day) and forwards it to Telegram.
 async function writeAndSend(coachId, slot, task, shared) {
-  const { today, memory, commitments, goals, moments } = shared;
-  const recent = await supaJson(`jeetos_coach_inbox?coach=eq.${coachId}&select=text,created_on&order=created_at.desc&limit=5`);
+  const { today, memory, commitments, goals, moments, profile } = shared;
+  const [recent, past] = await Promise.all([
+    supaJson(`jeetos_coach_inbox?coach=eq.${coachId}&select=text,created_on&order=created_at.desc&limit=5`),
+    supaJson(`jeetos_convo_summaries?coach=eq.${coachId}&select=summary,to_ts&order=to_ts.desc&limit=4`),
+  ]);
   const mine = commitments.filter(c => c.coach === coachId);
   const myGoals = goals.filter(g => g.coach === coachId);
   const myMoments = moments.filter(m => m.coach === coachId).slice(-8);
@@ -133,7 +141,10 @@ async function writeAndSend(coachId, slot, task, shared) {
 ${task}
 Sound like a person, not a notification: no "Reminder:", no lists, no greetings like "Hello Jeet!". Hinglish like he talks. Never mention being an AI, apps, data or memory.${coachId === "mind" ? " You're gently checking in — warm, no pressure, no advice dump." : ""}
 
-What the coaching team knows about him: ${memory.length ? memory.map(m => m.fact).join("; ") : "nothing yet"}.
+Who he is (built up from all his chats): ${profileText(profile) || "still getting to know him"}.
+What you two talked about before: ${past.map(x => `(${agoText(new Date(+x.to_ts + 330 * 60000).toISOString().slice(0, 10), today)}) ${x.summary}`).join(" | ") || "nothing older yet"}.
+Other notes: ${memory.length ? memory.map(m => m.fact).join("; ") : "none"}.
+Make the text fit what he wants and his routine — like someone who knows him.
 His open promises${mine.length ? " to you" : ""}: ${(mine.length ? mine : commitments).map(c => `"${c.text}" (check on ${c.due})`).join("; ") || "none"}.
 Your goal${myGoals.length === 1 ? "" : "s"} with him: ${myGoals.map(g => goalText(g, today)).join("; ") || "none yet"}.
 ${nick ? `Your nickname for him: "${nick.text}" (use it if it fits).\n` : ""}Things that happened between you two: ${myMoments.map(m => `(${agoText(m.created_on, today)}) ${m.text}`).join("; ") || "nothing special yet"}.
@@ -160,14 +171,15 @@ module.exports = async function handler(req, res) {
   if (!SLOT_MOMENT[slot] && slot !== "review") return res.status(400).json({ error: "slot must be morning|afternoon|evening|night|review" });
 
   const today = istIsoDate();
-  const [logs, memory, commitments, goals, moments] = await Promise.all([
+  const [logs, memory, commitments, goals, moments, profileRows] = await Promise.all([
     supaJson(`jeetos_logs?date=eq.${encodeURIComponent(istDateString())}&select=*`),
     supaJson("jeetos_team_memory?select=fact&order=created_at.asc&limit=60"),
     supaJson("jeetos_commitments?status=eq.open&select=id,coach,text,due&order=due.asc&limit=20"),
     supaJson("jeetos_coach_goals?status=eq.active&select=coach,text,unit,start_value,target,current_value,deadline,history&order=created_at.asc&limit=20"),
     supaJson("jeetos_coach_moments?select=coach,kind,text,created_on&order=created_at.asc&limit=120"),
+    supaJson("jeetos_profile?id=eq.jeet&select=data"),
   ]);
-  const shared = { today, memory, commitments, goals, moments };
+  const shared = { today, memory, commitments, goals, moments, profile: profileRows[0] && profileRows[0].data };
 
   try {
     // Sunday review: every coach with an active goal sends a 2-line weekly review.
