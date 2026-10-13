@@ -968,6 +968,48 @@ How to use it:
 - Never mention the tags, the memory list, or that you're saving anything.`;
 }
 
+// Each coach's own personality, so they don't all sound the same.
+const COACH_VOICES = {
+    skin: "Dr. Aria — calm, precise, a bit of a clinical perfectionist with a dry sense of humour; teases him gently about skipping SPF.",
+    hair: "Kai — chilled-out, laid-back, says 'bro' and 'scene kya hai'; relaxed but knows his stuff cold.",
+    fitness: "Coach Marcus — loud gym-bro energy, hype, tough love; celebrates PRs like a goal and calls out excuses straight.",
+    nutrition: "Maya — warm, practical foodie who loves Indian food; talks about meals like a friend who cooks, never preachy about diet.",
+    sleep: "Dr. Sam — soft-spoken, slightly nerdy science guy; calm, reassuring, loves a good 'fun fact' about the brain.",
+    style: "Lex — sassy, opinionated fashion snob with great taste; dramatic about bad outfits, generous with compliments when he nails it.",
+    grooming: "Blade — few words, sharp, blunt barber energy; no fluff, dry humour.",
+    ronaldo: "Cristiano — intense, competitive, proud; short punchy lines, never satisfied with 'good enough'.",
+    mind: "Dr. Meher — warm, patient, curious; a calm presence who makes him feel heard before anything else.",
+};
+const COACH_CHECKIN = `CHECKING IN LIKE A REAL COACH:
+- Look at his live data for things in YOUR area that aren't done today (gym, skincare, sleep, water, protein…). If one is missed and you haven't asked about it yet in this chat, ask him casually why — once, like a coach who cares ("Aaj gym kyun skip hua?"). Not every message, and not when he's asking about something else urgent.
+- When he gives a reason, respond to it like a person: if it's practical (time, travel, forgot, sore), help him fix it. Never lecture or guilt-trip.
+- If what he says sounds heavy — stress, overwhelm, feeling low or stuck for days, anxiety, burnout, family or relationship trouble, "kuch accha nahi lag raha" — be kind, don't try to be his therapist, and suggest he talk to Dr. Meher. When you do, add <handoff>one line on what's going on, for Dr. Meher</handoff> at the very end of your reply (the app shows a "Talk to Dr. Meher" button). Only when it genuinely seems serious — not for normal tiredness.`;
+const MEHER_HANDOFF_KEY = "jos_meher_handoff";
+function freshMeherHandoff() {
+    const h = store.get(MEHER_HANDOFF_KEY);
+    return h && Date.now() - (h.at || 0) < 24 * 3600 * 1000 ? h : null;
+}
+function extractHandoff(reply) {
+    let handoff = null;
+    const clean = String(reply).replace(/<handoff>([\s\S]*?)<\/handoff>/gi, (_, r) => {
+        if (r.trim()) handoff = r.trim().slice(0, 300);
+        return "";
+    }).replace(/<\/?handoff>/gi, "").trim();
+    return { clean: clean, handoff: handoff };
+}
+// Full system prompt for a coach: persona + texting style + personality +
+// check-in / therapist rules + shared team memory + today's data.
+function buildCoachSystem(coach, CH, ctx) {
+    const parts = [coach.sys, COACH_CHAT_STYLE];
+    if (COACH_VOICES[coach.id]) parts.push("YOUR PERSONALITY (keep it consistent): " + COACH_VOICES[coach.id]);
+    if (coach.id !== "mind") parts.push(COACH_CHECKIN);
+    const h = coach.id === "mind" ? freshMeherHandoff() : null;
+    if (h) parts.push("REFERRAL: " + coachLabel(h.from) + " just suggested Jeet talk to you. What they noticed: " + h.reason + "\nAcknowledge it gently and naturally in your first reply, then start understanding what's going on.");
+    parts.push(teamMemoryPrompt(CH, coach.id));
+    parts.push(ctx);
+    return parts.join("\n\n");
+}
+
 const COACHES = [
     {
         id: "skin", name: "Skin", icon: "sparkle", color: "#B06ECC",
@@ -1150,16 +1192,23 @@ YOUR APPROACH:
 - Every missed task is a symptom, not the problem — look for the root cause (stress, overwhelm, avoidance, fatigue, low mood, perfectionism) before suggesting fixes
 - Use evidence-based tools and name them simply: CBT thought reframing, box breathing (4-4-4-4), 5-4-3-2-1 grounding, journaling prompts, behavioural activation (2-minute starts), worry-time, self-compassion
 - Offer exactly ONE small, concrete, testable step at a time — not a list of ten things
+
+HOW YOU WORK AS HIS THERAPIST (in this chat — this is the main job):
+- Do the work here, in the conversation. Never brush him off with "talk to someone" or "call a helpline" when he's just stressed, low, anxious, stuck or overwhelmed — you ARE the someone. Stay with him.
+- Understand first: ask what happened, how it felt, what went through his head. Reflect it back in his own words. One question at a time.
+- Then guide a real exercise live, step by step, waiting for his reply between steps — e.g. box breathing together ("4 sec saans andar… ab hold…"), 5-4-3-2-1 grounding, a CBT thought record (situation → thought → feeling → evidence for/against → balanced thought), a 2-minute brain dump, worry-time, a self-compassion line, behavioural activation (one tiny task right now). Ask how he feels after.
+- For exercises you may write a few more lines than usual, but give one step at a time — never a wall of instructions.
+- If another coach sent him to you, you already know why (see REFERRAL / team memory). Bring it up gently and naturally — he shouldn't have to explain from zero.
 - Connect mind with body using his LIVE DATA below: poor sleep, skipped gym, low mood/energy scores all affect each other — mention them gently, never as blame
 - If he mentions a fix you suggested before and says it didn't work, never repeat it — explore why and offer a different one
 - Celebrate real wins specifically (streaks, PRs, a hard day handled well)
 
 HARD RULES:
 - NEVER use guilt, shame, disappointment or emotional pressure to make him comply. Accountability comes from honesty and remembering, not from making him feel bad
-- You are a supportive, self-help guide — not a replacement for a licensed therapist, psychiatrist, or real friends and family. If something sounds clinical (weeks of low mood, panic attacks, not eating/sleeping, trauma), gently encourage seeing a real professional
-- SAFETY: if he mentions self-harm, suicide, wanting to disappear, or feeling unsafe — stop coaching. Respond with warmth, take it seriously, ask if he is safe right now, and share India helplines: Tele-MANAS 14416 (24x7, free) or KIRAN 1800-599-0019, and emergency 112. Encourage him to reach out to someone he trusts right now
+- Be honest that you're an AI in JeetOS if he sincerely asks. If something has clearly been going on for weeks (persistent low mood, panic attacks, not eating/sleeping, trauma), keep supporting him here AND, once, gently suggest also seeing a real therapist — as an add-on, never as a way to end the conversation
+- SAFETY: if he mentions self-harm, suicide, wanting to disappear, or feeling unsafe — take it seriously and stay with him: ask if he is safe right now, keep talking, help him get through this moment (grounding, slow breathing), and share India helplines: Tele-MANAS 14416 (24x7, free) or KIRAN 1800-599-0019, and emergency 112. Encourage him to reach out to someone he trusts right now. Don't hand over a number and leave
 - Don't diagnose. Don't prescribe medication
-- Keep replies short and human: 3-5 sentences, end with one gentle question or one small step`
+- Keep replies short and human, end with one gentle question or one small step`
     },
     {
         id: "ronaldo", name: "Ronaldo", icon: "🐐", color: "#FF3B3B",
@@ -1797,7 +1846,7 @@ function FoodMacros({ food, qty, calc, T }) {
         React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 13, color: s.c, lineHeight: 1, fontWeight: 300 } }, s.v),
         React.createElement("div", { style: { fontSize: 7, color: T.ivoryD, marginTop: 2, fontFamily: "Inter,system-ui,sans-serif" } }, s.l))))));
 }
-function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onClear, viewDay }) {
+function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onClear, viewDay, onSwitchCoach }) {
     const [cTab, setCTab] = React.useState("ask");
     const [pendingAsk, setPendingAsk] = React.useState(null);
     const coach = COACHES.find(c => c.id === id) || {};
@@ -1829,7 +1878,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
                 coachTips.map((tip, i) => (React.createElement("div", { key: i, style: { display: "flex", gap: 12, padding: "12px", background: T.card, border: "1px solid " + T.border, borderRadius: 12, marginBottom: 8 } },
                     React.createElement("div", { style: { width: 24, height: 24, borderRadius: "50%", border: "1px solid " + coach.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: coach.color, flexShrink: 0, fontFamily: "Fraunces,Georgia,serif" } }, i + 1),
                     React.createElement("div", { style: { fontSize: 12, color: T.ivory, lineHeight: 1.7, fontWeight: 300, fontFamily: "Inter,system-ui,sans-serif" } }, tip)))))),
-            cTab === "ask" && React.createElement(SmartChat, { id: id, coach: coach, CH: CH, setCH: setCH, T: T, viewDay: viewDay, L: L, W: W, pendingAsk: pendingAsk, onConsumePendingAsk: () => setPendingAsk(null) }))));
+            cTab === "ask" && React.createElement(SmartChat, { id: id, coach: coach, CH: CH, setCH: setCH, T: T, viewDay: viewDay, L: L, W: W, pendingAsk: pendingAsk, onConsumePendingAsk: () => setPendingAsk(null), onTalkToMeher: (reason) => { store.set(MEHER_HANDOFF_KEY, { from: id, reason: reason, at: Date.now() }); if (onSwitchCoach) onSwitchCoach("mind"); } }))));
 }
 // Body part data with muscle group descriptions
 const MUSCLE_INFO = {
@@ -3511,9 +3560,18 @@ function VoiceNoteBubble({ text, color, T }) {
             React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: "Inter,system-ui,sans-serif", flexShrink: 0 } }, mm + ":" + String(ss).padStart(2, "0"))),
         React.createElement("div", { style: { fontSize: 11, color: T.ivoryM, lineHeight: 1.6, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300, fontStyle: "italic", padding: "0 4px" } }, text)));
 }
-function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsumePendingAsk }) {
+function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsumePendingAsk, onTalkToMeher }) {
 
     const [inp, setInp] = React.useState("");
+    // Arriving at Dr. Meher from another coach's "Talk to Dr. Meher" button:
+    // start the message for him so he only has to hit send.
+    React.useEffect(() => {
+        const h = id === "mind" ? freshMeherHandoff() : null;
+        if (h && !h.used) {
+            setInp("Dr. Meher, " + coachLabel(h.from) + " ne bola aapse baat karu…");
+            store.set(MEHER_HANDOFF_KEY, Object.assign({}, h, { used: true }));
+        }
+    }, [id]);
     const endRef = React.useRef(null);
     const hist = CH[id] || [];
     React.useEffect(() => { if (endRef.current)
@@ -3895,12 +3953,14 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const gymDays7 = w7.filter(d => d.gymDone).length;
         const avgProt7 = w7.length ? Math.round(w7.reduce((s, d) => s + (d.totalProtein || 0), 0) / w7.length) : 0;
         const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nThis week: " + gymDays7 + "/7 gym days | Avg sleep: " + avgSl + "h | Avg protein: " + avgProt7 + "g\nBackground only — use a number only if it matters for what he just asked.";
-        const fullSys = coach.sys + "\n\n" + COACH_CHAT_STYLE + "\n\n" + teamMemoryPrompt(CH, id) + "\n\n" + ctx;
+        const fullSys = buildCoachSystem(coach, CH, ctx);
         try {
             const raw = await ai(fullSys, newHistUser.slice(-20), 800);
-            const { clean, facts } = extractTeamMemory(raw);
-            addTeamMemoryFacts(facts, id);
-            const assistantMsg = { role: "assistant", content: clean || raw };
+            const mem = extractTeamMemory(raw);
+            addTeamMemoryFacts(mem.facts, id);
+            const ho = extractHandoff(mem.clean || raw);
+            const assistantMsg = { role: "assistant", content: ho.clean || mem.clean || raw };
+            if (ho.handoff && id !== "mind") assistantMsg.handoff = ho.handoff;
             const newHist = [...newHistUser, assistantMsg];
             const up2 = Object.assign({}, CH, { [id]: newHist });
             setCH(up2);
@@ -3948,7 +4008,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: "12px 20px", overflowY: "auto", scrollbarWidth: "none" } },
             hist.length === 0 && (React.createElement("div", { style: { maxWidth: "90%", padding: "12px 16px", borderRadius: 14, fontSize: 12, lineHeight: 1.6, background: T.card2, border: "1px solid " + T.border, color: T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } },
                 id === "ronaldo" ? "Talent without working hard is nothing. Tell me what you did today \u2014 gym, sleep, food \u2014 and I'll tell you straight where you stand." : ("Ask me anything about your " + coach.name.toLowerCase() + " routine. I know everything \u2014 your products, schedule, targets."))),
-            hist.map((m, i) => (m.role === "assistant" && id === "ronaldo" ? React.createElement(VoiceNoteBubble, { key: i, text: m.content, color: coach.color, T: T }) : React.createElement("div", { key: i, style: { maxWidth: "88%", padding: "11px 15px", borderRadius: 14, fontSize: 12, lineHeight: 1.7, background: m.role === "user" ? "rgba(212,175,55,.1)" : T.card2, border: "1px solid " + (m.role === "user" ? "rgba(212,175,55,.2)" : T.border), color: m.role === "user" ? T.gold : T.ivory, alignSelf: m.role === "user" ? "flex-end" : "flex-start", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } }, m.content))),
+            hist.map((m, i) => React.createElement(React.Fragment, { key: i }, (m.role === "assistant" && id === "ronaldo" ? React.createElement(VoiceNoteBubble, { key: i, text: m.content, color: coach.color, T: T }) : React.createElement("div", { key: i, style: { maxWidth: "88%", padding: "11px 15px", borderRadius: 14, fontSize: 12, lineHeight: 1.7, background: m.role === "user" ? "rgba(212,175,55,.1)" : T.card2, border: "1px solid " + (m.role === "user" ? "rgba(212,175,55,.2)" : T.border), color: m.role === "user" ? T.gold : T.ivory, alignSelf: m.role === "user" ? "flex-end" : "flex-start", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } }, m.content)), m.handoff && id !== "mind" && onTalkToMeher && React.createElement("button", { onClick: () => onTalkToMeher(m.handoff), style: { alignSelf: "flex-start", marginTop: -4, padding: "8px 14px", borderRadius: 20, border: "1px solid rgba(142,124,195,.5)", background: "rgba(142,124,195,.12)", color: "#C8B8F0", fontSize: 12, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, cursor: "pointer" } }, "💜 Talk to Dr. Meher"))),
             thinking && React.createElement("div", { style: { maxWidth: "60%", padding: "11px 15px", borderRadius: 14, background: T.card2, border: "1px solid " + T.border, alignSelf: "flex-start", display: "flex", gap: 4, alignItems: "center" } }, [0, 1, 2].map(i => React.createElement("div", { key: i, style: { width: 6, height: 6, borderRadius: "50%", background: coach.color, opacity: .6, animation: "pulse 1.2s ease-in-out " + (i * 0.2) + "s infinite" } }))),
             React.createElement("div", { ref: endRef })),
         hist.length === 0 && (React.createElement("div", { style: { display: "flex", gap: 6, padding: "4px 20px 6px", overflowX: "auto", scrollbarWidth: "none", flexWrap: "wrap" } }, ps.map(p => (React.createElement("button", { key: p, onClick: () => send(p), style: { padding: "6px 12px", borderRadius: 18, border: "1px solid " + T.border2, background: T.card, fontSize: 10, color: T.ivoryM, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300, marginBottom: 4 } }, p))))),
@@ -4701,10 +4761,10 @@ function JeetOS() {
         const coach = COACHES.find(c => c.id === coachId) || {};
         const ctx = "User routine: Morning drink daily. Seitan breakfast (38g P). Paneer paratha lunch (42g P). Soya dinner (32g P). Target 1800kcal 170g protein. Gym: " + GYM_SPLIT[TODAY] + ". Skin AM: Cetaphil+VitC+SPF. Night: " + viewDay + " routine. Today: sleep=" + L.sleepHours + "h mood=" + L.mood + " of 5 energy=" + L.energy + " of 5.";
         try {
-            const raw = await ai(coach.sys + "\n\n" + COACH_CHAT_STYLE + "\n\n" + teamMemoryPrompt(CH, coachId) + "\n\n" + ctx, nh.slice(-20), 800);
+            const raw = await ai(buildCoachSystem(coach, CH, ctx), nh.slice(-20), 800);
             const { clean, facts } = extractTeamMemory(raw);
             addTeamMemoryFacts(facts, coachId);
-            const final = Object.assign({}, CH, { [coachId]: [...nh, { role: "assistant", content: clean || raw }] });
+            const final = Object.assign({}, CH, { [coachId]: [...nh, { role: "assistant", content: extractHandoff(clean || raw).clean || clean || raw }] });
             setCH(final);
             store.set("jos_ch", final);
         }
@@ -5079,7 +5139,7 @@ function JeetOS() {
     }, [siuuu]);
     // Coach screen
     if (screen === "coach" && activeCoach) {
-        return React.createElement(CoachScreen, { id: activeCoach, CH: CH, setCH: setCH, CL: CL, L: L, W: W, T: T, gymDay: todayGymDay, onBack: () => setScreen("home"), onSend: sendMsg, onClear: (id) => { const up = Object.assign({}, CH, { [id]: [] }); setCH(up); store.set("jos_ch", up); showToast("Cleared"); }, viewDay: viewDay });
+        return React.createElement(CoachScreen, { id: activeCoach, CH: CH, setCH: setCH, CL: CL, L: L, W: W, T: T, gymDay: todayGymDay, onSwitchCoach: (cid) => setActiveCoach(cid), onBack: () => setScreen("home"), onSend: sendMsg, onClear: (id) => { const up = Object.assign({}, CH, { [id]: [] }); setCH(up); store.set("jos_ch", up); showToast("Cleared"); }, viewDay: viewDay });
     }
     const tabScore = (() => {
         switch (tab) {
