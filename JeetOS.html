@@ -3760,7 +3760,8 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         catch (e) {
             // Fallback to smart local response
             const response = buildResponse(msg, id, L, viewDay, W);
-            const assistantMsg = { role: "assistant", content: "[Local] " + response };
+            const reason = String((e && e.message) || "AI unavailable").slice(0, 160);
+            const assistantMsg = { role: "assistant", content: "[Local · " + reason + "] " + response };
             const newHist = [...newHistUser, assistantMsg];
             const up2 = Object.assign({}, CH, { [id]: newHist });
             setCH(up2);
