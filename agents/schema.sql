@@ -79,3 +79,15 @@ alter table jeetos_pattern_index enable row level security;
 alter table jeetos_stake_config enable row level security;
 alter table jeetos_stake_ledger enable row level security;
 alter table jeetos_reward_pool enable row level security;
+
+-- Shared coach team memory, synced from the app (JeetOS.html) with the
+-- publishable key, same open policy as jeetos_logs / jeetos_labels.
+create table if not exists public.jeetos_team_memory (
+  fact_key text primary key,
+  fact text not null,
+  from_coach text,
+  created_on date not null default current_date,
+  created_at timestamptz not null default now()
+);
+alter table public.jeetos_team_memory enable row level security;
+create policy "allow all for anon" on public.jeetos_team_memory for all to public using (true) with check (true);
