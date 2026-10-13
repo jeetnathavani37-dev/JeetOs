@@ -27,6 +27,12 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;}
 input[type=time]::-webkit-calendar-picker-indicator{filter:invert(1);opacity:.5;}
 ::-webkit-scrollbar{display:none;}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes josMsgIn{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes josDot{0%,70%,100%{transform:translateY(0);opacity:.35}35%{transform:translateY(-4px);opacity:1}}
+@keyframes josSheetIn{from{transform:translateY(100%)}to{transform:none}}
+.jos-chat-input:focus-visible{outline:none !important;}
+.jos-chat-pill{transition:border-color .15s}
+.jos-chat-pill:focus-within{border-color:rgba(212,175,55,.45) !important;}
 @keyframes pulse{0%,100%{opacity:.4;transform:scaleY(.6)}50%{opacity:1;transform:scaleY(1)}}
 @keyframes siuuu{0%{transform:scale(1)}40%{transform:scale(1.25)}100%{transform:scale(1)}}
 .siuuu{animation:siuuu .5s ease 3}
@@ -2786,9 +2792,6 @@ function GroupScreen({ T, CH, setCH, L, W, viewDay, onBack, onOpenCoach }) {
     const [photo, setPhoto] = React.useState(null);
     const [inCall, setInCall] = React.useState(false);
     const [voiceOn, setVoiceOn] = React.useState(voiceAutoOn());
-    const endRef = React.useRef(null);
-    const fileRef = React.useRef(null);
-    React.useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: "smooth" }); }, [hist.length, typing]);
     React.useEffect(() => () => stopCoachVoice(), []);
     const save = (list) => setCH(prev => { const up = Object.assign({}, prev, { [GROUP_ID]: list }); store.set("jos_ch", slimChatImages(up)); return up; });
     const histRef = React.useRef(hist);
@@ -2822,49 +2825,47 @@ function GroupScreen({ T, CH, setCH, L, W, viewDay, onBack, onOpenCoach }) {
     };
     const sendRef = React.useRef(send);
     sendRef.current = send;
-    const pickPhoto = async (e) => {
-        const f = e.target.files && e.target.files[0]; e.target.value = "";
-        if (!f) return;
-        try { setPhoto({ full: await resizeImage(f, 1024, 0.8), thumb: await resizeImage(f, 320, 0.6) }); } catch (_a) { }
-    };
+    const [menu, setMenu] = React.useState(false);
+    const scroll = useChatScroll([hist.length, typing]);
+    const stack = React.createElement("div", { style: { position: "relative", width: 44, height: 40, flexShrink: 0 } },
+        ["fitness", "nutrition", "mind"].map((cid, i) => React.createElement("div", { key: cid, style: { position: "absolute", left: [0, 16, 8][i], top: [0, 2, 16][i], borderRadius: "50%", border: "2px solid #0E0E11" } }, React.createElement(CoachAvatar, { coachId: cid, color: coachColor(cid), size: 24 }))));
     if (inCall) return React.createElement(GroupCallOverlay, { T: T, onUserText: (t) => sendRef.current(t, { voice: true }), onEnd: () => setInCall(false) });
-    const iconBtn = (label, content, on, active, color) => React.createElement("button", { onClick: on, "aria-label": label, title: label, style: { width: 32, height: 32, borderRadius: "50%", border: "1px solid " + (active ? color || T.gold : T.border2), background: active ? (color || T.gold) + "22" : "transparent", cursor: "pointer", fontSize: 14, flexShrink: 0 } }, content);
-    return React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", height: "100vh", background: T.ink, fontFamily: font, display: "flex", flexDirection: "column", overflow: "hidden" } },
-        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "16px 16px 12px", borderBottom: "1px solid " + T.border, flexShrink: 0 } },
-            React.createElement("button", { onClick: onBack, "aria-label": "Back", style: { width: 34, height: 34, borderRadius: "50%", border: "1px solid " + T.border2, background: T.card, color: T.ivory, cursor: "pointer", fontSize: 16, flexShrink: 0 } }, "←"),
-            React.createElement("div", { style: { display: "flex", flexShrink: 0 } }, ["fitness", "nutrition", "mind"].map((id, i) => React.createElement("div", { key: id, style: { marginLeft: i ? -10 : 0, borderRadius: "50%", border: "2px solid " + T.ink } }, React.createElement(CoachAvatar, { coachId: id, color: coachColor(id), size: 26 })))),
-            React.createElement("div", { style: { flex: 1, minWidth: 0 } },
-                React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 17, color: T.ivory } }, "Team Jeet"),
-                React.createElement("div", { style: { fontSize: 10, color: typing ? T.green : T.ivoryD, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, typing ? (typing === "…" ? "team is typing…" : typing + " typing…") : GROUP_ORDER.map(personaName).join(", "))),
-            iconBtn("Group call", "📞", () => { unlockCoachAudio(); setInCall(true); }, true, T.green),
-            iconBtn(voiceOn ? "Voice off" : "Voice on", voiceOn ? "🔊" : "🔈", () => { unlockCoachAudio(); const v = !voiceOn; setVoiceOn(v); store.set(VOICE_AUTO_KEY, v); if (!v) stopCoachVoice(); }, voiceOn),
-            hist.length > 0 && iconBtn("Clear group chat", "🗑", () => { stopCoachVoice(); save([]); }, false)),
-        React.createElement("div", { style: { flex: 1, overflowY: "auto", scrollbarWidth: "none", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8 } },
-            hist.length === 0 && React.createElement("div", { style: { textAlign: "center", fontSize: 12, color: T.ivoryD, lineHeight: 1.6, padding: "30px 10px" } }, "Saare coaches ek group mein 👥", React.createElement("br"), "Kuch bhi poocho — jiska area hai wo jawab dega, aur wo aapas mein bhi baat karenge. @naam likh ke kisi ek ko bula sakte ho."),
-            hist.map((m, i) => {
-                if (m.role === "user") return React.createElement("div", { key: i, style: { alignSelf: "flex-end", maxWidth: "82%", padding: "10px 14px", borderRadius: 14, fontSize: 13, lineHeight: 1.6, background: "rgba(212,175,55,.1)", border: "1px solid rgba(212,175,55,.2)", color: T.gold } },
-                    m.image && React.createElement("img", { src: m.image, alt: "Photo", style: { display: "block", width: "100%", maxWidth: 200, borderRadius: 10, marginBottom: m.content === "📷" ? 0 : 6 } }), m.content === "📷" && m.image ? null : m.content, msgTime(m));
-                const col = coachColor(m.coach);
-                const prevSame = i > 0 && hist[i - 1].role === "assistant" && hist[i - 1].coach === m.coach;
-                return React.createElement("div", { key: i, style: { display: "flex", gap: 8, alignItems: "flex-start", maxWidth: "88%" } },
-                    React.createElement("div", { onClick: () => onOpenCoach && onOpenCoach(m.coach), style: { width: 28, flexShrink: 0, cursor: "pointer", visibility: prevSame ? "hidden" : "visible" } }, React.createElement(CoachAvatar, { coachId: m.coach, color: col, size: 28 })),
-                    React.createElement("div", { style: { padding: "8px 12px", borderRadius: 14, background: T.card2, border: "1px solid " + T.border, fontSize: 13, lineHeight: 1.6, color: T.ivory } },
-                        !prevSame && React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: col, marginBottom: 2 } }, personaName(m.coach)),
-                        m.content,
-                        React.createElement("div", { style: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10 } }, React.createElement(SpeakButton, { coachId: m.coach, text: m.content, color: col }), msgTime(m))));
-            }),
-            typing && React.createElement("div", { style: { alignSelf: "flex-start", padding: "9px 14px", borderRadius: 14, background: T.card2, border: "1px solid " + T.border, fontSize: 11, color: T.ivoryD } }, (typing === "…" ? "" : typing + " ") + "typing…"),
-            React.createElement("div", { ref: endRef })),
-        photo && React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 16px 0" } },
-            React.createElement("img", { src: photo.thumb, alt: "Photo to send", style: { width: 44, height: 44, objectFit: "cover", borderRadius: 8 } }),
-            React.createElement("span", { style: { flex: 1, fontSize: 10, color: T.ivoryD } }, "Photo ready"),
-            React.createElement("button", { onClick: () => setPhoto(null), "aria-label": "Remove photo", style: { background: "transparent", border: "none", color: T.ivoryD, cursor: "pointer" } }, "✕")),
-        React.createElement("div", { style: { display: "flex", gap: 8, padding: "8px 16px 16px", alignItems: "flex-end" } },
-            React.createElement(MicButton, { T: T, onText: (t) => setInp(prev => (prev ? prev + " " : "") + t) }),
-            React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", onChange: pickPhoto, style: { display: "none" } }),
-            React.createElement("button", { onClick: () => fileRef.current && fileRef.current.click(), "aria-label": "Send a photo", style: { width: 40, height: 40, borderRadius: "50%", background: T.card2, border: "1px solid " + T.border2, cursor: "pointer", fontSize: 16, flexShrink: 0 } }, "📷"),
-            React.createElement("input", { value: inp, onChange: e => setInp(e.target.value), onKeyDown: e => { if (e.key === "Enter") send(inp); }, placeholder: "Message Team Jeet…", style: { flex: 1, minWidth: 0, background: T.card2, border: "1px solid " + T.border2, borderRadius: 22, color: T.ivory, fontFamily: font, fontSize: 12, padding: "11px 16px", outline: "none" } }),
-            React.createElement("button", { onClick: () => send(inp), disabled: busy || (!inp.trim() && !photo), "aria-label": "Send", style: { width: 40, height: 40, borderRadius: "50%", border: "none", background: inp.trim() || photo ? "linear-gradient(135deg,#D4AF37,#F0D080)" : "rgba(255,255,255,.06)", cursor: "pointer", flexShrink: 0, fontSize: 14 } }, "➤")));
+    const sender = m => m.role === "user" ? "me" : m.coach;
+    return React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", height: "100dvh", background: "#0B0B0E", fontFamily: CHAT_FONT, display: "flex", flexDirection: "column", overflow: "hidden" } },
+        React.createElement(ChatHeader, { T: T, onBack: onBack, avatar: stack, title: "Team Jeet", subtitle: typing ? (typing === "…" ? "team is typing…" : typing + " is typing…") : GROUP_ORDER.map(cid => personaName(cid).replace(/^(Dr\.|Coach) /, "")).join(", "), subtitleColor: typing ? "#3BD16F" : null,
+            actions: React.createElement(React.Fragment, null,
+                React.createElement(ChatHeaderBtn, { label: "Group call", icon: React.createElement(ChatIcon, { name: "phone", size: 20 }), onClick: () => { unlockCoachAudio(); setInCall(true); } }),
+                React.createElement(ChatHeaderBtn, { label: "More", icon: React.createElement(ChatIcon, { name: "more", size: 22 }), onClick: () => setMenu(true), active: menu })) }),
+        React.createElement("div", { style: { position: "relative", flex: 1, minHeight: 0 } },
+            React.createElement("div", { ref: scroll.ref, onScroll: scroll.onScroll, style: Object.assign({ position: "absolute", inset: 0, overflowY: "auto", scrollbarWidth: "none", padding: "8px 10px 12px", display: "flex", flexDirection: "column", gap: 2 }, chatBackground("#3BD16F")) },
+                hist.length === 0 && React.createElement("div", { style: { margin: "auto 0", padding: "24px 18px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 10 } },
+                    React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(5, 34px)", gap: 6, justifyContent: "center" } }, GROUP_ORDER.map(cid => React.createElement(CoachAvatar, { key: cid, coachId: cid, color: coachColor(cid), size: 34 }))),
+                    React.createElement("div", { style: { fontSize: 18, fontWeight: 600, color: T.ivory, marginTop: 6 } }, "Team Jeet"),
+                    React.createElement("div", { style: { fontSize: 13.5, color: T.ivoryM, lineHeight: 1.55, maxWidth: 300 } }, "Saare coaches ek group mein. Kuch bhi poocho — jiska area hai wo jawab dega, aur wo aapas mein bhi baat karenge. @naam likh ke kisi ko bhi bulao."),
+                    React.createElement("div", { style: { display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 8, marginTop: 8 } }, ["Hi team 👋", "Aaj ka plan kya hai?", "Is hafte mera review do", "Mood off hai yaar"].map(p => React.createElement("button", { key: p, onClick: () => send(p), style: { padding: "9px 14px", borderRadius: 20, border: "1px solid rgba(59,209,111,.35)", background: "rgba(59,209,111,.08)", color: T.ivory, fontSize: 13, fontFamily: CHAT_FONT, cursor: "pointer" } }, p)))),
+                hist.map((m, i) => {
+                    const run = chatRun(hist, i, sender);
+                    const mine = m.role === "user";
+                    const sep = run.newDay && m.ts ? React.createElement(ChatDaySep, { key: "d" + i, ts: m.ts, T: T }) : null;
+                    const col = mine ? null : coachColor(m.coach);
+                    const meta = React.createElement(React.Fragment, null, !mine && React.createElement(ChatSpeak, { coachId: m.coach, text: m.content, color: col }), chatTime(m.ts), mine && React.createElement("span", { style: { color: i < hist.length - 1 ? "#2F6FD6" : "rgba(22,18,10,.5)", letterSpacing: -3, marginRight: 3 } }, "✓✓"));
+                    const bubble = React.createElement(ChatBubble, { T: T, mine: mine, first: run.first, last: run.last, meta: meta, maxWidth: mine ? "80%" : "100%" },
+                        !mine && run.first && React.createElement("div", { onClick: () => onOpenCoach && onOpenCoach(m.coach), style: { fontSize: 12.5, fontWeight: 600, color: col, marginBottom: 2, cursor: "pointer" } }, personaName(m.coach)),
+                        m.image && React.createElement("img", { src: m.image, alt: "Photo", style: { display: "block", width: "100%", maxWidth: 240, minWidth: 160, borderRadius: 12, margin: "-2px -4px 6px" } }),
+                        m.image && m.content === "📷" ? null : m.content);
+                    if (mine) return React.createElement(React.Fragment, { key: i }, sep, bubble);
+                    return React.createElement(React.Fragment, { key: i }, sep,
+                        React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 6, maxWidth: "86%", marginTop: run.first ? 6 : 0 } },
+                            React.createElement("div", { onClick: () => onOpenCoach && onOpenCoach(m.coach), style: { width: 30, flexShrink: 0, cursor: "pointer", visibility: run.first ? "visible" : "hidden" } }, React.createElement(CoachAvatar, { coachId: m.coach, color: col, size: 30 })),
+                            React.createElement("div", { style: { minWidth: 0, display: "flex", flexDirection: "column", marginTop: run.first ? -6 : 0 } }, bubble)));
+                }),
+                typing && React.createElement(TypingBubble, { T: T, color: "#3BD16F", label: typing === "…" ? null : typing })),
+            !scroll.atBottom && React.createElement(ScrollDownBtn, { onClick: scroll.toBottom })),
+        React.createElement(ChatComposer, { T: T, value: inp, setValue: setInp, onSend: () => send(inp), photo: photo, onPhoto: setPhoto, onRemovePhoto: () => setPhoto(null), placeholder: photo ? "Add a caption…" : "Message Team Jeet", busy: busy }),
+        menu && React.createElement(ChatMenu, { T: T, onClose: () => setMenu(false), items: [
+                { icon: voiceOn ? "🔇" : "🔊", label: voiceOn ? "Voice replies off" : "Voice replies on", onClick: () => { unlockCoachAudio(); const v = !voiceOn; setVoiceOn(v); store.set(VOICE_AUTO_KEY, v); if (!v) stopCoachVoice(); } },
+                hist.length ? { icon: "🗑", label: "Clear group chat", danger: true, onClick: () => { stopCoachVoice(); save([]); } } : null,
+            ] }));
 }
 // Group voice call: he talks, 1-2 coaches answer one after another, each in their own voice.
 function GroupCallOverlay({ T, onUserText, onEnd }) {
@@ -2972,46 +2973,191 @@ function GoalStrip({ coachId, color, T }) {
                 React.createElement("div", { style: { height: "100%", width: pct + "%", background: color, borderRadius: 2, transition: "width .6s" } })));
     }));
 }
+// ── CHAT UI KIT (coach chats + Team Jeet) ───────────────────────────────
+const CHAT_FONT = "Inter,system-ui,sans-serif";
+const CHAT_ICONS = {
+    back: "M15.5 4.5 8 12l7.5 7.5",
+    phone: "M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1z",
+    more: "M12 5.5v.01M12 12v.01M12 18.5v.01",
+    camera: "M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z",
+    mic: "M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21",
+    send: "M4 12 20 4l-6 16-2.5-6.5z",
+    speaker: "M4 9.5h3.5L12 6v12l-4.5-3.5H4zM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11",
+    stop: "M8 8h8v8H8z",
+    down: "M6 9l6 6 6-6",
+    close: "M6 6l12 12M18 6 6 18",
+};
+function ChatIcon({ name, size, color, fill, width }) {
+    const filled = fill || name === "send" || name === "phone" || name === "stop";
+    return React.createElement("svg", { width: size || 20, height: size || 20, viewBox: "0 0 24 24", fill: filled ? (color || "currentColor") : "none", stroke: filled ? "none" : (color || "currentColor"), strokeWidth: width || (name === "more" ? 3 : 1.9), strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" },
+        React.createElement("path", { d: CHAT_ICONS[name] }));
+}
+function chatDayKey(ts) { return ts ? new Date(ts).toDateString() : ""; }
+function chatDayLabel(ts) {
+    const d = new Date(ts), now = new Date();
+    if (d.toDateString() === now.toDateString()) return "Today";
+    if (d.toDateString() === new Date(Date.now() - 86400000).toDateString()) return "Yesterday";
+    if (now - d < 6 * 86400000) return d.toLocaleDateString("en-IN", { weekday: "long" });
+    return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
+}
+function ChatDaySep({ ts, T }) {
+    return React.createElement("div", { style: { alignSelf: "center", margin: "10px 0 6px", padding: "4px 12px", borderRadius: 10, background: "rgba(255,255,255,.06)", border: "1px solid " + T.border, fontSize: 11, color: T.ivoryM, fontFamily: CHAT_FONT } }, chatDayLabel(ts));
+}
+// Position of message i inside a run of messages from the same sender.
+function chatRun(list, i, senderOf) {
+    const m = list[i], p = list[i - 1], n = list[i + 1];
+    const same = (a, b) => a && b && senderOf(a) === senderOf(b) && chatDayKey(a.ts) === chatDayKey(b.ts);
+    return { first: !same(p, m), last: !same(m, n), newDay: !p || (m.ts && chatDayKey(p.ts) !== chatDayKey(m.ts)) };
+}
+function ChatBubble({ T, mine, first, last, children, meta, accent, maxWidth }) {
+    const r = 18, tail = 5;
+    return React.createElement("div", { style: {
+            alignSelf: mine ? "flex-end" : "flex-start", maxWidth: maxWidth || "80%", padding: "8px 12px 6px", marginTop: first ? 6 : 0,
+            // Rounded everywhere except the sender's side, which tightens inside a run and gets a tail on the last one.
+            borderRadius: mine ? `${r}px ${first ? r : 6}px ${last ? tail - 1 : 6}px ${r}px` : `${first ? r : 6}px ${r}px ${r}px ${last ? tail - 1 : 6}px`,
+            background: mine ? "linear-gradient(135deg,#DDB94B,#C79D35)" : "#1B1C21", color: mine ? "#16120A" : "#ECE8DE",
+            border: mine ? "none" : "1px solid rgba(255,255,255,.06)", boxShadow: "0 1px 1.5px rgba(0,0,0,.35)",
+            fontSize: 14.5, lineHeight: 1.45, fontFamily: CHAT_FONT, whiteSpace: "pre-wrap", wordBreak: "break-word", animation: "josMsgIn .22s ease-out" } },
+        children,
+        meta && React.createElement("span", { style: { float: "right", display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 10, marginTop: 6, marginBottom: -2, fontSize: 10.5, color: mine ? "rgba(22,18,10,.55)" : "rgba(236,232,222,.45)", lineHeight: 1 } }, meta));
+}
+function chatTime(ts) { return ts ? new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""; }
+function ChatSpeak({ coachId, text, color }) {
+    const [playing, setPlaying] = React.useState(false);
+    const toggle = (e) => {
+        e.stopPropagation(); unlockCoachAudio();
+        if (playing) { stopCoachVoice(); setPlaying(false); return; }
+        speakCoach(coachId, text, () => setPlaying(true), () => setPlaying(false));
+    };
+    return React.createElement("button", { onClick: toggle, "aria-label": playing ? "Stop voice" : "Play in coach's voice", style: { background: "transparent", border: "none", padding: 0, margin: 0, cursor: "pointer", color: playing ? color : "inherit", display: "inline-flex" } },
+        React.createElement(ChatIcon, { name: playing ? "stop" : "speaker", size: 14, color: playing ? color : "currentColor", width: 1.8 }));
+}
+function TypingBubble({ T, color, label }) {
+    return React.createElement("div", { style: { alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 8, marginTop: 6 } },
+        React.createElement("div", { style: { padding: "12px 14px", borderRadius: "18px 18px 18px 5px", background: "#1B1C21", border: "1px solid rgba(255,255,255,.06)", display: "flex", gap: 4 } },
+            [0, 1, 2].map(i => React.createElement("span", { key: i, style: { width: 7, height: 7, borderRadius: "50%", background: color || T.ivoryD, animation: "josDot 1.2s ease-in-out " + (i * 0.16) + "s infinite" } }))),
+        label && React.createElement("span", { style: { fontSize: 11, color: T.ivoryD, fontFamily: CHAT_FONT } }, label));
+}
+function ChatHeader({ T, onBack, avatar, title, subtitle, subtitleColor, actions, onTitleClick }) {
+    return React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "calc(10px + env(safe-area-inset-top)) 8px 10px 4px", background: "rgba(14,14,17,.92)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", borderBottom: "1px solid rgba(255,255,255,.06)", flexShrink: 0, zIndex: 5 } },
+        React.createElement("button", { onClick: onBack, "aria-label": "Back", style: { width: 36, height: 40, border: "none", background: "transparent", color: T.ivory, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, React.createElement(ChatIcon, { name: "back", size: 24, width: 2.2 })),
+        avatar,
+        React.createElement("div", { onClick: onTitleClick, style: { flex: 1, minWidth: 0, cursor: onTitleClick ? "pointer" : "default" } },
+            React.createElement("div", { style: { fontSize: 16, fontWeight: 600, color: T.ivory, fontFamily: CHAT_FONT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, title),
+            React.createElement("div", { style: { fontSize: 12, color: subtitleColor || T.ivoryD, fontFamily: CHAT_FONT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 1 } }, subtitle)),
+        actions);
+}
+function ChatHeaderBtn({ label, icon, onClick, color, active }) {
+    return React.createElement("button", { onClick: onClick, "aria-label": label, title: label, style: { width: 40, height: 40, borderRadius: "50%", border: "none", background: active ? "rgba(255,255,255,.08)" : "transparent", color: color || "#ECE8DE", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, icon);
+}
+function ChatMenu({ T, items, onClose }) {
+    return React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, zIndex: 50 } },
+        React.createElement("div", { onClick: e => e.stopPropagation(), role: "menu", style: { position: "absolute", top: "calc(58px + env(safe-area-inset-top))", right: "max(10px, calc(50vw - 205px))", minWidth: 210, background: "#1E1F25", border: "1px solid rgba(255,255,255,.08)", borderRadius: 14, padding: 6, boxShadow: "0 12px 32px rgba(0,0,0,.55)", animation: "josMsgIn .15s ease-out" } },
+            items.filter(Boolean).map((it, i) => React.createElement("button", { key: i, role: "menuitem", onClick: () => { onClose(); it.onClick(); }, style: { display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "11px 12px", border: "none", background: "transparent", color: it.danger ? "#FF6B6B" : "#ECE8DE", fontSize: 14, fontFamily: CHAT_FONT, textAlign: "left", cursor: "pointer", borderRadius: 10 } },
+                React.createElement("span", { style: { width: 20, textAlign: "center" } }, it.icon), it.label))));
+}
+function ChatSheet({ T, title, onClose, children }) {
+    return React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "flex-end", justifyContent: "center" } },
+        React.createElement("div", { onClick: e => e.stopPropagation(), style: { width: "100%", maxWidth: 430, maxHeight: "75vh", overflowY: "auto", background: "#16171C", borderRadius: "20px 20px 0 0", padding: "10px 18px calc(20px + env(safe-area-inset-bottom))", animation: "josSheetIn .25s ease-out" } },
+            React.createElement("div", { style: { width: 38, height: 4, borderRadius: 2, background: "rgba(255,255,255,.18)", margin: "0 auto 12px" } }),
+            React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 } },
+                React.createElement("div", { style: { fontSize: 16, fontWeight: 600, color: T.ivory, fontFamily: CHAT_FONT } }, title),
+                React.createElement("button", { onClick: onClose, "aria-label": "Close", style: { border: "none", background: "transparent", color: T.ivoryD, cursor: "pointer" } }, React.createElement(ChatIcon, { name: "close", size: 20 }))),
+            children));
+}
+// Scroll area that sticks to the bottom unless he scrolled up to read.
+function useChatScroll(deps) {
+    const ref = React.useRef(null);
+    const [atBottom, setAtBottom] = React.useState(true);
+    const stick = React.useRef(true);
+    const onScroll = () => { const el = ref.current; if (!el) return; const b = el.scrollHeight - el.scrollTop - el.clientHeight < 80; stick.current = b; setAtBottom(b); };
+    const toBottom = (smooth) => { const el = ref.current; if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" }); };
+    React.useEffect(() => { toBottom(false); }, []);
+    React.useEffect(() => { if (stick.current) toBottom(true); }, deps);
+    return { ref: ref, onScroll: onScroll, atBottom: atBottom, toBottom: () => { stick.current = true; toBottom(true); } };
+}
+function ScrollDownBtn({ onClick }) {
+    return React.createElement("button", { onClick: onClick, "aria-label": "Scroll to latest", style: { position: "absolute", right: 14, bottom: 12, width: 38, height: 38, borderRadius: "50%", border: "1px solid rgba(255,255,255,.1)", background: "#1E1F25", color: "#ECE8DE", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 14px rgba(0,0,0,.5)", animation: "josMsgIn .18s ease-out" } }, React.createElement(ChatIcon, { name: "down", size: 20, width: 2.2 }));
+}
+function chatBackground(color) {
+    return { background: "radial-gradient(1px 1px at 12px 12px, rgba(255,255,255,.045) 1px, transparent 1.5px) 0 0/24px 24px, radial-gradient(ellipse 120% 60% at 50% 0%, " + (color || "#D4AF37") + "14 0%, transparent 60%), #0B0B0E" };
+}
+// Input bar: pill with camera + text, round button that's the mic when empty and send when typed.
+function ChatComposer({ T, accent, value, setValue, onSend, photo, onPhoto, onRemovePhoto, placeholder, busy }) {
+    const fileRef = React.useRef(null);
+    const [listening, setListening] = React.useState(false);
+    const recRef = React.useRef(null);
+    const Ctor = speechRecognitionCtor();
+    const canSend = !!(String(value).trim() || photo) && !busy;
+    const pick = async (e) => {
+        const f = e.target.files && e.target.files[0]; e.target.value = "";
+        if (!f) return;
+        try { onPhoto({ full: await resizeImage(f, 1024, 0.8), thumb: await resizeImage(f, 320, 0.6) }); } catch (_a) { }
+    };
+    const mic = () => {
+        if (listening && recRef.current) { recRef.current.stop(); return; }
+        stopCoachVoice();
+        const rec = new Ctor();
+        rec.lang = "en-IN"; rec.interimResults = false; rec.continuous = false;
+        rec.onresult = (e) => { const t = Array.from(e.results).map(r => r[0].transcript).join(" ").trim(); if (t) setValue(prev => (prev ? prev + " " : "") + t); };
+        rec.onend = () => setListening(false); rec.onerror = () => setListening(false);
+        recRef.current = rec;
+        try { rec.start(); setListening(true); } catch (_a) { setListening(false); }
+    };
+    const showMic = !canSend && Ctor && !busy;
+    return React.createElement("div", { style: { flexShrink: 0, padding: "6px 8px calc(8px + env(safe-area-inset-bottom))", background: "rgba(14,14,17,.92)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" } },
+        photo && React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, margin: "0 4px 6px", padding: 6, borderRadius: 14, background: "#1B1C21", border: "1px solid rgba(255,255,255,.06)" } },
+            React.createElement("img", { src: photo.thumb, alt: "Photo to send", style: { width: 46, height: 46, objectFit: "cover", borderRadius: 10 } }),
+            React.createElement("span", { style: { flex: 1, fontSize: 12, color: T.ivoryD, fontFamily: CHAT_FONT } }, "Photo attached — add a caption or send"),
+            React.createElement("button", { onClick: onRemovePhoto, "aria-label": "Remove photo", style: { border: "none", background: "transparent", color: T.ivoryD, cursor: "pointer", padding: 6 } }, React.createElement(ChatIcon, { name: "close", size: 18 }))),
+        listening && React.createElement("div", { style: { textAlign: "center", fontSize: 12, color: "#3BD16F", fontFamily: CHAT_FONT, marginBottom: 6 } }, "● Listening… bolo, phir tap karo"),
+        React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 6 } },
+            React.createElement("div", { className: "jos-chat-pill", style: { flex: 1, minWidth: 0, display: "flex", alignItems: "center", background: "#1E1F25", borderRadius: 24, border: "1px solid rgba(255,255,255,.06)", paddingLeft: 4 } },
+                React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", onChange: pick, style: { display: "none" } }),
+                React.createElement("button", { onClick: () => fileRef.current && fileRef.current.click(), "aria-label": "Send a photo", title: "Send a photo", style: { width: 38, height: 44, border: "none", background: "transparent", color: T.ivoryD, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, React.createElement(ChatIcon, { name: "camera", size: 22 })),
+                React.createElement("input", { value: value, onChange: e => setValue(e.target.value), onKeyDown: e => { if (e.key === "Enter" && canSend) onSend(); }, placeholder: placeholder || "Message", enterKeyHint: "send", className: "jos-chat-input", style: { flex: 1, minWidth: 0, background: "transparent", border: "none", color: "#ECE8DE", fontFamily: CHAT_FONT, fontSize: 15, padding: "12px 12px 12px 2px", outline: "none" } })),
+            React.createElement("button", { onClick: showMic ? mic : () => canSend && onSend(), disabled: !showMic && !canSend, "aria-label": showMic ? (listening ? "Stop listening" : "Speak your message") : "Send", style: { width: 46, height: 46, borderRadius: "50%", border: "none", flexShrink: 0, cursor: showMic || canSend ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", background: listening ? "#E5383B" : (showMic || canSend) ? (accent || "linear-gradient(135deg,#DDB94B,#C79D35)") : "rgba(255,255,255,.08)", color: "#16120A", boxShadow: showMic || canSend ? "0 3px 10px rgba(0,0,0,.35)" : "none", transition: "background .2s", animation: listening ? "pulse 1.2s ease-in-out infinite" : "none" } },
+                showMic ? React.createElement(ChatIcon, { name: "mic", size: 22, color: listening ? "#fff" : "#16120A", width: 2.1 }) : React.createElement(ChatIcon, { name: "send", size: 20, color: canSend ? "#16120A" : "#6E6A62" }))));
+}
+function msgTag(m, T) {
+    const t = m.checkin ? "📋 Weekly check-in" : m.inbox ? "✉️ Texted you first" : null;
+    return t ? React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD, marginBottom: 3, fontWeight: 500 } }, t) : null;
+}
+// Expert tips and starter questions per coach (shown in the chat menu / empty chat).
+const COACH_TIPS = { mind: ["Name the feeling — \"I feel anxious\" calms the brain more than fighting it.", "Box breathing: in 4, hold 4, out 4, hold 4. Repeat 4 rounds when stressed.", "5-4-3-2-1 grounding: 5 things you see, 4 hear, 3 touch, 2 smell, 1 taste.", "Stuck on a task? Do just 2 minutes. Starting is the hardest part.", "Brain dump at night — write every worry on paper so it stops looping in bed.", "A missed day is data, not failure. Ask why, not what's wrong with me.", "Talking to a real friend or therapist is strength, not weakness."], skin: ["SPF every morning. #1 anti-aging step.", "Niacinamide and Vit C not at same time. One AM one PM.", "Moisturizer on damp skin — locks hydration.", "Retinol at night only — start 2x per week.", "If skin tight after cleanser it is too harsh."], hair: ["Wash 2-3x per week max — overwashing strips oils.", "Condition ends only, never scalp.", "Pat dry, never rub — use microfiber towel.", "Oil on lengths only, not scalp — 30 min before wash.", "Hairstyle should match face shape."], fitness: ["Progressive overload — lift more every week.", "Protein 2g per kg bodyweight every day.", "Rest day is not lazy — muscle grows during rest.", "Sleep 7-8h is part of training. Non-negotiable.", "Compounds first — squat deadlift bench row."], nutrition: ["One glass water first thing in morning.", "Protein in every meal — full and builds muscle.", "Never skip breakfast on training mornings.", "Caffeine after 2pm ruins sleep even if fine.", "Carbs around workout — before energy after recovery."], sleep: ["Same bedtime every night including weekends.", "No screens 1 hour before sleep — melatonin blocked.", "Cool dark room — 18-20 degrees for best sleep.", "Caffeine half-life 6 hours. Last by 2-3pm.", "Cannot sleep? Get up and do something calm."], style: ["Fit beats price — well-fitted cheap wins.", "Capsule: 3 tees 2 jeans 1 chino 2 shirts 2 shoes.", "Shoes and belt same tone — always.", "One statement piece max per outfit.", "Grooming completes the outfit."], grooming: ["Bath every day — non-negotiable.", "Beard oil after shower on slightly damp beard.", "Neckline trim separates sharp from sloppy.", "Fresh clothes daily.", "Oral: 2 min brush tongue scraper floss at night."], ronaldo: ["Train like it's session one, not session five thousand — intensity doesn't get to fade.", "Extra reps after the set ends is where the gap between good and great gets made.", "Discipline in food is discipline everywhere else — protect it even on the hard days.", "Protect your sleep like it's part of training, because it is.", "Review your own day harder than anyone else would — that's how standards rise."] };
+const COACH_QUICK_ASKS = { mind: ["I'm feeling stressed", "I can't focus today", "Why do I keep skipping tasks?", "Help me calm down right now"], skin: ["Rate my routine", "Any ingredient conflicts?", "What active to add next?"], hair: ["Should I wash today?", "Oiling check", "Best style for face shape"], fitness: ["Design today workout", "Am I recovered enough?", "How to break plateau?"], nutrition: ["Did I hit protein today?", "Analyze my diet", "What to eat next?"], sleep: ["Why am I tired?", "Optimize tonight", "Fix sleep debt"], style: ["What to wear today?", "Wardrobe gaps?", "Rate my style"], grooming: ["Overdue for trim?", "Rate grooming", "Product to add?"], ronaldo: ["Rate my day like CR7 would", "Give me today's discipline tip", "Motivate me right now"] };
 function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onClear, viewDay, onSwitchCoach }) {
-    const [cTab, setCTab] = React.useState("ask");
     const [typing, setTyping] = React.useState(false);
     const [voiceOn, setVoiceOn] = React.useState(voiceAutoOn());
     const [inCall, setInCall] = React.useState(false);
+    const [menu, setMenu] = React.useState(false);
+    const [sheet, setSheet] = React.useState(null);
     React.useEffect(() => () => stopCoachVoice(), [id]);
     const [pendingAsk, setPendingAsk] = React.useState(null);
     const coach = COACHES.find(c => c.id === id) || {};
-    const tips = { mind: ["Name the feeling — \"I feel anxious\" calms the brain more than fighting it.", "Box breathing: in 4, hold 4, out 4, hold 4. Repeat 4 rounds when stressed.", "5-4-3-2-1 grounding: 5 things you see, 4 hear, 3 touch, 2 smell, 1 taste.", "Stuck on a task? Do just 2 minutes. Starting is the hardest part.", "Brain dump at night — write every worry on paper so it stops looping in bed.", "A missed day is data, not failure. Ask why, not what's wrong with me.", "Talking to a real friend or therapist is strength, not weakness."], skin: ["SPF every morning. #1 anti-aging step.", "Niacinamide and Vit C not at same time. One AM one PM.", "Moisturizer on damp skin — locks hydration.", "Retinol at night only — start 2x per week.", "If skin tight after cleanser it is too harsh."], hair: ["Wash 2-3x per week max — overwashing strips oils.", "Condition ends only, never scalp.", "Pat dry, never rub — use microfiber towel.", "Oil on lengths only, not scalp — 30 min before wash.", "Hairstyle should match face shape."], fitness: ["Progressive overload — lift more every week.", "Protein 2g per kg bodyweight every day.", "Rest day is not lazy — muscle grows during rest.", "Sleep 7-8h is part of training. Non-negotiable.", "Compounds first — squat deadlift bench row."], nutrition: ["One glass water first thing in morning.", "Protein in every meal — full and builds muscle.", "Never skip breakfast on training mornings.", "Caffeine after 2pm ruins sleep even if fine.", "Carbs around workout — before energy after recovery."], sleep: ["Same bedtime every night including weekends.", "No screens 1 hour before sleep — melatonin blocked.", "Cool dark room — 18-20 degrees for best sleep.", "Caffeine half-life 6 hours. Last by 2-3pm.", "Cannot sleep? Get up and do something calm."], style: ["Fit beats price — well-fitted cheap wins.", "Capsule: 3 tees 2 jeans 1 chino 2 shirts 2 shoes.", "Shoes and belt same tone — always.", "One statement piece max per outfit.", "Grooming completes the outfit."], grooming: ["Bath every day — non-negotiable.", "Beard oil after shower on slightly damp beard.", "Neckline trim separates sharp from sloppy.", "Fresh clothes daily.", "Oral: 2 min brush tongue scraper floss at night."], ronaldo: ["Train like it's session one, not session five thousand — intensity doesn't get to fade.", "Extra reps after the set ends is where the gap between good and great gets made.", "Discipline in food is discipline everywhere else — protect it even on the hard days.", "Protect your sleep like it's part of training, because it is.", "Review your own day harder than anyone else would — that's how standards rise."] };
-    const coachTips = tips[id] || [];
-    const quickAsks = { mind: ["I'm feeling stressed", "I can't focus today", "Why do I keep skipping tasks?", "Help me calm down right now"], skin: ["Rate my routine", "Any ingredient conflicts?", "What active to add next?"], hair: ["Should I wash today?", "Oiling check", "Best style for face shape"], fitness: ["Design today workout", "Am I recovered enough?", "How to break plateau?"], nutrition: ["Did I hit protein today?", "Analyze my diet", "What to eat next?"], sleep: ["Why am I tired?", "Optimize tonight", "Fix sleep debt"], style: ["What to wear today?", "Wardrobe gaps?", "Rate my style"], grooming: ["Overdue for trim?", "Rate grooming", "Product to add?"], ronaldo: ["Rate my day like CR7 would", "Give me today's discipline tip", "Motivate me right now"] };
-    return (React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", height: "100vh", background: T.ink, fontFamily: "Inter,system-ui,sans-serif", display: "flex", flexDirection: "column", overflow: "hidden" } },
-        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "16px 20px 12px", flexShrink: 0, borderBottom: "1px solid " + T.border } },
-            React.createElement("button", { onClick: onBack, style: { width: 34, height: 34, borderRadius: "50%", border: "1px solid " + T.border2, background: T.card, color: T.ivory, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 } }, "\u2190"),
-            coach.id === "ronaldo" ? React.createElement("div", { style: { width: 32, height: 32, borderRadius: "50%", overflow: "hidden", border: "1.5px solid " + coach.color, flexShrink: 0 } }, React.createElement("img", { src: CR7_IMG_3, alt: "Ronaldo", style: { width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 15%" } })) : React.createElement(CoachAvatar, { coachId: coach.id, color: coach.color, size: 32 }),
-            React.createElement("div", { style: { flex: 1 } },
-                React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 17, color: T.ivory, fontWeight: 300 } },
-                    coach.name,
-                    " Coach"),
-                React.createElement("div", { style: { fontSize: 10, color: typing ? coach.color : T.ivoryD, fontFamily: "Inter,system-ui,sans-serif" } }, typing ? "typing…" : lastSeenText(CH[id]))),
-            React.createElement("button", { onClick: () => { unlockCoachAudio(); setCTab("ask"); setInCall(true); }, "aria-label": "Voice call " + coach.name, title: "Voice call", style: { width: 32, height: 32, borderRadius: "50%", border: "1px solid " + coach.color, background: coach.color + "22", cursor: "pointer", fontSize: 14, flexShrink: 0 } }, "📞"),
-            React.createElement("button", { onClick: () => { unlockCoachAudio(); const v = !voiceOn; setVoiceOn(v); store.set(VOICE_AUTO_KEY, v); if (!v) stopCoachVoice(); }, "aria-label": voiceOn ? "Turn coach voice off" : "Turn coach voice on", title: voiceOn ? "Voice on — replies are spoken" : "Voice off", style: { width: 32, height: 32, borderRadius: "50%", border: "1px solid " + (voiceOn ? coach.color : T.border2), background: voiceOn ? coach.color + "22" : "transparent", cursor: "pointer", fontSize: 14, flexShrink: 0 } }, voiceOn ? "🔊" : "🔈"),
-            (CH[id] || []).length > 0 && React.createElement("button", { onClick: () => onClear(id), style: { fontSize: 9, color: T.ivoryD, background: "transparent", border: "1px solid " + T.border2, borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontFamily: "Inter,system-ui,sans-serif" } }, "CLEAR")),
-        React.createElement("div", { style: { display: "flex", padding: "0 16px", borderBottom: "1px solid " + T.border, overflowX: "auto", scrollbarWidth: "none", flexShrink: 0 } }, ["ask", "tips"].map(t => React.createElement("button", { key: t, style: { padding: "9px 14px", fontSize: 9, letterSpacing: ".1em", textTransform: "uppercase", color: cTab === t ? T.gold : T.ivoryD, cursor: "pointer", border: "none", background: "transparent", borderBottom: cTab === t ? "2px solid " + T.gold : "2px solid transparent", whiteSpace: "nowrap", flexShrink: 0, fontFamily: "Inter,system-ui,sans-serif", fontWeight: cTab === t ? 500 : 300 }, onClick: () => setCTab(t) }, t))),
+    const coachTips = COACH_TIPS[id] || [];
+    const avatar = React.createElement("div", { style: { position: "relative", flexShrink: 0 } },
+        React.createElement(CoachAvatar, { coachId: coach.id, color: coach.color, size: 40 }),
+        !typing && lastSeenText(CH[id]) === "online" && React.createElement("span", { style: { position: "absolute", right: 0, bottom: 0, width: 11, height: 11, borderRadius: "50%", background: "#3BD16F", border: "2px solid #0E0E11" } }));
+    const toggleVoice = () => { unlockCoachAudio(); const v = !voiceOn; setVoiceOn(v); store.set(VOICE_AUTO_KEY, v); if (!v) stopCoachVoice(); };
+    return React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", height: "100dvh", background: "#0B0B0E", fontFamily: CHAT_FONT, display: "flex", flexDirection: "column", overflow: "hidden" } },
+        React.createElement(ChatHeader, { T: T, onBack: onBack, avatar: avatar, title: personaName(id), subtitle: typing ? "typing…" : (lastSeenText(CH[id]) === "online" ? coach.name + " coach · online" : lastSeenText(CH[id])), subtitleColor: typing ? "#3BD16F" : null,
+            actions: React.createElement(React.Fragment, null,
+                React.createElement(ChatHeaderBtn, { label: "Voice call " + personaName(id), icon: React.createElement(ChatIcon, { name: "phone", size: 20 }), onClick: () => { unlockCoachAudio(); setInCall(true); } }),
+                React.createElement(ChatHeaderBtn, { label: "More", icon: React.createElement(ChatIcon, { name: "more", size: 22 }), onClick: () => setMenu(true), active: menu })) }),
         React.createElement(GoalStrip, { coachId: id, color: coach.color, T: T }),
-        React.createElement("div", { style: { flex: 1, overflowY: "auto", scrollbarWidth: "none" } },
-            cTab === "guide" && (React.createElement("div", { style: { padding: "16px 20px" } },
-                React.createElement("div", { style: { background: "linear-gradient(135deg,#1A1713,#1C1A14)", border: "1px solid rgba(201,162,74,.2)", borderRadius: 12, padding: 14, marginBottom: 14 } },
-                    React.createElement("div", { style: { fontSize: 8, letterSpacing: ".18em", textTransform: "uppercase", color: coach.color, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, marginBottom: 8 } }, "Today Status"),
-                    React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, fontWeight: 300, lineHeight: 1.7, fontFamily: "Inter,system-ui,sans-serif" } }, id === "skin" ? L.skincareDone ? "Skin routine done today." : "Skin routine pending. Do AM now — cleanser to SPF." : id === "fitness" ? L.gymDone ? "Session logged. Recovery starts now." : gymDay === "Rest" ? "Rest day. Focus on protein and sleep." : "Not trained yet. Best window 4-9pm." : id === "nutrition" ? "Water: " + L.water + " glasses. Target 170g protein. Breakfast 38g + Lunch 42g + Dinner 32g = 112g base." : id === "sleep" ? L.sleepHours >= 7 ? "Good sleep. Body recovered well." : "Short on sleep. Prioritize tonight — aim 8 hours." : id === "mind" ? ((L.mood || 0) === 0 ? "Mood not logged yet today. Kaisa feel ho raha hai? Tell Dr. Meher — no judgment." : (L.mood || 0) <= 2 ? "Mood " + L.mood + "/5 today. Rough day? Talk it out — one small step at a time." : "Mood " + L.mood + "/5, energy " + (L.energy || 0) + "/5. Good time to reflect on what's working.") : id === "ronaldo" ? (L.gymDone ? "Trained today — that's the standard, not the exception." : "Not trained yet today. I don't wait for the mood to be right.") : "Ask me anything about your " + coach.name.toLowerCase() + " routine.")),
-                React.createElement("div", { style: { fontSize: 8, letterSpacing: ".18em", textTransform: "uppercase", color: coach.color, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, marginBottom: 8 } }, "Quick Asks"),
-                React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 7 } }, (quickAsks[id] || []).map(p => (React.createElement("button", { key: p, onClick: () => { setCTab("ask"); setPendingAsk(p); }, style: { padding: "10px 14px", background: T.card, border: "1px solid " + T.border, borderRadius: 10, color: T.ivory, fontSize: 11, cursor: "pointer", textAlign: "left", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300, display: "flex", alignItems: "center", justifyContent: "space-between" } },
-                    p,
-                    React.createElement("span", { style: { color: coach.color, fontSize: 12 } }, "->"))))))),
-            cTab === "tips" && (React.createElement("div", { style: { padding: "16px 20px" } },
-                React.createElement("div", { style: { fontSize: 8, letterSpacing: ".18em", textTransform: "uppercase", color: coach.color, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, marginBottom: 8 } }, "Expert Tips"),
-                coachTips.map((tip, i) => (React.createElement("div", { key: i, style: { display: "flex", gap: 12, padding: "12px", background: T.card, border: "1px solid " + T.border, borderRadius: 12, marginBottom: 8 } },
-                    React.createElement("div", { style: { width: 24, height: 24, borderRadius: "50%", border: "1px solid " + coach.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: coach.color, flexShrink: 0, fontFamily: "Fraunces,Georgia,serif" } }, i + 1),
-                    React.createElement("div", { style: { fontSize: 12, color: T.ivory, lineHeight: 1.7, fontWeight: 300, fontFamily: "Inter,system-ui,sans-serif" } }, tip)))))),
-            cTab === "ask" && React.createElement(SmartChat, { id: id, coach: coach, CH: CH, setCH: setCH, T: T, viewDay: viewDay, L: L, W: W, pendingAsk: pendingAsk, onConsumePendingAsk: () => setPendingAsk(null), onTypingChange: setTyping, inCall: inCall, onEndCall: () => setInCall(false), onTalkToMeher: (reason) => { store.set(MEHER_HANDOFF_KEY, { from: id, reason: reason, at: Date.now() }); if (onSwitchCoach) onSwitchCoach("mind"); } }))));
+        React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } },
+            React.createElement(SmartChat, { id: id, coach: coach, CH: CH, setCH: setCH, T: T, viewDay: viewDay, L: L, W: W, pendingAsk: pendingAsk, onConsumePendingAsk: () => setPendingAsk(null), onTypingChange: setTyping, inCall: inCall, onEndCall: () => setInCall(false), onTalkToMeher: (reason) => { store.set(MEHER_HANDOFF_KEY, { from: id, reason: reason, at: Date.now() }); if (onSwitchCoach) onSwitchCoach("mind"); } })),
+        menu && React.createElement(ChatMenu, { T: T, onClose: () => setMenu(false), items: [
+                { icon: voiceOn ? "🔇" : "🔊", label: voiceOn ? "Voice replies off" : "Voice replies on", onClick: toggleVoice },
+                coachTips.length ? { icon: "💡", label: "Expert tips", onClick: () => setSheet("tips") } : null,
+                { icon: "👥", label: "Team Jeet group", onClick: () => { if (onSwitchCoach) onSwitchCoach("__group"); } },
+                (CH[id] || []).length ? { icon: "🗑", label: "Clear chat", danger: true, onClick: () => { stopCoachVoice(); onClear(id); } } : null,
+            ] }),
+        sheet === "tips" && React.createElement(ChatSheet, { T: T, title: "💡 " + personaName(id) + "'s tips", onClose: () => setSheet(null) },
+            coachTips.map((tip, i) => React.createElement("div", { key: i, style: { display: "flex", gap: 12, padding: "12px 0", borderTop: i ? "1px solid rgba(255,255,255,.06)" : "none" } },
+                React.createElement("div", { style: { width: 24, height: 24, borderRadius: "50%", background: coach.color + "26", color: coach.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, flexShrink: 0 } }, i + 1),
+                React.createElement("div", { style: { fontSize: 14, color: T.ivory, lineHeight: 1.55 } }, tip)))));
 }
 // Body part data with muscle group descriptions
 const MUSCLE_INFO = {
@@ -4896,10 +5042,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
             store.set(MEHER_HANDOFF_KEY, Object.assign({}, h, { used: true }));
         }
     }, [id]);
-    const endRef = React.useRef(null);
     const hist = CH[id] || [];
-    React.useEffect(() => { if (endRef.current)
-        endRef.current.scrollIntoView({ behavior: "smooth" }); }, [hist]);
     const getResponse = (msg) => {
         const m = msg.toLowerCase().trim();
         const qa = COACH_QA[id] || { items: [], def: "" };
@@ -5357,32 +5500,37 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         grooming: ["Beard care", "Nail check", "Oral hygiene", "Skin routine"],
         ronaldo: ["Rate my day", "Give me a tip", "Motivate me", "Am I disciplined enough?"],
     };
-    const ps = prompts[id] || [];
+    const ps = prompts[id] || COACH_QUICK_ASKS[id] || [];
+    const scroll = useChatScroll([hist.length, thinking]);
     if (inCall) return React.createElement(CallOverlay, { coach: coach, T: T, onUserText: (t) => sendRef.current(t, { voice: true }), onEnd: onEndCall });
-    return (React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } },
-        React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: "12px 20px", overflowY: "auto", scrollbarWidth: "none" } },
-            hist.length === 0 && (React.createElement("div", { style: { maxWidth: "90%", padding: "12px 16px", borderRadius: 14, fontSize: 12, lineHeight: 1.6, background: T.card2, border: "1px solid " + T.border, color: T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } },
-                id === "ronaldo" ? "Talent without working hard is nothing. Tell me what you did today \u2014 gym, sleep, food \u2014 and I'll tell you straight where you stand." : ("Ask me anything about your " + coach.name.toLowerCase() + " routine. I know everything \u2014 your products, schedule, targets."))),
-            hist.map((m, i) => React.createElement(React.Fragment, { key: i }, (m.role === "assistant" && id === "ronaldo" ? React.createElement(VoiceNoteBubble, { key: i, text: m.content, color: coach.color, T: T }) : React.createElement("div", { key: i, style: { maxWidth: "88%", padding: "11px 15px", borderRadius: 14, fontSize: 12, lineHeight: 1.7, background: m.role === "user" ? "rgba(212,175,55,.1)" : T.card2, border: "1px solid " + (m.role === "user" ? "rgba(212,175,55,.2)" : T.border), color: m.role === "user" ? T.gold : T.ivory, alignSelf: m.role === "user" ? "flex-end" : "flex-start", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } }, m.image && React.createElement("img", { src: m.image, alt: "Photo", style: { display: "block", width: "100%", maxWidth: 220, borderRadius: 10, marginBottom: m.content === "📷" ? 0 : 6 } }), m.image && m.content === "📷" ? null : m.content, m.role === "assistant" ? React.createElement("div", { style: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10 } }, React.createElement(SpeakButton, { coachId: id, text: m.content, color: coach.color }), msgTime(m)) : msgTime(m))), m.handoff && id !== "mind" && onTalkToMeher && React.createElement("button", { onClick: () => onTalkToMeher(m.handoff), style: { alignSelf: "flex-start", marginTop: -4, padding: "8px 14px", borderRadius: 20, border: "1px solid rgba(142,124,195,.5)", background: "rgba(142,124,195,.12)", color: "#C8B8F0", fontSize: 12, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, cursor: "pointer" } }, "💜 Talk to Dr. Meher"))),
-            thinking && React.createElement("div", { style: { maxWidth: "60%", padding: "11px 15px", borderRadius: 14, background: T.card2, border: "1px solid " + T.border, alignSelf: "flex-start", display: "flex", gap: 4, alignItems: "center" } }, [0, 1, 2].map(i => React.createElement("div", { key: i, style: { width: 6, height: 6, borderRadius: "50%", background: coach.color, opacity: .6, animation: "pulse 1.2s ease-in-out " + (i * 0.2) + "s infinite" } }))),
-            React.createElement("div", { ref: endRef })),
-        React.createElement(LevelUpBanner, { levelUp: levelUp, color: coach.color, T: T, subtitle: levelUp ? "You and " + coach.name + " are getting closer" : "" }),
+    const sender = m => m.role;
+    return React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } },
+        React.createElement("div", { style: { position: "relative", flex: 1, minHeight: 0 } },
+            React.createElement("div", { ref: scroll.ref, onScroll: scroll.onScroll, style: Object.assign({ position: "absolute", inset: 0, overflowY: "auto", scrollbarWidth: "none", padding: "8px 10px 12px", display: "flex", flexDirection: "column", gap: 2 }, chatBackground(coach.color)) },
+                hist.length === 0 && React.createElement("div", { style: { margin: "auto 0", padding: "24px 18px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 10 } },
+                    React.createElement(CoachAvatar, { coachId: coach.id, color: coach.color, size: 76 }),
+                    React.createElement("div", { style: { fontSize: 18, fontWeight: 600, color: T.ivory, marginTop: 4 } }, personaName(id)),
+                    React.createElement("div", { style: { fontSize: 12, color: coach.color, fontWeight: 500 } }, coach.name + " coach"),
+                    React.createElement("div", { style: { fontSize: 13.5, color: T.ivoryM, lineHeight: 1.55, maxWidth: 290 } }, id === "ronaldo" ? "Talent without working hard is nothing. Tell me what you did today — gym, sleep, food — and I'll tell you straight where you stand." : "Kuch bhi poocho — routine, products, doubts. Main tumhara data, goals aur history " + ((VOICE_PROFILE[id] || {}).female ? "jaanti" : "jaanta") + " hoon."),
+                    ps.length > 0 && React.createElement("div", { style: { display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 8, marginTop: 8 } }, ps.map(p => React.createElement("button", { key: p, onClick: () => send(p), style: { padding: "9px 14px", borderRadius: 20, border: "1px solid " + coach.color + "55", background: coach.color + "14", color: T.ivory, fontSize: 13, fontFamily: CHAT_FONT, cursor: "pointer" } }, p)))),
+                hist.map((m, i) => {
+                    const run = chatRun(hist, i, sender);
+                    const mine = m.role === "user";
+                    const sep = run.newDay && m.ts ? React.createElement(ChatDaySep, { key: "d" + i, ts: m.ts, T: T }) : null;
+                    if (!mine && id === "ronaldo") return React.createElement(React.Fragment, { key: i }, sep, React.createElement("div", { style: { marginTop: run.first ? 6 : 0 } }, React.createElement(VoiceNoteBubble, { text: m.content, color: coach.color, T: T })));
+                    const meta = React.createElement(React.Fragment, null, !mine && React.createElement(ChatSpeak, { coachId: id, text: m.content, color: coach.color }), chatTime(m.ts), mine && React.createElement("span", { style: { color: i < hist.length - 1 ? "#2F6FD6" : "rgba(22,18,10,.5)", letterSpacing: -3, marginRight: 3 } }, "✓✓"));
+                    return React.createElement(React.Fragment, { key: i }, sep,
+                        React.createElement(ChatBubble, { T: T, mine: mine, first: run.first, last: run.last, meta: meta },
+                            !mine && msgTag(m, T),
+                            m.image && React.createElement("img", { src: m.image, alt: "Photo", style: { display: "block", width: "100%", maxWidth: 240, borderRadius: 12, margin: "-2px -4px 6px", minWidth: 160 } }),
+                            m.image && m.content === "📷" ? null : m.content),
+                        m.handoff && id !== "mind" && onTalkToMeher && React.createElement("button", { onClick: () => onTalkToMeher(m.handoff), style: { alignSelf: "flex-start", margin: "6px 0 4px", padding: "9px 16px", borderRadius: 20, border: "1px solid rgba(142,124,195,.5)", background: "rgba(142,124,195,.14)", color: "#D4C6F5", fontSize: 13, fontFamily: CHAT_FONT, fontWeight: 500, cursor: "pointer" } }, "💜 Talk to Dr. Meher"));
+                }),
+                thinking && React.createElement(TypingBubble, { T: T, color: coach.color })),
+            !scroll.atBottom && React.createElement(ScrollDownBtn, { onClick: scroll.toBottom })),
+        React.createElement(LevelUpBanner, { levelUp: levelUp, color: coach.color, T: T, subtitle: levelUp ? "You and " + personaName(id) + " are getting closer" : "" }),
         React.createElement(LevelUpBanner, { levelUp: milestone ? { name: milestone.pct === 100 ? "Goal achieved 🏆" : milestone.pct + "% there 🎯", icon: milestone.pct === 100 ? "crown" : "fire" } : null, prefix: "", color: coach.color, T: T, subtitle: milestone ? milestone.goal : "" }),
-        photo && React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 20px 0" } },
-            React.createElement("img", { src: photo.thumb, alt: "Photo to send", style: { width: 48, height: 48, objectFit: "cover", borderRadius: 8, border: "1px solid " + T.border2 } }),
-            React.createElement("span", { style: { flex: 1, fontSize: 10, color: T.ivoryD, fontFamily: "Inter,system-ui,sans-serif" } }, "Photo ready — add a note or just send"),
-            React.createElement("button", { onClick: () => setPhoto(null), "aria-label": "Remove photo", style: { background: "transparent", border: "none", color: T.ivoryD, fontSize: 14, cursor: "pointer" } }, "✕")),
-        hist.length === 0 && (React.createElement("div", { style: { display: "flex", gap: 6, padding: "4px 20px 6px", overflowX: "auto", scrollbarWidth: "none", flexWrap: "wrap" } }, ps.map(p => (React.createElement("button", { key: p, onClick: () => send(p), style: { padding: "6px 12px", borderRadius: 18, border: "1px solid " + T.border2, background: T.card, fontSize: 10, color: T.ivoryM, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300, marginBottom: 4 } }, p))))),
-        React.createElement("div", { style: { display: "flex", gap: 8, padding: "8px 20px 16px", alignItems: "flex-end" } },
-            React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", onChange: pickPhoto, style: { display: "none" } }),
-            React.createElement(MicButton, { T: T, onText: (t) => setInp(prev => (prev ? prev + " " : "") + t) }),
-            React.createElement("button", { onClick: () => fileRef.current && fileRef.current.click(), "aria-label": "Send a photo", title: "Send a photo", style: { width: 40, height: 40, borderRadius: "50%", background: T.card2, border: "1px solid " + T.border2, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 16 } }, "📷"),
-            React.createElement("input", { style: { flex: 1, minWidth: 0, background: T.card2, border: "1px solid " + T.border2, borderRadius: 22, color: T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontSize: 12, padding: "11px 18px", outline: "none", fontWeight: 300 }, placeholder: photo ? "Add a note…" : "Ask your coach...", value: inp, onChange: e => setInp(e.target.value), onKeyDown: e => { if (e.key === "Enter") {
-                    send(inp);
-                } } }),
-            React.createElement("button", { disabled: !inp.trim() && !photo, onClick: () => send(inp), style: { width: 40, height: 40, borderRadius: "50%", background: inp.trim() || photo ? "linear-gradient(135deg,#D4AF37,#F0D080)" : "rgba(255,255,255,.06)", border: "none", cursor: inp.trim() || photo ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } },
-                React.createElement("svg", { width: "13", height: "13", viewBox: "0 0 24 24", fill: inp.trim() || photo ? "#0A0800" : "#8A857A" },
-                    React.createElement("path", { d: "M2 21l21-9L2 3v7l15 2-15 2v7z" }))))));
+        React.createElement(ChatComposer, { T: T, value: inp, setValue: setInp, onSend: () => send(inp), photo: photo, onPhoto: setPhoto, onRemovePhoto: () => setPhoto(null), placeholder: photo ? "Add a caption…" : "Message " + personaName(id).split(" ").pop(), busy: thinking }));
 }
 // ── LEVEL SYSTEM ──────────────────────────────────────────
 function getLevel(count, levelDefs) {
@@ -6547,7 +6695,7 @@ function JeetOS() {
     }
     // Coach screen
     if (screen === "coach" && activeCoach) {
-        return React.createElement(CoachScreen, { id: activeCoach, CH: CH, setCH: setCH, CL: CL, L: L, W: W, T: T, gymDay: todayGymDay, onSwitchCoach: (cid) => setActiveCoach(cid), onBack: () => setScreen("home"), onSend: sendMsg, onClear: (id) => { const up = Object.assign({}, CH, { [id]: [] }); setCH(up); store.set("jos_ch", up); showToast("Cleared"); }, viewDay: viewDay });
+        return React.createElement(CoachScreen, { id: activeCoach, CH: CH, setCH: setCH, CL: CL, L: L, W: W, T: T, gymDay: todayGymDay, onSwitchCoach: (cid) => { if (cid === "__group") setScreen("group"); else setActiveCoach(cid); }, onBack: () => setScreen("home"), onSend: sendMsg, onClear: (id) => { const up = Object.assign({}, CH, { [id]: [] }); setCH(up); store.set("jos_ch", up); showToast("Cleared"); }, viewDay: viewDay });
     }
     const tabScore = (() => {
         switch (tab) {
