@@ -187,3 +187,14 @@ create table if not exists public.jeetos_convo_summaries (
 );
 alter table public.jeetos_convo_summaries enable row level security;
 create policy "allow all for anon" on public.jeetos_convo_summaries for all to public using (true) with check (true);
+
+-- PhD-style scorecards: each coach scores Jeet on 8-10 parameters with a
+-- goal timeline (from "Full assessment" or each weekly check-in).
+create table if not exists public.jeetos_assessments (
+  id text primary key,
+  coach text not null,
+  data jsonb not null,
+  created_at timestamptz not null default now()
+);
+alter table public.jeetos_assessments enable row level security;
+create policy "allow all for anon" on public.jeetos_assessments for all to public using (true) with check (true);
