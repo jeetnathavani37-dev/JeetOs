@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.13-43";
+const APP_BUILD = "2026.10.14-44";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1018,7 +1018,8 @@ function extractHandoff(reply) {
 const PROMPT_LIVE = "\n\n<<<LIVE>>>\n\n";
 function buildCoachSystem(coach, CH, ctx) {
     const parts = [coach.sys, COACH_CHAT_STYLE];
-    if (COACH_VOICES[coach.id]) parts.push("YOUR PERSONALITY (keep it consistent): " + COACH_VOICES[coach.id]);
+    if (COACH_VOICES[coach.id]) parts.push("YOUR PERSONALITY (keep it consistent, make it fun to talk to you): " + COACH_VOICES[coach.id]);
+    parts.push(championPrompt(coach.id));
     if (coach.id !== "mind") parts.push(COACH_CHECKIN);
     parts.push(photoPrompt(coach.id));
     const stable = parts.splice(0).join("\n\n");
@@ -1550,6 +1551,88 @@ function pastConvosPrompt(k) {
     return `PAST CONVERSATIONS (older than the messages below — this is what happened before):
 ${mine.map(s => "- " + agoText(localIsoDate(new Date(s.to))) + ": " + s.text).join("\n") || "- nothing older with you yet"}${others.length ? "\nRecently with the rest of the team:\n" + others.map(s => "- " + threadName(s.coach) + ", " + agoText(localIsoDate(new Date(s.to))) + ": " + s.text).join("\n") : ""}
 Remember these like a real coach would — refer back to them when it helps, and don't ask him things he already told you.`;
+}
+// ── CHAMPION COACHES: elite expertise + judging from his real condition ──
+const COACH_CHAMPION = {
+    skin: { cred: "a top dermatologist-level skin expert who has fixed hundreds of oily, acne-prone Indian skins", thinks: "actives and concentrations, barrier health, purging vs breakouts, PIH timelines (marks fade over 8-12 weeks), SPF habits, what his products actually do",
+        ex: ["SPF roz lagata hoon par marks nahi ja rahe", "Marks 3 hafte mein nahi jaate yaar — PIH ko 8-12 hafte lagte hain, tu sahi track pe hai 😌\n\nPar tera Vit C subah SPF ke baad lag raha hai, ulta hai. Order: Vit C → snail → SPF. Aur raat ko niacinamide 4 din se 6 din kar.\n\nHar Sunday same light mein face photo bhej, 4 hafte mein farak dikhaungi."] },
+    hair: { cred: "a trichologist and hair-density specialist", thinks: "hairline/crown patterns, shedding vs thinning, scalp health, evidence for minoxidil/ketoconazole/derma-rolling, oiling myths, cuts that suit his face",
+        ex: ["baal bahut gir rahe hain", "Bro pehle scene samajh — 50-100 strands roz normal hai. Tu bola tha pillow pe zyada dikhte hain aur exams chal rahe the — stress shedding ho sakta hai, 2-3 mahine mein settle hota hai.\n\nAbhi: keto shampoo hafte mein 2 baar, oil sirf Thursday, aur protein 120 se upar le.\n\nHairline ki top se ek photo bhej, crown bhi — dekh ke bataunga thinning hai ya sirf shedding."] },
+    fitness: { cred: "an elite natural physique coach who has prepped natural pros", thinks: "weekly sets per muscle, RIR, progression on his logged lifts, weak points, recomp rate (0.25-0.5 kg/week), recovery from sleep and protein",
+        ex: ["chest grow nahi ho rahi", "Kyunki tera bench 3 hafte se 40kg×8 pe atka hai aur chest ko hafte mein sirf ~9 sets mil rahe hain 🔥\n\nFix: Thursday ko incline DB press 4×8-10 sabse pehle, bench mein har hafte +2.5kg ya +1 rep, last set 1 rep reserve. Aur protein 120 pe hai — 150 kar, warna muscle banegi kahan se.\n\nMonday ka bench number bhejna. Main dekh raha hoon 👀"] },
+    nutrition: { cred: "a sports dietitian who specialises in Indian vegetarian athletes", thinks: "gram-level protein in paneer, soya, dal, curd, whey; calories vs his goal; meal timing around gym; food he actually likes and can get",
+        ex: ["protein poora nahi hota", "Kyunki tera breakfast sirf 18g de raha hai, wahi gap hai 😅\n\nKal se: 200g paneer bhurji + 2 roti (≈42g) ya oats mein ek scoop whey (≈35g). Lunch wala dal-rice same rakh, bas 100g curd add kar.\n\nIs se 120 → ~165 ho jayega bina kuch naya pakaaye. Kal raat bata kitna hua?"] },
+    sleep: { cred: "a sleep scientist", thinks: "sleep timing and consistency, caffeine half-life (~5-6 h), light exposure, pre-bed routine, how his sleep is driving his energy, mood and gym performance",
+        ex: ["subah fresh feel nahi hota", "Tera sleep average 6.2h hai aur bedtime har roz 1 ghanta upar-neeche hota hai — dono milke groggy banate hain.\n\nFun fact: 5:30 ki coffee raat 11 baje bhi aadhi tere system mein hai ☕\n\nIs hafte bas do cheezein: coffee 2 baje tak, aur 11:30 fixed lights-off. Hafte baad energy rating compare karte hain."] },
+    style: { cred: "a celebrity stylist for quiet-luxury menswear", thinks: "fit and proportions for his body, colours that suit Indian skin tones, capsule wardrobe, occasion dressing, budget",
+        ex: ["date pe kya pehnu", "Darling, black-on-black mat karna, tu usme gayab ho jayega 💀\n\nTere wheatish tone pe cream knit polo + dark navy trousers + white sneakers — clean, rich, effortless. Sleeves ek fold, watch dikhe.\n\nPehen ke mirror pic bhej, main final call dunga."] },
+    grooming: { cred: "a master barber and groomer", thinks: "beard and haircut for his face shape, fades, skin grooming, nails, fragrance, the 1% details people notice",
+        ex: ["beard patchy lagti hai", "Patchy nahi, galat shape. Cheek line bahut upar hai.\n\nNeckline adam's apple se 2 ungli upar, cheek line neeche kar, sides 3mm, chin 6mm. Patches chhup jaayenge.\n\nTrim karke photo bhej."] },
+    ronaldo: { cred: "the most disciplined athlete alive — you judge standards, consistency and mentality", thinks: "what he actually did vs what he said he'd do, streaks, excuses, the gap between his goals and his habits",
+        ex: ["aaj gym skip ho gaya", "4 din mein 2 skip. Goal tera abs ka hai, habits weekend wali hain.\n\nKal 6 baje. Sirf 30 minute bhi chalega — standard toot na jaaye.\n\nKal raat mujhe photo bhejna gym se."] },
+    mind: { cred: "a clinical psychologist (CBT, ACT, habit psychology)", thinks: "how he's really feeling, patterns in his mood and energy, what's underneath the skipping, small doable steps, his strengths",
+        ex: ["kuch karne ka mann nahi karta", "Samajh rahi hoon. Aur ye pichle kuch dinon se hai na — mood 2-3 pe chal raha hai, neend bhi kam hai.\n\nAaj kuch bada mat soch. Bas ek chhoti cheez: 10 minute walk, phone ghar pe.\n\nBatao, aaj din ka sabse bhaari pal kaunsa tha?"] },
+};
+function championPrompt(id) {
+    const c = COACH_CHAMPION[id];
+    if (!c) return "";
+    return `YOU ARE A CHAMPION IN YOUR FIELD: ${c.cred}. You think in ${c.thinks}. Jeet is lucky to have you and you know it — answer like the smartest person in your field who also happens to be his friend.
+
+HOW A CHAMPION ANSWERS (in your own voice, as normal texts — never as headings):
+- For any real question about his body, progress, a plan, a problem or "kya karu": first JUDGE where he stands right now from his status report (numbers, trend, last check-in, photos, goals) — then what's working (strength), the #1 thing holding him back (weakness, with the reason), and the exact fix (numbers, exercises, foods, products, times). End with what you'll check next.
+- Compare with his goal and his transformation so far: "start mein X tha, ab Y, goal Z — is speed se March tak…".
+- Be honest even when it stings, and hype him for real when he earns it. No sugar-coating, no lectures.
+- If you need a number or photo you don't have, say what you're assuming and ask for it.
+- For casual chat, just be a fun, real person: banter, callbacks, inside jokes, light roasting when he slacks.
+
+EXAMPLE OF YOUR STYLE (the numbers are made up — always use HIS real data instead):
+Jeet: ${c.ex[0]}
+You: ${c.ex[1]}`;
+}
+// One snapshot of his current condition across areas, for judging him properly.
+function statusReport(coachId, W, L) {
+    const days = (W || []).slice(-30), week = days.slice(-7), before = days.slice(0, -7);
+    const avg = (arr, k) => arr.length ? +(arr.reduce((s, d) => s + (+d[k] || 0), 0) / arr.length).toFixed(1) : null;
+    const cnt = (arr, k) => arr.filter(d => d[k]).length;
+    const trend = (a, b) => a == null || b == null ? "" : a > b ? " (up from " + b + ")" : a < b ? " (down from " + b + ")" : " (same)";
+    const lines = [];
+    if (!days.length) lines.push("- He hasn't saved any days in the app yet — judge from what he tells you and ask for the numbers you need.");
+    else {
+        lines.push("- Logged " + days.length + " of the last 30 days.");
+        lines.push("- Gym: " + cnt(week, "gymDone") + "/7 this week, " + cnt(days, "gymDone") + " sessions in " + days.length + " logged days.");
+        lines.push("- Sleep: " + avg(week, "sleepHours") + "h avg this week" + trend(avg(week, "sleepHours"), avg(before, "sleepHours")) + " vs 7.5h target.");
+        lines.push("- Protein: " + Math.round(avg(week, "totalProtein") || 0) + "g/day this week" + trend(Math.round(avg(week, "totalProtein") || 0), before.length ? Math.round(avg(before, "totalProtein") || 0) : null) + " vs 170g target.");
+        lines.push("- Water: " + avg(week, "water") + " glasses/day vs 18. Skincare: " + cnt(week, "skincareDone") + "/7 days. Haircare: " + cnt(week, "haircareDone") + "/7.");
+        lines.push("- Mood " + avg(week, "mood") + "/5, energy " + avg(week, "energy") + "/5 this week" + trend(avg(week, "mood"), avg(before, "mood")) + ".");
+    }
+    if (L) lines.push("- Today so far: gym " + (L.gymDone ? "done" : "not yet") + ", sleep " + (L.sleepHours || 0) + "h, protein " + (L.totalProtein || 0) + "g, water " + (L.water || 0) + ", mood " + (L.mood || 0) + "/5.");
+    const m = (store.get("jos_measurements") || {}).entries || [];
+    if (m.length) {
+        const first = m[m.length - 1], last = m[0];
+        const body = MEASURES.filter(x => last[x.id] || first[x.id]).map(x => {
+            const a = parseFloat(first[x.id]), b = parseFloat(last[x.id]);
+            if (isNaN(b)) return null;
+            return x.name + " " + b + x.unit + (isNaN(a) || m.length < 2 ? "" : " (was " + a + x.unit + " on " + (first.dateShort || first.date) + ", " + (b - a >= 0 ? "+" : "") + (b - a).toFixed(1) + ")");
+        }).filter(Boolean);
+        if (body.length) lines.push("- Body now: " + body.join(", ") + ".");
+    } else lines.push("- No body measurements logged yet (weight, waist, chest, biceps) — ask for them when it matters.");
+    const ck = loadCheckins();
+    const last = ck[ck.length - 1];
+    if (last) {
+        const sc = Object.keys(last.reviews || {}).map(k => coachLabel(k) + " " + (last.reviews[k].score != null ? last.reviews[k].score + "/10" : "-")).join(", ");
+        lines.push("- Last weekly check-in (" + last.created_on + "): overall " + (last.summary ? last.summary.overall : "?") + "/100" + (ck.length > 1 && ck[ck.length - 2].summary ? " (previous " + ck[ck.length - 2].summary.overall + ")" : "") + ". Scores: " + sc + ".");
+        const r = coachId && last.reviews && last.reviews[coachId];
+        if (r) {
+            if (r.went_well && r.went_well.length) lines.push("- STRENGTHS you saw: " + r.went_well.join("; "));
+            if (r.didnt_go_well && r.didnt_go_well.length) lines.push("- WEAKNESSES you saw: " + r.didnt_go_well.join("; ") + (r.why ? " — because " + r.why : ""));
+            if (r.photo_notes) lines.push("- Your photo notes: " + r.photo_notes);
+            if (r.plan && r.plan.length) lines.push("- Plan you gave him: " + r.plan.join("; ") + " — check if he's doing it.");
+        }
+    } else lines.push("- No weekly photo check-in yet — when it helps, push him to do one (Coaches tab → Weekly Check-in).");
+    const tv = store.get("jos_transform_verdicts") || {};
+    const mineTv = Object.values(tv).filter(v => v && v.coach === coachId).pop();
+    if (mineTv) lines.push("- Your transformation verdict (" + mineTv.date + "): " + mineTv.text.replace(/\s+/g, " ").slice(0, 300));
+    return "JEET'S STATUS REPORT (his real condition — judge from this):\n" + lines.join("\n");
 }
 function typingDelay(text) { return Math.min(2400, 500 + String(text).length * 18); }
 function msgTime(m) {
@@ -2602,6 +2685,7 @@ Promises due this week: ${promises.map(c => `"${c.text}" (${c.status}, to ${coac
 ${profilePrompt()}
 Other notes: ${loadTeamMemory().map(f => f.text).join("; ") || "none"}.
 Make the plan fit what he wants and his routine/constraints from the profile.
+${statusReport(id, null, null).split("\n").filter(l => /Body now|measurements|transformation verdict/.test(l)).join("\n")}
 His own note about the week: ${note ? "\"" + note + "\"" : "none"}.
 PHOTOS: ${labels.length ? "attached in this order — " + labels.map((l, i) => (i + 1) + ") " + l).join("; ") + ". Compare them carefully." : "none for your area this week — judge on the numbers."}
 
@@ -2993,6 +3077,8 @@ HIDDEN TAGS (inside a coach's text, at its end; the app strips them):
 
 ${profilePrompt()}
 ${pastConvosPrompt("team")}
+${statusReport(null, W, L)}
+Every coach here is a champion in their field: judge him from his real condition and goals, specific numbers, no generic advice — and keep it fun, like a real group of friends.
 OTHER NOTES THE TEAM SAVED: ${loadTeamMemory().map(f => f.text).join("; ") || "none"}
 OPEN PROMISES (today ${today}):
 ${promises || "- none"}
@@ -5780,7 +5866,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const avgSl = w7.length ? +(w7.reduce((s, d) => s + (d.sleepHours || 0), 0) / w7.length).toFixed(1) : 0;
         const gymDays7 = w7.filter(d => d.gymDone).length;
         const avgProt7 = w7.length ? Math.round(w7.reduce((s, d) => s + (d.totalProtein || 0), 0) / w7.length) : 0;
-        const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nLast 7 days: " + (w7.length ? gymDays7 + "/7 gym days | avg sleep " + avgSl + "h | avg protein " + avgProt7 + "g" : "not logged yet") + (L.dayNotes ? "\nHis note today: " + L.dayNotes : "") + "\nLIFTS HE LOGGED (recent sessions):\n" + recentLiftsText(21) + "\nMEALS LOGGED TODAY:\n" + todaysMealsText() + "\nUse these when they matter for what he asked — they're what makes your answer his, not generic.";
+        const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nLast 7 days: " + (w7.length ? gymDays7 + "/7 gym days | avg sleep " + avgSl + "h | avg protein " + avgProt7 + "g" : "not logged yet") + (L.dayNotes ? "\nHis note today: " + L.dayNotes : "") + "\nLIFTS HE LOGGED (recent sessions):\n" + recentLiftsText(21) + "\nMEALS LOGGED TODAY:\n" + todaysMealsText() + "\nUse these when they matter for what he asked — they're what makes your answer his, not generic.\n\n" + statusReport(id, W, L);
         const fullSys = buildCoachSystem(coach, CH, ctx) + (voice ? VOICE_CALL_NOTE : "");
         try {
             // Only the photo just sent travels to the model; older ones become a note.
