@@ -2725,6 +2725,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
     const [cTab, setCTab] = React.useState("ask");
     const [typing, setTyping] = React.useState(false);
     const [voiceOn, setVoiceOn] = React.useState(voiceAutoOn());
+    const [inCall, setInCall] = React.useState(false);
     React.useEffect(() => () => stopCoachVoice(), [id]);
     const [pendingAsk, setPendingAsk] = React.useState(null);
     const coach = COACHES.find(c => c.id === id) || {};
@@ -2740,6 +2741,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
                     coach.name,
                     " Coach"),
                 React.createElement("div", { style: { fontSize: 10, color: typing ? coach.color : T.ivoryD, fontFamily: "Inter,system-ui,sans-serif" } }, typing ? "typing…" : lastSeenText(CH[id]))),
+            React.createElement("button", { onClick: () => { unlockCoachAudio(); setCTab("ask"); setInCall(true); }, "aria-label": "Voice call " + coach.name, title: "Voice call", style: { width: 32, height: 32, borderRadius: "50%", border: "1px solid " + coach.color, background: coach.color + "22", cursor: "pointer", fontSize: 14, flexShrink: 0 } }, "📞"),
             React.createElement("button", { onClick: () => { unlockCoachAudio(); const v = !voiceOn; setVoiceOn(v); store.set(VOICE_AUTO_KEY, v); if (!v) stopCoachVoice(); }, "aria-label": voiceOn ? "Turn coach voice off" : "Turn coach voice on", title: voiceOn ? "Voice on — replies are spoken" : "Voice off", style: { width: 32, height: 32, borderRadius: "50%", border: "1px solid " + (voiceOn ? coach.color : T.border2), background: voiceOn ? coach.color + "22" : "transparent", cursor: "pointer", fontSize: 14, flexShrink: 0 } }, voiceOn ? "🔊" : "🔈"),
             (CH[id] || []).length > 0 && React.createElement("button", { onClick: () => onClear(id), style: { fontSize: 9, color: T.ivoryD, background: "transparent", border: "1px solid " + T.border2, borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontFamily: "Inter,system-ui,sans-serif" } }, "CLEAR")),
         React.createElement("div", { style: { display: "flex", padding: "0 16px", borderBottom: "1px solid " + T.border, overflowX: "auto", scrollbarWidth: "none", flexShrink: 0 } }, ["ask", "tips"].map(t => React.createElement("button", { key: t, style: { padding: "9px 14px", fontSize: 9, letterSpacing: ".1em", textTransform: "uppercase", color: cTab === t ? T.gold : T.ivoryD, cursor: "pointer", border: "none", background: "transparent", borderBottom: cTab === t ? "2px solid " + T.gold : "2px solid transparent", whiteSpace: "nowrap", flexShrink: 0, fontFamily: "Inter,system-ui,sans-serif", fontWeight: cTab === t ? 500 : 300 }, onClick: () => setCTab(t) }, t))),
@@ -2758,7 +2760,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
                 coachTips.map((tip, i) => (React.createElement("div", { key: i, style: { display: "flex", gap: 12, padding: "12px", background: T.card, border: "1px solid " + T.border, borderRadius: 12, marginBottom: 8 } },
                     React.createElement("div", { style: { width: 24, height: 24, borderRadius: "50%", border: "1px solid " + coach.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: coach.color, flexShrink: 0, fontFamily: "Fraunces,Georgia,serif" } }, i + 1),
                     React.createElement("div", { style: { fontSize: 12, color: T.ivory, lineHeight: 1.7, fontWeight: 300, fontFamily: "Inter,system-ui,sans-serif" } }, tip)))))),
-            cTab === "ask" && React.createElement(SmartChat, { id: id, coach: coach, CH: CH, setCH: setCH, T: T, viewDay: viewDay, L: L, W: W, pendingAsk: pendingAsk, onConsumePendingAsk: () => setPendingAsk(null), onTypingChange: setTyping, onTalkToMeher: (reason) => { store.set(MEHER_HANDOFF_KEY, { from: id, reason: reason, at: Date.now() }); if (onSwitchCoach) onSwitchCoach("mind"); } }))));
+            cTab === "ask" && React.createElement(SmartChat, { id: id, coach: coach, CH: CH, setCH: setCH, T: T, viewDay: viewDay, L: L, W: W, pendingAsk: pendingAsk, onConsumePendingAsk: () => setPendingAsk(null), onTypingChange: setTyping, inCall: inCall, onEndCall: () => setInCall(false), onTalkToMeher: (reason) => { store.set(MEHER_HANDOFF_KEY, { from: id, reason: reason, at: Date.now() }); if (onSwitchCoach) onSwitchCoach("mind"); } }))));
 }
 // Body part data with muscle group descriptions
 const MUSCLE_INFO = {
@@ -4444,7 +4446,8 @@ function speakCoach(coachId, text, onStart, onEnd) {
     const t = voiceText(text);
     if (!t) { if (onEnd) onEnd(); return false; }
     if (onStart) onStart();
-    const done = () => { if (seq === voiceSeq && onEnd) onEnd(); };
+    let ended = false;
+    const done = () => { if (ended) return; ended = true; if (seq === voiceSeq && onEnd) onEnd(); };
     (async () => {
         if (!ttsUnavailable) {
             try {
@@ -4537,7 +4540,100 @@ function VoiceNoteBubble({ text, color, T, coachId }) {
             React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: "Inter,system-ui,sans-serif", flexShrink: 0 } }, mm + ":" + String(ss).padStart(2, "0"))),
         React.createElement("div", { style: { fontSize: 11, color: T.ivoryM, lineHeight: 1.6, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300, fontStyle: "italic", padding: "0 4px" } }, text)));
 }
-function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsumePendingAsk, onTalkToMeher, onTypingChange }) {
+// ── VOICE CALL: talk to a coach hands-free ──────────────────────────────
+// Listen → send → coach speaks → listen again, until he hangs up.
+const VOICE_CALL_NOTE = `\n\nVOICE CALL: Jeet is talking to you on a voice call right now — everything you write will be spoken aloud. Reply like you're on the phone: natural spoken Hinglish, 1-3 short sentences, no emoji, no lists, no symbols. His messages come from speech-to-text, so guess sensibly if a word looks off. Keep the conversation going like a real call.`;
+function callGreeting(coachId) {
+    const fem = (VOICE_PROFILE[coachId] || {}).female;
+    const g = { fitness: "Haan bhai, bol! Kya scene hai?", ronaldo: "Talk to me. What's going on?", mind: "Hi Jeet. Main yahin hoon, aaram se bolo — kaisa feel ho raha hai?", sleep: "Hey Jeet, bolo — neend ka kya haal hai?", style: "Darling, bolo! Kya pehen rahe ho aaj?", hair: "Haan bro, bol — scene kya hai?", grooming: "Haan. Bolo.", skin: "Hi Jeet, bolo — skin kaisi chal rahi hai?", nutrition: "Hii Jeet! Bolo, aaj kya khaya?" };
+    return g[coachId] || ("Haan Jeet, bolo — sun " + (fem ? "rahi" : "raha") + " hoon.");
+}
+function CallOverlay({ coach, T, onUserText, onEnd }) {
+    const font = "Inter,system-ui,sans-serif";
+    const Ctor = speechRecognitionCtor();
+    const [state, setState] = React.useState("speaking"); // listening | thinking | speaking | paused
+    const [heard, setHeard] = React.useState("");
+    const [said, setSaid] = React.useState(callGreeting(coach.id));
+    const [secs, setSecs] = React.useState(0);
+    const alive = React.useRef(true);
+    const recRef = React.useRef(null);
+    const silent = React.useRef(0);
+    const stopRec = () => { const r = recRef.current; recRef.current = null; if (r) { r.onend = null; r.onresult = null; r.onerror = null; try { r.abort(); } catch (_a) { } } };
+    const turn = React.useRef(0);
+    const speak = (text) => {
+        const my = ++turn.current;
+        setState("speaking"); setSaid(text);
+        speakCoach(coach.id, text, null, () => { if (alive.current && turn.current === my) listen(); });
+    };
+    const listen = () => {
+        if (!alive.current || !Ctor) return;
+        turn.current++;
+        stopRec();
+        setState("listening"); setHeard("");
+        const rec = new Ctor();
+        rec.lang = "en-IN"; rec.interimResults = true; rec.continuous = false;
+        let finalText = "";
+        rec.onresult = (e) => {
+            let interim = "";
+            for (let i = 0; i < e.results.length; i++) { const r = e.results[i]; if (r.isFinal) finalText = (finalText + " " + r[0].transcript).trim(); else interim += r[0].transcript; }
+            setHeard((finalText + " " + interim).trim());
+        };
+        rec.onerror = () => { };
+        rec.onend = async () => {
+            if (!alive.current || recRef.current !== rec) return;
+            recRef.current = null;
+            const text = finalText.trim();
+            if (!text) {
+                // Nothing heard: keep listening a couple of times, then wait for a tap.
+                silent.current += 1;
+                if (silent.current >= 3) { setState("paused"); return; }
+                setTimeout(listen, 250);
+                return;
+            }
+            silent.current = 0;
+            setState("thinking");
+            let reply = "";
+            try { reply = await onUserText(text); } catch (_a) { }
+            if (!alive.current) return;
+            speak(reply || "Sorry, connection mein dikkat aa gayi. Phir se bolo?");
+        };
+        recRef.current = rec;
+        try { rec.start(); } catch (_a) { setState("paused"); }
+    };
+    React.useEffect(() => {
+        unlockCoachAudio();
+        if (Ctor) speak(callGreeting(coach.id));
+        const t = setInterval(() => setSecs(s => s + 1), 1000);
+        return () => { alive.current = false; clearInterval(t); stopRec(); stopCoachVoice(); };
+    }, []);
+    // Tap the avatar: interrupt the coach, or start listening again.
+    const tap = () => {
+        if (state === "speaking") { stopCoachVoice(); listen(); }
+        else if (state === "paused") { silent.current = 0; listen(); }
+        else if (state === "listening") { const r = recRef.current; if (r) try { r.stop(); } catch (_a) { } }
+    };
+    const hangUp = () => { alive.current = false; stopRec(); stopCoachVoice(); onEnd(); };
+    const label = !Ctor ? "Is browser mein voice call support nahi hai — Chrome ya Safari mein kholo."
+        : state === "listening" ? (heard ? "" : "Sun " + ((VOICE_PROFILE[coach.id] || {}).female ? "rahi" : "raha") + " hoon… bolo")
+        : state === "thinking" ? "Soch " + ((VOICE_PROFILE[coach.id] || {}).female ? "rahi" : "raha") + " hoon…"
+        : state === "paused" ? "Tap karke bolo" : "";
+    const ring = state === "speaking" ? coach.color : state === "listening" ? "#3BD16F" : T.border2;
+    return React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 300, background: "radial-gradient(ellipse at 50% 30%, " + coach.color + "33 0%, transparent 65%), #07060A", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-between", padding: "48px 24px 40px", fontFamily: font } },
+        React.createElement("div", { style: { textAlign: "center" } },
+            React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 24, color: T.ivory } }, String(COACH_VOICES[coach.id] || coach.name).split(" (")[0]),
+            React.createElement("div", { style: { fontSize: 12, color: T.ivoryD, marginTop: 4 } }, coachLabel(coach.id) + " · " + Math.floor(secs / 60) + ":" + String(secs % 60).padStart(2, "0"))),
+        React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 22, width: "100%" } },
+            React.createElement("button", { onClick: tap, "aria-label": state === "speaking" ? "Interrupt" : "Talk", style: { width: 150, height: 150, borderRadius: "50%", border: "3px solid " + ring, background: "transparent", padding: 6, cursor: "pointer", boxShadow: state === "speaking" || state === "listening" ? "0 0 0 10px " + ring + "22, 0 0 40px " + ring + "55" : "none", transition: "box-shadow .3s, border-color .3s", animation: state === "speaking" || state === "listening" ? "pulse 1.6s ease-in-out infinite" : "none" } },
+                React.createElement("div", { style: { width: "100%", height: "100%", borderRadius: "50%", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" } }, React.createElement(CoachAvatar, { coachId: coach.id, color: coach.color, size: 132 }))),
+            React.createElement("div", { style: { minHeight: 90, maxWidth: 340, textAlign: "center" } },
+                label && React.createElement("div", { style: { fontSize: 13, color: state === "listening" ? "#3BD16F" : T.ivoryD, marginBottom: 8 } }, label),
+                state === "listening" && heard && React.createElement("div", { style: { fontSize: 15, color: T.gold, lineHeight: 1.5 } }, "“" + heard + "”"),
+                (state === "speaking" || state === "thinking") && said && React.createElement("div", { style: { fontSize: 14, color: T.ivory, lineHeight: 1.6, opacity: state === "thinking" ? .5 : 1 } }, said))),
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 28 } },
+            React.createElement("button", { onClick: () => { if (state === "paused") { silent.current = 0; listen(); } else { stopRec(); stopCoachVoice(); setState("paused"); } }, "aria-label": state === "paused" ? "Resume" : "Pause", style: { width: 58, height: 58, borderRadius: "50%", border: "1px solid " + T.border2, background: "rgba(255,255,255,.08)", color: T.ivory, fontSize: 20, cursor: "pointer" } }, state === "paused" ? "🎤" : "⏸"),
+            React.createElement("button", { onClick: hangUp, "aria-label": "End call", style: { width: 70, height: 70, borderRadius: "50%", border: "none", background: "#E5383B", color: "#fff", fontSize: 26, cursor: "pointer", boxShadow: "0 6px 20px rgba(229,56,59,.45)" } }, "📞")));
+}
+function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsumePendingAsk, onTalkToMeher, onTypingChange, inCall, onEndCall }) {
 
     const [inp, setInp] = React.useState("");
     // Arriving at Dr. Meher from another coach's "Talk to Dr. Meher" button:
@@ -4926,7 +5022,8 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         };
         return fallbacks[coachId] || `Tell me more specifically what you need and I'll give you a precise answer.`;
     };
-    const send = async (msg) => {
+    const send = async (msg, opts) => {
+        const voice = !!(opts && opts.voice);
         const pic = photo;
         if ((!msg.trim() && !pic) || thinking)
             return;
@@ -4948,7 +5045,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const gymDays7 = w7.filter(d => d.gymDone).length;
         const avgProt7 = w7.length ? Math.round(w7.reduce((s, d) => s + (d.totalProtein || 0), 0) / w7.length) : 0;
         const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nThis week: " + gymDays7 + "/7 gym days | Avg sleep: " + avgSl + "h | Avg protein: " + avgProt7 + "g\nBackground only — use a number only if it matters for what he just asked.";
-        const fullSys = buildCoachSystem(coach, CH, ctx);
+        const fullSys = buildCoachSystem(coach, CH, ctx) + (voice ? VOICE_CALL_NOTE : "");
         try {
             // Only the photo just sent travels to the model; older ones become a note.
             const aiMsgs = newHistUser.slice(-20).map(m => m.image ? { role: m.role, content: m.content === "📷" ? "[sent a photo]" : "[sent a photo] " + m.content } : m);
@@ -4957,11 +5054,11 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
             const reply = processCoachReply(raw, id);
             if (reply.milestone) { setMilestone(reply.milestone); setTimeout(() => setMilestone(null), 3200); }
             // With voice on, the coach starts talking as the first text lands.
-            if (voiceAutoOn()) speakCoach(id, reply.parts.map(x => /[.!?]$/.test(x.trim()) ? x : x + ".").join(" "));
+            if (voiceAutoOn() && !voice) speakCoach(id, reply.parts.map(x => /[.!?]$/.test(x.trim()) ? x : x + ".").join(" "));
             // Deliver the coach's texts one by one, with typing time in between.
             let newHist = newHistUser;
             for (let pi = 0; pi < reply.parts.length; pi++) {
-                if (pi > 0) await new Promise(r => setTimeout(r, typingDelay(reply.parts[pi])));
+                if (pi > 0 && !voice) await new Promise(r => setTimeout(r, typingDelay(reply.parts[pi])));
                 const am = { role: "assistant", content: reply.parts[pi], ts: Date.now() };
                 if (pi === reply.parts.length - 1 && reply.handoff && id !== "mind") am.handoff = reply.handoff;
                 newHist = [...newHist, am];
@@ -4974,6 +5071,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
                 setLevelUp(aLvl.current);
                 setTimeout(() => setLevelUp(null), 2400);
             }
+            return reply.parts.join(" ");
         }
         catch (e) {
             // Fallback to smart local response
@@ -4982,11 +5080,15 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
             const assistantMsg = { role: "assistant", content: "[Local · " + reason + "] " + response, ts: Date.now() };
             const newHist = [...newHistUser, assistantMsg];
             setCH(prev => { const up2 = Object.assign({}, prev, { [id]: newHist }); store.set("jos_ch", slimChatImages(up2)); return up2; });
+            return voice ? "Connection mein thodi dikkat hai. " + response : response;
         }
         finally {
             setThinking(false);
         }
     };
+    // The call loop always talks to the latest send (fresh history and data).
+    const sendRef = React.useRef(send);
+    sendRef.current = send;
     React.useEffect(() => {
         if (pendingAsk) {
             send(pendingAsk);
@@ -5005,6 +5107,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         ronaldo: ["Rate my day", "Give me a tip", "Motivate me", "Am I disciplined enough?"],
     };
     const ps = prompts[id] || [];
+    if (inCall) return React.createElement(CallOverlay, { coach: coach, T: T, onUserText: (t) => sendRef.current(t, { voice: true }), onEnd: onEndCall });
     return (React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } },
         React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: "12px 20px", overflowY: "auto", scrollbarWidth: "none" } },
             hist.length === 0 && (React.createElement("div", { style: { maxWidth: "90%", padding: "12px 16px", borderRadius: 14, fontSize: 12, lineHeight: 1.6, background: T.card2, border: "1px solid " + T.border, color: T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } },
