@@ -86,15 +86,18 @@ async function callClaude(system, userPrompt) {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-5",
-      max_tokens: 600,
+      model: "claude-haiku-5-5",
+      max_tokens: 2000,
       system,
       messages: [{ role: "user", content: userPrompt }],
     }),
   });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error("Claude " + r.status + ": " + ((d && d.error && d.error.message) || r.status));
-  const text = d && d.content && d.content[0] && d.content[0].text;
+  // Claude thinks adaptively by default, so content[0] can be a
+  // thinking block — read the first text block instead.
+  const block = d && Array.isArray(d.content) && d.content.find(b => b.type === "text" && b.text);
+  const text = block && block.text;
   if (!text) throw new Error("Claude: empty response");
   return text;
 }
