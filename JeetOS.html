@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-47";
+const APP_BUILD = "2026.10.14-48";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -2050,6 +2050,143 @@ function PhotoScanSheet({ T, slot: initial, onClose }) {
                     sc.fixes.map((x, i) => React.createElement("div", { key: i, style: { fontSize: 13, color: T.ivory, lineHeight: 1.5, marginBottom: 3 } }, (i + 1) + ". " + x))),
                 sc.photo_quality && React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD, marginTop: 8 } }, "📸 " + sc.photo_quality))));
 }
+// ── PHOTO BACKUP: encrypted on the phone, stored in Supabase ────────────
+// Each photo is AES-GCM encrypted with a key that only lives on his devices
+// (shown to him as a backup code), so the rows in jeetos_photo_vault are
+// unreadable to anyone without that code.
+const VAULT_KEY = "jos_vault_key";
+const VAULT_DONE = "jos_vault_synced";
+const B64 = { enc: (buf) => { let s = ""; const b = new Uint8Array(buf); for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); }, dec: (str) => Uint8Array.from(atob(str), c => c.charCodeAt(0)) };
+function vaultCode(raw) { return (raw || "").replace(/[^A-Za-z0-9+/=]/g, "").replace(/(.{4})/g, "$1-").replace(/-$/, ""); }
+function vaultRawFromCode(code) { return String(code || "").replace(/[\s-]/g, ""); }
+function getVaultRaw() {
+    let raw = store.get(VAULT_KEY);
+    if (!raw) { raw = B64.enc(crypto.getRandomValues(new Uint8Array(32))); store.set(VAULT_KEY, raw); }
+    return raw;
+}
+async function vaultCryptoKey(raw) { return crypto.subtle.importKey("raw", B64.dec(raw || getVaultRaw()), "AES-GCM", false, ["encrypt", "decrypt"]); }
+async function vaultEncrypt(text, raw) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await vaultCryptoKey(raw), new TextEncoder().encode(text));
+    return { iv: B64.enc(iv), data: B64.enc(ct) };
+}
+async function vaultDecrypt(row, raw) {
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: B64.dec(row.iv) }, await vaultCryptoKey(raw), B64.dec(row.data));
+    return new TextDecoder().decode(pt);
+}
+function vaultSynced() { return new Set(store.get(VAULT_DONE) || []); }
+function markVaultSynced(key) { const s = vaultSynced(); s.add(key); store.set(VAULT_DONE, [...s].slice(-2000)); }
+async function backupPhoto(key, dataUrl) {
+    if (!supabaseReady() || !dataUrl || vaultSynced().has(key)) return false;
+    try {
+        const enc = await vaultEncrypt(dataUrl);
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_photo_vault?on_conflict=key", { method: "POST", headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }), body: JSON.stringify({ key: key, iv: enc.iv, data: enc.data }) });
+        if (r.ok) { markVaultSynced(key); return true; }
+    } catch (_a) { }
+    return false;
+}
+async function allPhotoKeys() {
+    try { const db = await photoDB(); return await new Promise((res) => { const q = db.transaction("photos").objectStore("photos").getAllKeys(); q.onsuccess = () => res(q.result || []); q.onerror = () => res([]); }); } catch (_a) { return []; }
+}
+// Every photo the app refers to (check-ins + scans).
+function referencedPhotoKeys() {
+    const keys = [];
+    loadCheckins().forEach(c => (c.slots || []).forEach(s => keys.push(c.id + ":" + s)));
+    Object.keys(loadScans()).forEach(s => slotScans(s).forEach(x => keys.push("scan:" + x.id)));
+    return keys;
+}
+// Upload anything not backed up yet; download anything this phone is missing.
+async function syncPhotoVault(onProgress) {
+    if (!supabaseReady()) return { up: 0, down: 0, missing: 0, failed: 0 };
+    const res = { up: 0, down: 0, missing: 0, failed: 0 };
+    const local = await allPhotoKeys();
+    const done = vaultSynced();
+    for (const k of local) {
+        if (done.has(k)) continue;
+        const img = await getPhoto(k);
+        if (img && await backupPhoto(k, img)) res.up++;
+        if (onProgress) onProgress(res);
+    }
+    const have = new Set(local);
+    const want = referencedPhotoKeys().filter(k => !have.has(k));
+    for (let i = 0; i < want.length; i += 10) {
+        const batch = want.slice(i, i + 10);
+        try {
+            const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_photo_vault?select=key,iv,data&key=in.(" + batch.map(k => encodeURIComponent('"' + k + '"')).join(",") + ")", { headers: SUPA_HEADERS() });
+            const rows = r.ok ? await r.json() : [];
+            for (const row of rows) {
+                try { const img = await vaultDecrypt(row); await putPhoto(row.key, img, true); markVaultSynced(row.key); res.down++; }
+                catch (_a) { res.failed++; }
+            }
+            res.missing += batch.length - rows.length;
+        } catch (_a) { }
+        if (onProgress) onProgress(res);
+    }
+    store.set("jos_vault_last", { at: Date.now(), up: res.up, down: res.down, failed: res.failed });
+    return res;
+}
+async function vaultCount() {
+    if (!supabaseReady()) return null;
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_photo_vault?select=key", { headers: Object.assign(SUPA_HEADERS(), { Prefer: "count=exact", Range: "0-0" }) });
+        const cr = r.headers.get("content-range") || "";
+        return +(cr.split("/")[1] || 0);
+    } catch (_a) { return null; }
+}
+function PhotoBackupSheet({ T, onClose }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [code] = React.useState(vaultCode(getVaultRaw()));
+    const [show, setShow] = React.useState(false);
+    const [status, setStatus] = React.useState("");
+    const [cloud, setCloud] = React.useState(null);
+    const [local, setLocal] = React.useState(null);
+    const [restore, setRestore] = React.useState("");
+    const [copied, setCopied] = React.useState(false);
+    const refresh = async () => { setLocal((await allPhotoKeys()).length); setCloud(await vaultCount()); };
+    React.useEffect(() => { refresh(); }, []);
+    const syncNow = async () => {
+        setStatus("Sync ho raha hai…");
+        const r = await syncPhotoVault(p => setStatus("Upload " + p.up + " · download " + p.down + "…"));
+        setStatus("✓ " + r.up + " upload, " + r.down + " download" + (r.failed ? " · " + r.failed + " is code se nahi khuli" : "") + (r.missing ? " · " + r.missing + " cloud mein nahi mili" : ""));
+        refresh();
+    };
+    const useCode = async () => {
+        const raw = vaultRawFromCode(restore);
+        if (raw.length < 40) { setStatus("Code poora paste karo"); return; }
+        // Check the code against one photo in the vault before switching to it.
+        try {
+            const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_photo_vault?select=key,iv,data&limit=1", { headers: SUPA_HEADERS() });
+            const rows = await r.json();
+            if (rows && rows[0]) await vaultDecrypt(rows[0], raw);
+        } catch (_a) { setStatus("⚠️ Ye code in photos ko nahi khol paa raha — dobara check karo"); return; }
+        store.set(VAULT_KEY, raw); store.set(VAULT_DONE, []);
+        setStatus("Code set ✓ — photos wapas la raha hoon…");
+        const res = await syncPhotoVault(p => setStatus("Download " + p.down + "…"));
+        setStatus("✓ " + res.down + " photos wapas aa gayi");
+        refresh();
+    };
+    const copy = async () => { try { await navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_a) { setShow(true); } };
+    const box = { padding: 12, borderRadius: 14, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", marginBottom: 12 };
+    return React.createElement(ChatSheet, { T: T, title: "☁️ Photo backup", onClose: onClose },
+        React.createElement("div", { style: { fontFamily: font } },
+            React.createElement("div", { style: { fontSize: 13, color: T.ivoryM, lineHeight: 1.55, marginBottom: 12 } }, "Check-in aur scan ki saari photos phone pe hi encrypt hoke cloud mein save hoti hain — phone badlo ya data clear ho, photos wapas aa jayengi. Bina tumhare backup code ke koi unhe nahi dekh sakta."),
+            React.createElement("div", { style: Object.assign({}, box, { display: "flex", gap: 12 }) },
+                React.createElement("div", { style: { flex: 1, textAlign: "center" } }, React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: T.ivory } }, local == null ? "…" : local), React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD } }, "is phone pe")),
+                React.createElement("div", { style: { flex: 1, textAlign: "center" } }, React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: T.green } }, cloud == null ? "…" : cloud), React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD } }, "cloud backup"))),
+            React.createElement("button", { onClick: syncNow, style: { width: "100%", padding: 12, borderRadius: 12, border: "none", background: T.gold, color: "#16120A", fontWeight: 700, fontSize: 13.5, cursor: "pointer", marginBottom: 6 } }, "🔄 Abhi backup / sync karo"),
+            status && React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, textAlign: "center", marginBottom: 12 } }, status),
+            React.createElement("div", { style: box },
+                React.createElement("div", { style: { fontSize: 12.5, fontWeight: 700, color: T.gold, marginBottom: 4 } }, "🔑 Tumhara backup code"),
+                React.createElement("div", { style: { fontSize: 12, color: T.ivoryD, lineHeight: 1.5, marginBottom: 8 } }, "Naye phone pe photos wapas laane ke liye ye code chahiye. Kahin safe save karo (Notes / password manager). Kisi ko mat dena."),
+                React.createElement("div", { style: { fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12, color: T.ivory, background: "rgba(0,0,0,.3)", padding: "8px 10px", borderRadius: 8, wordBreak: "break-all", filter: show ? "none" : "blur(5px)", userSelect: show ? "text" : "none" } }, code),
+                React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
+                    React.createElement("button", { onClick: () => setShow(!show), style: { flex: 1, padding: 9, borderRadius: 10, border: "1px solid rgba(255,255,255,.15)", background: "transparent", color: T.ivory, fontSize: 12.5, cursor: "pointer" } }, show ? "🙈 Chhupao" : "👁 Dikhao"),
+                    React.createElement("button", { onClick: copy, style: { flex: 1, padding: 9, borderRadius: 10, border: "1px solid rgba(255,255,255,.15)", background: "transparent", color: T.ivory, fontSize: 12.5, cursor: "pointer" } }, copied ? "✓ Copied" : "📋 Copy"))),
+            React.createElement("div", { style: box },
+                React.createElement("div", { style: { fontSize: 12.5, fontWeight: 700, color: T.ivory, marginBottom: 6 } }, "📲 Naya phone? Code daal ke photos wapas lao"),
+                React.createElement("input", { value: restore, onChange: e => setRestore(e.target.value), placeholder: "Backup code paste karo", autoComplete: "off", style: { width: "100%", boxSizing: "border-box", background: T.card2, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 10, padding: "10px", fontSize: 13, fontFamily: "ui-monospace,Menlo,monospace", outline: "none" } }),
+                React.createElement("button", { onClick: useCode, style: { width: "100%", marginTop: 8, padding: 10, borderRadius: 10, border: "1px solid " + T.gold, background: "transparent", color: T.gold, fontWeight: 700, fontSize: 13, cursor: "pointer" } }, "Photos wapas lao"))));
+}
 function typingDelay(text) { return Math.min(2400, 500 + String(text).length * 18); }
 function msgTime(m) {
     return m && m.ts ? React.createElement("span", { style: { display: "block", fontSize: 10.5, opacity: .45, textAlign: "right", marginTop: 4 } },
@@ -3026,8 +3163,10 @@ function photoDB() {
         r.onerror = () => rej(r.error);
     });
 }
-async function putPhoto(key, val) {
+async function putPhoto(key, val, fromBackup) {
     try { const db = await photoDB(); await new Promise((res, rej) => { const tx = db.transaction("photos", "readwrite"); tx.objectStore("photos").put(val, key); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (_a) { }
+    // Every saved photo also goes to the encrypted cloud backup.
+    if (!fromBackup) backupPhoto(key, val);
 }
 async function getPhoto(key) {
     try { const db = await photoDB(); return await new Promise((res) => { const q = db.transaction("photos").objectStore("photos").get(key); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); }); } catch (_a) { return null; }
@@ -3288,6 +3427,7 @@ function CheckinScreen({ T, W, setCH, onBack, onOpenCoach, onCoachMessages }) {
     const [openCoach, setOpenCoach] = React.useState(null);
     const [error, setError] = React.useState("");
     const [scanOpen, setScanOpen] = React.useState(false);
+    const [backupOpen, setBackupOpen] = React.useState(false);
     const fileRefs = React.useRef({});
     const stats = weekStats(W, 0), prevStats = weekStats(W, 1);
     React.useEffect(() => {
@@ -3372,7 +3512,11 @@ function CheckinScreen({ T, W, setCH, onBack, onOpenCoach, onCoachMessages }) {
     let body;
     if (view === "new") {
         body = React.createElement("div", { style: { padding: "16px 20px 40px" } },
-            React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, fontFamily: font, lineHeight: 1.6, marginBottom: 14 } }, "Photos daalo (jitni chaho) — har coach apni photo last week se compare karega, numbers dekhega, aur poora review dega: kya sahi gaya, kya nahi, kyun, aur agle hafte kya karna hai. Photos sirf is phone pe save hoti hain."),
+            React.createElement("button", { onClick: () => setBackupOpen(true), style: { width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", marginBottom: 12, borderRadius: 12, border: "1px solid rgba(59,209,111,.3)", background: "rgba(59,209,111,.07)", color: T.ivory, cursor: "pointer", textAlign: "left", fontFamily: font } },
+                React.createElement("span", { style: { fontSize: 18 } }, "☁️"),
+                React.createElement("span", { style: { flex: 1, fontSize: 12.5, lineHeight: 1.4 } }, React.createElement("b", null, "Photos cloud mein safe"), " — encrypted backup, naye phone pe bhi wapas"),
+                React.createElement("span", { style: { color: T.green, fontSize: 12, fontWeight: 700 } }, "Manage")),
+            React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, fontFamily: font, lineHeight: 1.6, marginBottom: 14 } }, "Photos daalo (jitni chaho) — har coach apni photo last week se compare karega, numbers dekhega, aur poora review dega: kya sahi gaya, kya nahi, kyun, aur agle hafte kya karna hai. Photos encrypted backup ke saath safe rehti hain."),
             React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10, marginBottom: 14 } }, CHECKIN_SLOTS.map(s => {
                 const p = photos[s.id];
                 return React.createElement("div", { key: s.id, onClick: () => fileRefs.current[s.id] && fileRefs.current[s.id].click(), style: { position: "relative", background: T.card, border: "1px " + (p ? "solid " + T.gold : "dashed " + T.border2), borderRadius: 12, minHeight: 120, cursor: "pointer", overflow: "hidden", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: p ? 0 : 10, textAlign: "center" } },
@@ -3468,7 +3612,8 @@ function CheckinScreen({ T, W, setCH, onBack, onOpenCoach, onCoachMessages }) {
     return React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", height: "100vh", background: T.ink, display: "flex", flexDirection: "column", overflow: "hidden" } },
         header,
         React.createElement("div", { style: { flex: 1, overflowY: "auto", scrollbarWidth: "none" } }, body),
-        scanOpen && React.createElement(PhotoScanSheet, { T: T, slot: "face", onClose: () => setScanOpen(false) }));
+        scanOpen && React.createElement(PhotoScanSheet, { T: T, slot: "face", onClose: () => setScanOpen(false) }),
+        backupOpen && React.createElement(PhotoBackupSheet, { T: T, onClose: () => setBackupOpen(false) }));
 }
 function CheckinEntryCard({ T, onOpen }) {
     const font = "Inter,system-ui,sans-serif";
@@ -6943,6 +7088,8 @@ function JeetOS() {
         Promise.all([syncProfile(), syncSummaries()]).then(() => runMemoryPass(keptCH));
         syncAssessments();
         syncScans();
+        // Back up photos taken offline and bring back any this phone is missing.
+        setTimeout(() => { Promise.all([syncCheckins(), syncScans()]).then(() => syncPhotoVault()); }, 3000);
         syncCheckins();
         // Messages coaches texted first while the app was closed.
         fetchCoachInbox().then(rows => {
