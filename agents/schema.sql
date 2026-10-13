@@ -151,3 +151,18 @@ create table if not exists public.jeetos_coach_moments (
 );
 alter table public.jeetos_coach_moments enable row level security;
 create policy "allow all for anon" on public.jeetos_coach_moments for all to public using (true) with check (true);
+
+-- Weekly check-in reports (photos stay on the phone; only the written
+-- reviews, scores and stats are stored here).
+create table if not exists public.jeetos_checkins (
+  id text primary key,
+  created_on date not null default current_date,
+  note text,
+  slots text[] not null default '{}',
+  stats jsonb,
+  reviews jsonb,
+  summary jsonb,
+  created_at timestamptz not null default now()
+);
+alter table public.jeetos_checkins enable row level security;
+create policy "allow all for anon" on public.jeetos_checkins for all to public using (true) with check (true);

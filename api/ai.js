@@ -42,10 +42,10 @@ async function callClaude(system, messages, max) {
       max_tokens: Math.max(max || 1000, 2000),
       system,
       messages: messages.map(m => {
-        const img = parseImage(m.image);
-        if (!img) return { role: m.role, content: String(m.content) };
+        const imgs = (m.images || (m.image ? [m.image] : [])).map(parseImage).filter(Boolean);
+        if (!imgs.length) return { role: m.role, content: String(m.content) };
         return { role: m.role, content: [
-          { type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } },
+          ...imgs.map(img => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } })),
           { type: "text", text: String(m.content) },
         ] };
       }),
@@ -71,7 +71,7 @@ async function callGroq(system, messages, max) {
       model: "llama-3.3-70b-versatile",
       max_tokens: max || 800,
       temperature: 0.85,
-      messages: [{ role: "system", content: system }, ...messages.map(m => ({ role: m.role, content: String(m.content) + (m.image ? "\n" + NO_PHOTO_NOTE : "") }))],
+      messages: [{ role: "system", content: system }, ...messages.map(m => ({ role: m.role, content: String(m.content) + (m.image || m.images ? "\n" + NO_PHOTO_NOTE : "") }))],
     }),
   });
   const d = await r.json().catch(() => ({}));
@@ -89,7 +89,7 @@ async function callGemini(system, messages, max) {
     parts: [{ text: String(m.content) }],
   }));
   const last = messages[messages.length - 1];
-  const lastImg = parseImage(last.image);
+  const lastImgs = (last.images || (last.image ? [last.image] : [])).map(parseImage).filter(Boolean);
   const r = await fetch(
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + key,
     {
@@ -98,7 +98,7 @@ async function callGemini(system, messages, max) {
       body: JSON.stringify({
         system_instruction: { parts: [{ text: system }] },
         contents: [...history, { role: "user", parts: [
-          ...(lastImg ? [{ inline_data: { mime_type: lastImg.mediaType, data: lastImg.data } }] : []),
+          ...lastImgs.map(img => ({ inline_data: { mime_type: img.mediaType, data: img.data } })),
           { text: String(last.content) },
         ] }],
         generationConfig: { maxOutputTokens: max || 1000, temperature: 0.85 },
@@ -149,15 +149,23 @@ module.exports = async function handler(req, res) {
   }
   // Coaches can send several texts in a row (and text first), so the chat can
   // hold consecutive assistant messages — fold same-role runs into one turn.
-  // Only the newest user message may carry a photo (about 1MB max).
+  // Only the newest user message may carry photos: one in chat, up to 6 in
+  // the weekly check-in (before/after pairs), about 1MB each and 4MB total.
   const lastIdx = messages.length - 1;
+  const okImg = x => typeof x === "string" && x.length < 1500000 && parseImage(x);
   messages = messages.reduce((out, m, i) => {
-    const image = i === lastIdx && m.role === "user" && typeof m.image === "string" && m.image.length < 1500000 && parseImage(m.image) ? m.image : null;
+    let images = null;
+    if (i === lastIdx && m.role === "user") {
+      images = (Array.isArray(m.images) ? m.images : m.image ? [m.image] : []).filter(okImg).slice(0, 6);
+      let total = 0;
+      images = images.filter(x => (total += x.length) < 4000000);
+      if (!images.length) images = null;
+    }
     const last = out[out.length - 1];
     if (last && last.role === m.role) {
       last.content = String(last.content) + "\n\n" + String(m.content);
-      if (image) last.image = image;
-    } else out.push(Object.assign({ role: m.role, content: String(m.content) }, image ? { image } : {}));
+      if (images) last.images = images;
+    } else out.push(Object.assign({ role: m.role, content: String(m.content) }, images ? { images } : {}));
     return out;
   }, []);
   if (messages[0].role !== "user") messages.unshift({ role: "user", content: "(Jeet opened the chat)" });

@@ -165,7 +165,7 @@ module.exports = async function handler(req, res) {
       const results = [];
       for (const c of coaches) {
         results.push(await writeAndSend(c, "review",
-          `It's Sunday — you're sending Jeet your weekly review, like a coach who watched his whole week. Write exactly 2 short lines: what went well (specific), and the one thing to focus on next week. If you have a goal with him, say where he stands on it vs the start. End with something he'd want to reply to.\n\nHis week:\n${weekText}`, shared));
+          `It's Sunday — you're sending Jeet your weekly review, like a coach who watched his whole week. Write exactly 2 short lines: what went well (specific), and the one thing to focus on next week. If you have a goal with him, say where he stands on it vs the start. End by telling him to do his weekly photo check-in in the app (face, hair, body, outfit) so the whole team can review his week properly.\n\nHis week:\n${weekText}`, shared));
       }
       return res.status(200).json({ slot, results });
     }
