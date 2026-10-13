@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-48";
+const APP_BUILD = "2026.10.14-49";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1354,7 +1354,7 @@ function slimChatImages(ch, keep) {
     Object.keys(out).forEach(k => out[k].forEach((m, i) => { if (m && m.image) refs.push({ k: k, i: i, ts: m.ts || 0 }); }));
     refs.sort((a, b) => b.ts - a.ts).forEach(r => {
         if (left > 0) { left--; return; }
-        const m = Object.assign({}, out[r.k][r.i]); delete m.image; m.content = m.content === "📷" ? "📷 Photo" : m.content; out[r.k][r.i] = m;
+        const m = Object.assign({}, out[r.k][r.i]); delete m.image; if (!m.imageKey && m.content === "📷") m.content = "📷 Photo"; out[r.k][r.i] = m;
     });
     return out;
 }
@@ -1476,7 +1476,7 @@ async function syncSummaries() {
 function threadName(k) { return k === "team" ? "the Team Jeet group" : personaName(k); }
 function chatLine(k, m) {
     const who = m.role === "user" ? "Jeet" : personaName(m.coach || k);
-    return who + ": " + (m.image ? "[photo] " : "") + String(m.content || "").replace(/\s+/g, " ").slice(0, 400);
+    return who + ": " + ((m.image || m.imageKey) ? "[photo] " : "") + String(m.content || "").replace(/\s+/g, " ").slice(0, 400);
 }
 // Summarise turns that have scrolled out of the 20-message window (or all of them before a clear).
 async function summarizeOldTurns(k, list, force) {
@@ -2093,6 +2093,8 @@ function referencedPhotoKeys() {
     const keys = [];
     loadCheckins().forEach(c => (c.slots || []).forEach(s => keys.push(c.id + ":" + s)));
     Object.keys(loadScans()).forEach(s => slotScans(s).forEach(x => keys.push("scan:" + x.id)));
+    const ch = store.get("jos_ch") || {};
+    Object.keys(ch).forEach(k => (ch[k] || []).forEach(m => { if (m && m.imageKey) keys.push(m.imageKey); }));
     return keys;
 }
 // Upload anything not backed up yet; download anything this phone is missing.
@@ -2108,7 +2110,12 @@ async function syncPhotoVault(onProgress) {
         if (onProgress) onProgress(res);
     }
     const have = new Set(local);
-    const want = referencedPhotoKeys().filter(k => !have.has(k));
+    let cloudChat = [];
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_photo_vault?select=key&key=like.chat:*&limit=1000", { headers: SUPA_HEADERS() });
+        if (r.ok) cloudChat = (await r.json()).map(x => x.key);
+    } catch (_a) { }
+    const want = [...new Set(referencedPhotoKeys().concat(cloudChat))].filter(k => !have.has(k));
     for (let i = 0; i < want.length; i += 10) {
         const batch = want.slice(i, i + 10);
         try {
@@ -2142,7 +2149,14 @@ function PhotoBackupSheet({ T, onClose }) {
     const [local, setLocal] = React.useState(null);
     const [restore, setRestore] = React.useState("");
     const [copied, setCopied] = React.useState(false);
-    const refresh = async () => { setLocal((await allPhotoKeys()).length); setCloud(await vaultCount()); };
+    const [chatKeys, setChatKeys] = React.useState([]);
+    const [view, setView] = React.useState(null);
+    const refresh = async () => {
+        const keys = await allPhotoKeys();
+        setLocal(keys.length);
+        setChatKeys(keys.filter(k => String(k).startsWith("chat:")).sort((a, b) => chatPhotoInfo(b).ts - chatPhotoInfo(a).ts));
+        setCloud(await vaultCount());
+    };
     React.useEffect(() => { refresh(); }, []);
     const syncNow = async () => {
         setStatus("Sync ho raha hai…");
@@ -2169,12 +2183,17 @@ function PhotoBackupSheet({ T, onClose }) {
     const box = { padding: 12, borderRadius: 14, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", marginBottom: 12 };
     return React.createElement(ChatSheet, { T: T, title: "☁️ Photo backup", onClose: onClose },
         React.createElement("div", { style: { fontFamily: font } },
-            React.createElement("div", { style: { fontSize: 13, color: T.ivoryM, lineHeight: 1.55, marginBottom: 12 } }, "Check-in aur scan ki saari photos phone pe hi encrypt hoke cloud mein save hoti hain — phone badlo ya data clear ho, photos wapas aa jayengi. Bina tumhare backup code ke koi unhe nahi dekh sakta."),
+            React.createElement("div", { style: { fontSize: 13, color: T.ivoryM, lineHeight: 1.55, marginBottom: 12 } }, "Check-in, scan aur chat ki saari photos phone pe hi encrypt hoke cloud mein save hoti hain — phone badlo ya data clear ho, photos wapas aa jayengi. Bina tumhare backup code ke koi unhe nahi dekh sakta."),
             React.createElement("div", { style: Object.assign({}, box, { display: "flex", gap: 12 }) },
                 React.createElement("div", { style: { flex: 1, textAlign: "center" } }, React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: T.ivory } }, local == null ? "…" : local), React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD } }, "is phone pe")),
                 React.createElement("div", { style: { flex: 1, textAlign: "center" } }, React.createElement("div", { style: { fontSize: 24, fontWeight: 800, color: T.green } }, cloud == null ? "…" : cloud), React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD } }, "cloud backup"))),
             React.createElement("button", { onClick: syncNow, style: { width: "100%", padding: 12, borderRadius: 12, border: "none", background: T.gold, color: "#16120A", fontWeight: 700, fontSize: 13.5, cursor: "pointer", marginBottom: 6 } }, "🔄 Abhi backup / sync karo"),
             status && React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, textAlign: "center", marginBottom: 12 } }, status),
+            chatKeys.length > 0 && React.createElement("div", { style: box },
+                React.createElement("div", { style: { fontSize: 12.5, fontWeight: 700, color: T.ivory, marginBottom: 8 } }, "💬 Chat photos (" + chatKeys.length + ")"),
+                React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 } },
+                    chatKeys.slice(0, 60).map(k => React.createElement(ChatGalleryThumb, { key: k, photoKey: k, T: T, onOpen: (src) => setView({ src: src, info: chatPhotoInfo(k) }) })))),
+            view && React.createElement(PhotoViewer, { src: view.src, caption: view.info.who + " · " + view.info.when, onClose: () => setView(null) }),
             React.createElement("div", { style: box },
                 React.createElement("div", { style: { fontSize: 12.5, fontWeight: 700, color: T.gold, marginBottom: 4 } }, "🔑 Tumhara backup code"),
                 React.createElement("div", { style: { fontSize: 12, color: T.ivoryD, lineHeight: 1.5, marginBottom: 8 } }, "Naye phone pe photos wapas laane ke liye ye code chahiye. Kahin safe save karo (Notes / password manager). Kisi ko mat dena."),
@@ -2186,6 +2205,42 @@ function PhotoBackupSheet({ T, onClose }) {
                 React.createElement("div", { style: { fontSize: 12.5, fontWeight: 700, color: T.ivory, marginBottom: 6 } }, "📲 Naya phone? Code daal ke photos wapas lao"),
                 React.createElement("input", { value: restore, onChange: e => setRestore(e.target.value), placeholder: "Backup code paste karo", autoComplete: "off", style: { width: "100%", boxSizing: "border-box", background: T.card2, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 10, padding: "10px", fontSize: 13, fontFamily: "ui-monospace,Menlo,monospace", outline: "none" } }),
                 React.createElement("button", { onClick: useCode, style: { width: "100%", marginTop: 8, padding: 10, borderRadius: 10, border: "1px solid " + T.gold, background: "transparent", color: T.gold, fontWeight: 700, fontSize: 13, cursor: "pointer" } }, "Photos wapas lao"))));
+}
+// Chat photo bubble: small thumb inline, full photo from IndexedDB (or the
+// cloud vault) when the thumb was dropped to save space. Tap to view big.
+function ChatPhoto({ src, photoKey }) {
+    const [img, setImg] = React.useState(src || null);
+    const [big, setBig] = React.useState(false);
+    React.useEffect(() => {
+        let live = true;
+        if (!src && photoKey) getPhoto(photoKey).then(p => { if (live && p) setImg(p); });
+        return () => { live = false; };
+    }, [src, photoKey]);
+    const open = async () => { if (photoKey) { const p = await getPhoto(photoKey); if (p) setImg(p); } setBig(true); };
+    const style = { display: "block", width: "100%", maxWidth: 240, minWidth: 160, borderRadius: 12, margin: "-2px -4px 6px", cursor: "zoom-in" };
+    return React.createElement(React.Fragment, null,
+        img ? React.createElement("img", { src: img, alt: "Photo", onClick: open, style: style })
+            : React.createElement("div", { style: Object.assign({}, style, { height: 120, background: "rgba(255,255,255,.06)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, opacity: .6 }) }, "📷 Photo"),
+        big && img && React.createElement(PhotoViewer, { src: img, onClose: () => setBig(false) }));
+}
+function PhotoViewer({ src, caption, onClose }) {
+    return ReactDOM.createPortal(React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,.92)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 16 } },
+        React.createElement("img", { src: src, alt: "Photo", style: { maxWidth: "100%", maxHeight: "85vh", borderRadius: 12 } }),
+        caption && React.createElement("div", { style: { color: "#ddd", fontSize: 13, marginTop: 10, fontFamily: "Inter,system-ui,sans-serif" } }, caption)), document.body);
+}
+function chatPhotoInfo(key) {
+    const parts = String(key).split(":");
+    const ts = +parts[2] || 0;
+    const who = parts[1] === GROUP_ID ? "Team Jeet" : personaName(parts[1]);
+    return { who: who, ts: ts, when: ts ? new Date(ts).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "" };
+}
+function ChatGalleryThumb({ photoKey, T, onOpen }) {
+    const [src, setSrc] = React.useState(null);
+    React.useEffect(() => { let live = true; getPhoto(photoKey).then(p => { if (live) setSrc(p); }); return () => { live = false; }; }, [photoKey]);
+    const info = chatPhotoInfo(photoKey);
+    return React.createElement("div", { onClick: () => src && onOpen(src), style: { position: "relative", aspectRatio: "1", borderRadius: 10, overflow: "hidden", background: "rgba(255,255,255,.06)", cursor: "pointer" } },
+        src && React.createElement("img", { src: src, alt: "", style: { width: "100%", height: "100%", objectFit: "cover", display: "block" } }),
+        React.createElement("div", { style: { position: "absolute", left: 0, right: 0, bottom: 0, padding: "10px 5px 3px", background: "linear-gradient(transparent, rgba(0,0,0,.75))", fontSize: 10, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, info.who + " · " + info.when));
 }
 function typingDelay(text) { return Math.min(2400, 500 + String(text).length * 18); }
 function msgTime(m) {
@@ -3676,7 +3731,7 @@ Reply with ONLY JSON: {"replies":[{"coach":"coach id","text":"message"}]}`;
 // Sends Jeet's message to the group; returns the coaches' replies [{coach, text}].
 async function groupTurn(hist, L, W, viewDay, voice, image) {
     const msgs = hist.slice(-24).map(m => m.role === "user"
-        ? { role: "user", content: (m.image ? "[sent a photo] " : "") + (m.content === "📷" ? "" : m.content) }
+        ? { role: "user", content: ((m.image || m.imageKey) ? "[sent a photo] " : "") + (m.content === "📷" ? "" : m.content) }
         : { role: "assistant", content: personaName(m.coach) + ": " + m.content });
     if (image && msgs.length) msgs[msgs.length - 1] = Object.assign({}, msgs[msgs.length - 1], { image: image });
     const raw = await ai(buildGroupSystem(L, W, viewDay, voice), msgs, 1500, { tier: "smart" });
@@ -3720,7 +3775,7 @@ function GroupScreen({ T, CH, setCH, L, W, viewDay, onBack, onOpenCoach }) {
         if ((!String(text).trim() && !pic) || busy) return [];
         unlockCoachAudio();
         const um = { role: "user", content: String(text).trim() || "📷", ts: Date.now() };
-        if (pic) um.image = pic.thumb;
+        if (pic) { um.image = pic.thumb; um.imageKey = "chat:" + GROUP_ID + ":" + um.ts; putPhoto(um.imageKey, pic.full); }
         let list = histRef.current.concat([um]);
         save(list); setInp(""); setPhoto(null); setBusy(true);
         let replies = [];
@@ -3771,8 +3826,8 @@ function GroupScreen({ T, CH, setCH, L, W, viewDay, onBack, onOpenCoach }) {
                     const meta = React.createElement(React.Fragment, null, !mine && React.createElement(ChatSpeak, { coachId: m.coach, text: m.content, color: col }), chatTime(m.ts), mine && React.createElement("span", { style: { color: i < hist.length - 1 ? "#2F6FD6" : "rgba(22,18,10,.5)", letterSpacing: -3, marginRight: 3 } }, "✓✓"));
                     const bubble = React.createElement(ChatBubble, { T: T, mine: mine, first: run.first, last: run.last, meta: meta, maxWidth: mine ? "80%" : "100%" },
                         !mine && run.first && React.createElement("div", { onClick: () => onOpenCoach && onOpenCoach(m.coach), style: { fontSize: 12.5, fontWeight: 600, color: col, marginBottom: 2, cursor: "pointer" } }, personaName(m.coach)),
-                        m.image && React.createElement("img", { src: m.image, alt: "Photo", style: { display: "block", width: "100%", maxWidth: 240, minWidth: 160, borderRadius: 12, margin: "-2px -4px 6px" } }),
-                        m.image && m.content === "📷" ? null : m.content);
+                        (m.image || m.imageKey) && React.createElement(ChatPhoto, { src: m.image, photoKey: m.imageKey }),
+                        (m.image || m.imageKey) && m.content === "📷" ? null : m.content);
                     if (mine) return React.createElement(React.Fragment, { key: i }, sep, bubble);
                     return React.createElement(React.Fragment, { key: i }, sep,
                         React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 6, maxWidth: "86%", marginTop: run.first ? 6 : 0 } },
@@ -3887,7 +3942,7 @@ function CoachChatList({ T, CH, unread, onOpen }) {
         React.createElement("div", { style: { padding: "12px 16px 6px", fontSize: 12, fontWeight: 700, color: T.gold, letterSpacing: ".08em", textTransform: "uppercase", fontFamily: font } }, "Chats"),
         rows.map((r, i) => {
             const m = r.last;
-            const preview = !m ? "Say hi to " + personaName(r.c.id).split(" ").pop() + " 👋" : (m.role === "user" ? "You: " : "") + (m.image && m.content === "📷" ? "📷 Photo" : String(m.content).replace(/\s+/g, " "));
+            const preview = !m ? "Say hi to " + personaName(r.c.id).split(" ").pop() + " 👋" : (m.role === "user" ? "You: " : "") + ((m.image || m.imageKey) && m.content === "📷" ? "📷 Photo" : String(m.content).replace(/\s+/g, " "));
             return React.createElement("button", { key: r.c.id, onClick: () => onOpen(r.c.id), style: { display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 16px", border: "none", background: "transparent", cursor: "pointer", textAlign: "left" } },
                 React.createElement("div", { style: { position: "relative", flexShrink: 0 } }, React.createElement(CoachAvatar, { coachId: r.c.id, color: r.c.color, size: 50 })),
                 React.createElement("div", { style: { flex: 1, minWidth: 0, borderBottom: i < rows.length - 1 ? "1px solid rgba(255,255,255,.06)" : "none", padding: "4px 0 12px" } },
@@ -6442,7 +6497,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         if ((!msg.trim() && !pic) || thinking)
             return;
         const userMsg = { role: "user", content: msg.trim() || "📷", ts: Date.now() };
-        if (pic) userMsg.image = pic.thumb;
+        if (pic) { userMsg.image = pic.thumb; userMsg.imageKey = "chat:" + id + ":" + userMsg.ts; putPhoto(userMsg.imageKey, pic.full); }
         setPhoto(null);
         unlockCoachAudio();
         bumpBond(id);
@@ -6462,7 +6517,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const fullSys = buildCoachSystem(coach, CH, ctx) + (voice ? VOICE_CALL_NOTE : "");
         try {
             // Only the photo just sent travels to the model; older ones become a note.
-            const aiMsgs = newHistUser.filter(m => !m.error).slice(-20).map(m => m.image ? { role: m.role, content: m.content === "📷" ? "[sent a photo]" : "[sent a photo] " + m.content } : m);
+            const aiMsgs = newHistUser.filter(m => !m.error).slice(-20).map(m => (m.image || m.imageKey) ? { role: m.role, content: m.content === "📷" ? "[sent a photo]" : "[sent a photo] " + m.content } : m);
             if (pic) aiMsgs[aiMsgs.length - 1] = { role: "user", content: msg.trim() || "(sent a photo)", image: pic.full };
             const raw = await ai(fullSys, aiMsgs, 1500, { tier: "smart" });
             const reply = processCoachReply(raw, id);
@@ -6544,8 +6599,8 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
                     return React.createElement(React.Fragment, { key: i }, sep,
                         React.createElement(ChatBubble, { T: T, mine: mine, first: run.first, last: run.last, meta: meta },
                             !mine && msgTag(m, T),
-                            m.image && React.createElement("img", { src: m.image, alt: "Photo", style: { display: "block", width: "100%", maxWidth: 240, borderRadius: 12, margin: "-2px -4px 6px", minWidth: 160 } }),
-                            m.image && m.content === "📷" ? null : m.content),
+                            (m.image || m.imageKey) && React.createElement(ChatPhoto, { src: m.image, photoKey: m.imageKey }),
+                            (m.image || m.imageKey) && m.content === "📷" ? null : m.content),
                         m.handoff && id !== "mind" && onTalkToMeher && React.createElement("button", { onClick: () => onTalkToMeher(m.handoff), style: { alignSelf: "flex-start", margin: "6px 0 4px", padding: "9px 16px", borderRadius: 20, border: "1px solid rgba(142,124,195,.5)", background: "rgba(142,124,195,.14)", color: "#D4C6F5", fontSize: 13, fontFamily: CHAT_FONT, fontWeight: 500, cursor: "pointer" } }, "💜 Talk to Dr. Meher"));
                 }),
                 thinking && React.createElement(TypingBubble, { T: T, color: coach.color })),
