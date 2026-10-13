@@ -198,3 +198,14 @@ create table if not exists public.jeetos_assessments (
 );
 alter table public.jeetos_assessments enable row level security;
 create policy "allow all for anon" on public.jeetos_assessments for all to public using (true) with check (true);
+
+-- Encrypted photo backups (AES-GCM on the phone; the key is the user's backup
+-- code and never reaches the server).
+create table if not exists public.jeetos_photo_vault (
+  key text primary key,
+  iv text not null,
+  data text not null,
+  created_at timestamptz not null default now()
+);
+alter table public.jeetos_photo_vault enable row level security;
+create policy "allow all for anon" on public.jeetos_photo_vault for all to public using (true) with check (true);
