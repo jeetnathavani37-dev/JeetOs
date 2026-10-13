@@ -33,6 +33,10 @@
     {
       "path": "/api/coach-nudge?slot=night",
       "schedule": "0 17 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=review",
+      "schedule": "15 6 * * 0"
     }
   ]
 }

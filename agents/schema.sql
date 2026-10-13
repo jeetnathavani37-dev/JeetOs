@@ -120,3 +120,34 @@ create table if not exists public.jeetos_coach_inbox (
 );
 alter table public.jeetos_coach_inbox enable row level security;
 create policy "allow all for anon" on public.jeetos_coach_inbox for all to public using (true) with check (true);
+
+-- One measurable goal per coach ("bench 80kg by Dec"), with a progress log
+-- the coaches use for throwbacks and the Sunday review.
+create table if not exists public.jeetos_coach_goals (
+  id text primary key,
+  coach text not null,
+  text text not null,
+  unit text,
+  start_value numeric,
+  target numeric,
+  current_value numeric,
+  deadline date,
+  status text not null default 'active' check (status in ('active','achieved','dropped')),
+  history jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.jeetos_coach_goals enable row level security;
+create policy "allow all for anon" on public.jeetos_coach_goals for all to public using (true) with check (true);
+
+-- Shared history with each coach: nicknames, inside jokes, wins.
+create table if not exists public.jeetos_coach_moments (
+  id text primary key,
+  coach text not null,
+  kind text not null default 'moment' check (kind in ('moment','nickname','joke','win')),
+  text text not null,
+  created_on date not null default current_date,
+  created_at timestamptz not null default now()
+);
+alter table public.jeetos_coach_moments enable row level security;
+create policy "allow all for anon" on public.jeetos_coach_moments for all to public using (true) with check (true);

@@ -14,6 +14,13 @@
 
 const PROVIDER_ORDER = ["claude", "groq", "gemini"];
 
+// A message can carry one photo as a data URL (the app downsizes it first).
+function parseImage(image) {
+  const m = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/.exec(String(image || ""));
+  return m ? { mediaType: m[1], data: m[2] } : null;
+}
+const NO_PHOTO_NOTE = "(He attached a photo, but you can't see it right now — ask him to describe it.)";
+
 async function callClaude(system, messages, max) {
   const key = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY || "").trim();
   if (!key) throw new Error("ANTHROPIC_API_KEY (or CLAUDE_KEY) not configured");
@@ -34,7 +41,14 @@ async function callClaude(system, messages, max) {
       // Headroom for adaptive thinking on top of the reply itself.
       max_tokens: Math.max(max || 1000, 2000),
       system,
-      messages: messages.map(m => ({ role: m.role, content: String(m.content) })),
+      messages: messages.map(m => {
+        const img = parseImage(m.image);
+        if (!img) return { role: m.role, content: String(m.content) };
+        return { role: m.role, content: [
+          { type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } },
+          { type: "text", text: String(m.content) },
+        ] };
+      }),
     }),
   });
   const d = await r.json().catch(() => ({}));
@@ -57,7 +71,7 @@ async function callGroq(system, messages, max) {
       model: "llama-3.3-70b-versatile",
       max_tokens: max || 800,
       temperature: 0.85,
-      messages: [{ role: "system", content: system }, ...messages.map(m => ({ role: m.role, content: String(m.content) }))],
+      messages: [{ role: "system", content: system }, ...messages.map(m => ({ role: m.role, content: String(m.content) + (m.image ? "\n" + NO_PHOTO_NOTE : "") }))],
     }),
   });
   const d = await r.json().catch(() => ({}));
@@ -75,6 +89,7 @@ async function callGemini(system, messages, max) {
     parts: [{ text: String(m.content) }],
   }));
   const last = messages[messages.length - 1];
+  const lastImg = parseImage(last.image);
   const r = await fetch(
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + key,
     {
@@ -82,7 +97,10 @@ async function callGemini(system, messages, max) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         system_instruction: { parts: [{ text: system }] },
-        contents: [...history, { role: "user", parts: [{ text: String(last.content) }] }],
+        contents: [...history, { role: "user", parts: [
+          ...(lastImg ? [{ inline_data: { mime_type: lastImg.mediaType, data: lastImg.data } }] : []),
+          { text: String(last.content) },
+        ] }],
         generationConfig: { maxOutputTokens: max || 1000, temperature: 0.85 },
       }),
     }
@@ -131,10 +149,15 @@ module.exports = async function handler(req, res) {
   }
   // Coaches can send several texts in a row (and text first), so the chat can
   // hold consecutive assistant messages — fold same-role runs into one turn.
-  messages = messages.reduce((out, m) => {
+  // Only the newest user message may carry a photo (about 1MB max).
+  const lastIdx = messages.length - 1;
+  messages = messages.reduce((out, m, i) => {
+    const image = i === lastIdx && m.role === "user" && typeof m.image === "string" && m.image.length < 1500000 && parseImage(m.image) ? m.image : null;
     const last = out[out.length - 1];
-    if (last && last.role === m.role) last.content = String(last.content) + "\n\n" + String(m.content);
-    else out.push({ role: m.role, content: String(m.content) });
+    if (last && last.role === m.role) {
+      last.content = String(last.content) + "\n\n" + String(m.content);
+      if (image) last.image = image;
+    } else out.push(Object.assign({ role: m.role, content: String(m.content) }, image ? { image } : {}));
     return out;
   }, []);
   if (messages[0].role !== "user") messages.unshift({ role: "user", content: "(Jeet opened the chat)" });

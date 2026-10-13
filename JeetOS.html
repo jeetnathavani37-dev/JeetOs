@@ -822,7 +822,7 @@ async function callBackendAI(sys, msgs, max, provider) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             system: sys,
-            messages: msgs.map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : String(m.content) })),
+            messages: msgs.map(m => Object.assign({ role: m.role, content: typeof m.content === "string" ? m.content : String(m.content) }, m.image ? { image: m.image } : {})),
             max,
             provider,
         })
@@ -1009,6 +1009,9 @@ function buildCoachSystem(coach, CH, ctx) {
     if (h) parts.push("REFERRAL: " + coachLabel(h.from) + " just suggested Jeet talk to you. What they noticed: " + h.reason + "\nAcknowledge it gently and naturally in your first reply, then start understanding what's going on.");
     parts.push(teamMemoryPrompt(CH, coach.id));
     parts.push(commitmentsPrompt(coach.id));
+    parts.push(goalsPrompt(coach.id));
+    parts.push(bondPrompt(coach.id, CH[coach.id]));
+    parts.push(photoPrompt(coach.id));
     parts.push(ctx);
     return parts.join("\n\n");
 }
@@ -1086,10 +1089,246 @@ function processCoachReply(raw, coachId) {
     const mem = extractTeamMemory(raw);
     addTeamMemoryFacts(mem.facts, coachId);
     const ho = extractHandoff(mem.clean || raw);
-    const clean = applyCommitTags(ho.clean || mem.clean || raw, coachId) || String(raw).replace(/<[^>]+>/g, "").trim();
+    const gl = applyGoalTags(applyCommitTags(ho.clean || mem.clean || raw, coachId), coachId);
+    const clean = applyMomentTags(gl.clean, coachId) || String(raw).replace(/<[^>]+>/g, "").trim();
     let parts = clean.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
     if (parts.length > 3) parts = parts.slice(0, 2).concat([parts.slice(2).join("\n\n")]);
-    return { parts: parts.length ? parts : [clean], handoff: ho.handoff };
+    return { parts: parts.length ? parts : [clean], handoff: ho.handoff, milestone: gl.milestone };
+}
+// ── COACH GOALS: one measurable goal per coach, tracked over time ──────
+// A coach sets it with <goal start="60" target="80" unit="kg" by="YYYY-MM-DD">text</goal>,
+// logs numbers with <progress id="...">70</progress> and closes it with
+// <goalstatus id="...">achieved|dropped</goalstatus>. Synced to jeetos_coach_goals.
+const GOALS_KEY = "jos_coach_goals";
+const GOAL_MILESTONES = [25, 50, 75, 100];
+function loadGoals() { const l = store.get(GOALS_KEY); return Array.isArray(l) ? l : []; }
+function saveGoals(l) { store.set(GOALS_KEY, l.slice(-40)); }
+function goalPct(g) {
+    const s = Number(g.start_value), t = Number(g.target), c = Number(g.current_value);
+    if (!isFinite(s) || !isFinite(t) || !isFinite(c) || s === t) return null;
+    return Math.max(0, Math.min(100, Math.round(((c - s) / (t - s)) * 100)));
+}
+function agoText(iso) {
+    const days = Math.round((new Date(localIsoDate()) - new Date(iso)) / 86400000);
+    if (!isFinite(days) || days <= 0) return "today";
+    if (days === 1) return "yesterday";
+    if (days < 14) return days + " days ago";
+    if (days < 60) return Math.round(days / 7) + " weeks ago";
+    return Math.round(days / 30) + " months ago";
+}
+async function pushGoal(g) {
+    if (!supabaseReady()) return;
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_coach_goals?on_conflict=id", {
+            method: "POST",
+            headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }),
+            body: JSON.stringify({ id: g.id, coach: g.coach, text: g.text, unit: g.unit || null, start_value: g.start_value, target: g.target,
+                current_value: g.current_value, deadline: g.deadline || null, status: g.status, history: g.history || [], updated_at: new Date().toISOString() }),
+        });
+        if (r.ok) { const l = loadGoals(); const f = l.find(x => x.id === g.id); if (f) { f.synced = true; saveGoals(l); } }
+    } catch (_a) { }
+}
+async function syncGoals() {
+    if (!supabaseReady()) return loadGoals();
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_coach_goals?select=id,coach,text,unit,start_value,target,current_value,deadline,status,history,created_at&order=created_at.asc&limit=40", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        if (!r.ok || !Array.isArray(rows)) return loadGoals();
+        const pending = loadGoals().filter(x => !x.synced);
+        const pendingIds = new Set(pending.map(x => x.id));
+        const merged = rows.filter(x => !pendingIds.has(x.id)).map(x => Object.assign({}, x, { created: String(x.created_at || "").slice(0, 10), synced: true }));
+        saveGoals(merged.concat(pending));
+        pending.forEach(pushGoal);
+        return loadGoals();
+    } catch (_a) { return loadGoals(); }
+}
+// Returns the cleaned text plus any milestone a progress update just crossed.
+function applyGoalTags(text, coachId) {
+    const list = loadGoals();
+    const changed = [];
+    let milestone = null;
+    const num = v => { const n = parseFloat(String(v || "").replace(/[^\d.\-]/g, "")); return isFinite(n) ? n : null; };
+    let clean = String(text).replace(/<goal\b([^>]*)>([\s\S]*?)<\/goal>/gi, (_, attrs, body) => {
+        const a = {}; String(attrs).replace(/(\w+)="([^"]*)"/g, (__, k, v) => { a[k.toLowerCase()] = v; });
+        const t = body.trim().slice(0, 160);
+        const active = list.filter(g => g.coach === coachId && g.status === "active");
+        if (t && active.length < 2 && !active.some(g => g.text.toLowerCase() === t.toLowerCase())) {
+            const start = num(a.start);
+            const g = { id: "g" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), coach: coachId, text: t, unit: (a.unit || "").slice(0, 20),
+                start_value: start, target: num(a.target), current_value: start, deadline: /^\d{4}-\d{2}-\d{2}$/.test(a.by || "") ? a.by : null,
+                status: "active", history: start != null ? [{ d: localIsoDate(), v: start }] : [], created: localIsoDate(), synced: false };
+            list.push(g); changed.push(g);
+        }
+        return "";
+    });
+    clean = clean.replace(/<progress\s+id="([^"]+)"\s*>([\s\S]*?)<\/progress>/gi, (_, id, v) => {
+        const g = list.find(x => x.id === id);
+        const n = num(v);
+        if (g && g.status === "active" && n != null) {
+            const before = goalPct(g);
+            g.current_value = n;
+            g.history = (g.history || []).filter(h => h.d !== localIsoDate()).concat([{ d: localIsoDate(), v: n }]).slice(-30);
+            const after = goalPct(g);
+            if (before != null && after != null) {
+                const crossed = GOAL_MILESTONES.filter(m => before < m && after >= m).pop();
+                if (crossed) milestone = { goal: g.text, pct: crossed };
+            }
+            if (after === 100) g.status = "achieved";
+            g.synced = false; changed.push(g);
+        }
+        return "";
+    });
+    clean = clean.replace(/<goalstatus\s+id="([^"]+)"\s*>\s*(achieved|dropped)\s*<\/goalstatus>/gi, (_, id, st) => {
+        const g = list.find(x => x.id === id);
+        if (g && g.status === "active") { g.status = st.toLowerCase(); g.synced = false; changed.push(g); if (g.status === "achieved") milestone = { goal: g.text, pct: 100 }; }
+        return "";
+    }).replace(/<\/?(goal|progress|goalstatus)\b[^>]*>/gi, "").trim();
+    if (changed.length) { saveGoals(list); changed.forEach(pushGoal); }
+    return { clean: clean, milestone: milestone };
+}
+function goalLine(g) {
+    const pct = goalPct(g);
+    const u = g.unit ? " " + g.unit : "";
+    const hist = (g.history || []).slice(-4).map(h => h.v + u + " (" + agoText(h.d) + ")").join(" → ");
+    return "\"" + g.text + "\"" + (g.target != null ? ": started at " + g.start_value + u + ", now " + g.current_value + u + ", target " + g.target + u + (pct != null ? " — " + pct + "% there" : "") : "")
+        + (g.deadline ? ", by " + g.deadline : "") + (g.created ? ", set " + agoText(g.created) : "") + (hist ? ". Log: " + hist : "");
+}
+function goalsPrompt(coachId) {
+    const goals = loadGoals();
+    const mine = goals.filter(g => g.coach === coachId && g.status === "active");
+    const wins = goals.filter(g => g.coach === coachId && g.status === "achieved").slice(-3);
+    const others = goals.filter(g => g.coach !== coachId && g.status === "active").slice(0, 6);
+    return `GOALS (you and Jeet chase these together):
+Your active goal${mine.length === 1 ? "" : "s"} with him: ${mine.length ? mine.map(g => "\n- [id " + g.id + "] " + goalLine(g)).join("") : "none yet."}
+${wins.length ? "Goals he already hit with you: " + wins.map(g => "\"" + g.text + "\"").join(", ") + "\n" : ""}${others.length ? "Teammates' goals with him: " + others.map(g => coachLabel(g.coach) + " — " + g.text).join("; ") + "\n" : ""}- If you have no active goal, at a natural moment (not while he's asking about something urgent) suggest ONE concrete, measurable goal in your area with a number and a deadline — e.g. "bench 80kg by Dec", "130g protein 6 days a week". Once he agrees, save it at the very end of your reply: <goal start="current number" target="target number" unit="kg" by="YYYY-MM-DD">short goal</goal>.
+- When he tells you a new number for a goal (a lift, weight, protein, hours…), log it: <progress id="ID">number</progress>. If it crosses 25/50/75/100%, celebrate it for real, in your own style.
+- If he hits it, <goalstatus id="ID">achieved</goalstatus> and suggest the next level. If he wants to drop it, <goalstatus id="ID">dropped</goalstatus>.
+- Use the log for perspective now and then: "3 hafte pehle 60 pe atka tha, aaj 70 — dekha?" Never mention the tags.`;
+}
+
+// ── BOND: shared history, nicknames and inside jokes per coach ─────────
+const MOMENTS_KEY = "jos_coach_moments";
+const BOND_KEY = "jos_bond";
+function loadMoments() { const l = store.get(MOMENTS_KEY); return Array.isArray(l) ? l : []; }
+function saveMoments(l) { store.set(MOMENTS_KEY, l.slice(-120)); }
+async function pushMoment(m) {
+    if (!supabaseReady()) return;
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_coach_moments?on_conflict=id", {
+            method: "POST",
+            headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=ignore-duplicates" }),
+            body: JSON.stringify({ id: m.id, coach: m.coach, kind: m.kind, text: m.text, created_on: m.date }),
+        });
+        if (r.ok) { const l = loadMoments(); const f = l.find(x => x.id === m.id); if (f) { f.synced = true; saveMoments(l); } }
+    } catch (_a) { }
+}
+async function syncMoments() {
+    if (!supabaseReady()) return loadMoments();
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_coach_moments?select=id,coach,kind,text,created_on&order=created_at.asc&limit=120", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        if (!r.ok || !Array.isArray(rows)) return loadMoments();
+        const merged = rows.map(x => ({ id: x.id, coach: x.coach, kind: x.kind, text: x.text, date: x.created_on, synced: true }));
+        const have = new Set(merged.map(x => x.id));
+        const pending = loadMoments().filter(x => !x.synced && !have.has(x.id));
+        saveMoments(merged.concat(pending));
+        pending.forEach(pushMoment);
+        return loadMoments();
+    } catch (_a) { return loadMoments(); }
+}
+function applyMomentTags(text, coachId) {
+    const list = loadMoments();
+    const added = [];
+    const clean = String(text).replace(/<moment(?:\s+kind="([^"]*)")?\s*>([\s\S]*?)<\/moment>/gi, (_, kind, body) => {
+        const t = body.trim().slice(0, 200);
+        const k = ["nickname", "joke", "win", "moment"].includes((kind || "").toLowerCase()) ? kind.toLowerCase() : "moment";
+        if (t && added.length < 2 && !list.some(m => m.coach === coachId && m.text.toLowerCase() === t.toLowerCase())) {
+            const m = { id: "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), coach: coachId, kind: k, text: t, date: localIsoDate(), synced: false };
+            list.push(m); added.push(m);
+        }
+        return "";
+    }).replace(/<\/?moment\b[^>]*>/gi, "").trim();
+    if (added.length) { saveMoments(list); added.forEach(pushMoment); }
+    return clean;
+}
+// How long Jeet has been talking to each coach — survives "Clear chat".
+function bumpBond(coachId) {
+    const b = store.get(BOND_KEY) || {};
+    const today = localIsoDate();
+    const cur = b[coachId] || { msgs: 0, days: 0, first: today, last: null };
+    cur.msgs += 1;
+    if (cur.last !== today) { cur.days += 1; cur.last = today; }
+    b[coachId] = cur;
+    store.set(BOND_KEY, b);
+    return cur;
+}
+function bondInfo(coachId, hist) {
+    const b = (store.get(BOND_KEY) || {})[coachId];
+    const fromHist = (hist || []).filter(m => m.role === "user").length;
+    const msgs = Math.max(b ? b.msgs : 0, fromHist);
+    return { msgs: msgs, days: b ? b.days : (fromHist ? 1 : 0), first: b ? b.first : null, level: getCoachLevel(msgs).current.name };
+}
+const BOND_TONE = {
+    "New": "You're still getting to know him: friendly, warm, a little curious about him as a person — ask one small personal thing now and then.",
+    "Familiar": "You know him a bit now: casual and relaxed, light teasing is fine.",
+    "Trusted": "You're friends now: tease him, be straight with him. If you haven't yet, give him a nickname that fits your personality and use it sometimes.",
+    "Expert Bond": "You're close: talk like an old friend — inside jokes, callbacks to things that happened between you, brutal honesty with love.",
+    "Inner Circle": "You're one of his closest people: completely natural, inside jokes, callbacks, you know exactly when to push and when to just be there.",
+};
+function bondPrompt(coachId, hist) {
+    const info = bondInfo(coachId, hist);
+    const moments = loadMoments().filter(m => m.coach === coachId).slice(-12);
+    const nick = [...moments].reverse().find(m => m.kind === "nickname");
+    return `YOUR HISTORY WITH JEET:
+- You've been talking for ${info.days} day${info.days === 1 ? "" : "s"}${info.first ? " since " + info.first : ""} (${info.msgs} messages from him). Relationship: ${info.level}. ${BOND_TONE[info.level] || BOND_TONE.New}
+${nick ? "- Your nickname for him: \"" + nick.text + "\" — use it sometimes, not every message.\n" : ""}${moments.length ? "- Things that happened between you two:\n" + moments.map(m => "  • (" + m.kind + ", " + agoText(m.date) + ") " + m.text).join("\n") + "\n" : ""}- Once in a while (not every chat), bring one of these back naturally — a callback, an old joke, how far he's come.
+- When something worth remembering happens between you — a funny line, a win, a struggle he pushed through, a nickname you give him — save it at the very end: <moment kind="win|joke|nickname|moment">short note, third person</moment>. Rarely, max 1 per reply. Never save crisis details or deeply private feelings. Never mention the tag.`;
+}
+
+// ── PHOTOS: Jeet sends a picture, the coach reacts to it ───────────────
+const COACH_PHOTO_RULES = {
+    nutrition: "Estimate the meal's protein (g) and calories honestly as a range, say what's good and one easy upgrade.",
+    style: "Rate the outfit out of 10 in your sassy style, say what works and the one change that would lift it.",
+    skin: "Comment on what you can see (texture, redness, breakouts, glow) and compare with what he's told you before. Not a diagnosis — suggest a dermatologist for anything worrying.",
+    fitness: "Check form, physique or the gym setup in the photo; hype what's good and give one precise correction.",
+    hair: "Look at the hairline, density, style or the product; say what you see and one tip.",
+    grooming: "Judge the beard line, haircut, nails or product in a few blunt words and one fix.",
+    sleep: "React to his sleep setup or tracker screenshot — light, screens, temperature — and one fix.",
+    ronaldo: "React like a competitor: what this photo says about his discipline today.",
+    mind: "Respond to what the photo means to him — ask gently what he wanted to share with it.",
+};
+function photoPrompt(coachId) {
+    return "PHOTOS: Jeet can send you photos (meals, outfits, skin, gym, anything). When a message has a photo, actually look at it and react like a real coach texting back — specific to what's in it, never generic. " + (COACH_PHOTO_RULES[coachId] || "") + " If it's unclear, ask about it. Earlier photos in the chat appear as \"[sent a photo]\" — you can't see those anymore.";
+}
+// Downscales a picked image so it fits a chat request (full) and localStorage (thumb).
+function resizeImage(file, maxSide, quality) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+            const s = Math.min(1, maxSide / Math.max(img.width, img.height));
+            const c = document.createElement("canvas");
+            c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+            c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+            URL.revokeObjectURL(url);
+            resolve(c.toDataURL("image/jpeg", quality));
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not read that image")); };
+        img.src = url;
+    });
+}
+// Keeps localStorage small: only the newest chat photos keep their thumbnail.
+function slimChatImages(ch, keep) {
+    let left = keep || 24;
+    const out = {};
+    Object.keys(ch || {}).forEach(k => { out[k] = (ch[k] || []).slice(); });
+    const refs = [];
+    Object.keys(out).forEach(k => out[k].forEach((m, i) => { if (m && m.image) refs.push({ k: k, i: i, ts: m.ts || 0 }); }));
+    refs.sort((a, b) => b.ts - a.ts).forEach(r => {
+        if (left > 0) { left--; return; }
+        const m = Object.assign({}, out[r.k][r.i]); delete m.image; m.content = m.content === "📷" ? "📷 Photo" : m.content; out[r.k][r.i] = m;
+    });
+    return out;
 }
 function typingDelay(text) { return Math.min(2400, 500 + String(text).length * 18); }
 function msgTime(m) {
@@ -1846,7 +2085,8 @@ function TeamMemoryCard({ T }) {
     const [open, setOpen] = React.useState(false);
     const [list, setList] = React.useState(loadTeamMemory());
     const [promises, setPromises] = React.useState(loadCommitments());
-    React.useEffect(() => { if (open) { setList(loadTeamMemory()); syncTeamMemory().then(setList); setPromises(loadCommitments()); syncCommitments().then(setPromises); } }, [open]);
+    const [goals, setGoals] = React.useState(loadGoals());
+    React.useEffect(() => { if (open) { setList(loadTeamMemory()); syncTeamMemory().then(setList); setPromises(loadCommitments()); syncCommitments().then(setPromises); setGoals(loadGoals()); syncGoals().then(setGoals); } }, [open]);
     const remove = (i) => { const gone = list[i]; const next = list.filter((_, j) => j !== i); saveTeamMemory(next); setList(next); if (gone) deleteTeamMemoryFact(gone.text); };
     const font = "Inter,system-ui,sans-serif";
     return React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 14px", marginBottom: 16 } },
@@ -1866,6 +2106,18 @@ function TeamMemoryCard({ T }) {
                             React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: font, marginTop: 2 } }, "via " + coachLabel(f.from) + " · " + f.date)),
                         React.createElement("button", { onClick: () => remove(i), "aria-label": "Forget this", style: { background: "transparent", border: "none", color: T.ivoryD, fontSize: 14, cursor: "pointer", padding: "0 4px" } }, "✕"));
                 }),
+            goals.length > 0 && React.createElement("div", { style: { marginTop: 12 } },
+                React.createElement("div", { style: { fontSize: 10, color: T.gold, fontFamily: font, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 } }, "🎯 Goals with your coaches"),
+                goals.slice().reverse().slice(0, 10).map(g => {
+                    const pct = goalPct(g);
+                    return React.createElement("div", { key: g.id, style: { padding: "6px 0", borderTop: "1px solid " + T.border } },
+                        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8 } },
+                            React.createElement("div", { style: { fontSize: 12, color: g.status === "active" ? T.ivory : T.ivoryD, fontFamily: font, lineHeight: 1.5 } }, g.text,
+                                React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, marginTop: 2 } }, "with " + coachLabel(g.coach) + (g.deadline ? " · by " + g.deadline : ""))),
+                            React.createElement("span", { style: { fontSize: 11, whiteSpace: "nowrap", color: g.status === "achieved" ? T.green : g.status === "dropped" ? T.ivoryD : T.gold, fontFamily: font } }, g.status === "achieved" ? "🏆 done" : g.status === "dropped" ? "dropped" : pct != null ? pct + "%" : "active")),
+                        pct != null && g.status === "active" && React.createElement("div", { style: { height: 3, background: T.border, borderRadius: 2, overflow: "hidden", marginTop: 5 } },
+                            React.createElement("div", { style: { height: "100%", width: pct + "%", background: T.gold, borderRadius: 2 } })));
+                })),
             promises.length > 0 && React.createElement("div", { style: { marginTop: 12 } },
                 React.createElement("div", { style: { fontSize: 10, color: T.gold, fontFamily: font, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 } }, "📌 Your promises"),
                 promises.slice().reverse().slice(0, 12).map(c => React.createElement("div", { key: c.id, style: { display: "flex", justifyContent: "space-between", gap: 8, padding: "6px 0", borderTop: "1px solid " + T.border } },
@@ -1966,6 +2218,21 @@ function FoodMacros({ food, qty, calc, T }) {
         React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 13, color: s.c, lineHeight: 1, fontWeight: 300 } }, s.v),
         React.createElement("div", { style: { fontSize: 7, color: T.ivoryD, marginTop: 2, fontFamily: "Inter,system-ui,sans-serif" } }, s.l))))));
 }
+function GoalStrip({ coachId, color, T }) {
+    const goals = loadGoals().filter(g => g.coach === coachId && g.status === "active");
+    if (!goals.length) return null;
+    const font = "Inter,system-ui,sans-serif";
+    return React.createElement("div", { style: { padding: "8px 20px", borderBottom: "1px solid " + T.border, flexShrink: 0 } }, goals.map(g => {
+        const pct = goalPct(g);
+        const u = g.unit ? " " + g.unit : "";
+        return React.createElement("div", { key: g.id, style: { marginBottom: 4 } },
+            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10, fontFamily: font } },
+                React.createElement("span", { style: { color: T.ivory } }, "🎯 " + g.text),
+                React.createElement("span", { style: { color: color, whiteSpace: "nowrap" } }, g.target != null ? g.current_value + " / " + g.target + u : (g.deadline ? "by " + g.deadline : ""))),
+            pct != null && React.createElement("div", { style: { height: 3, background: T.border, borderRadius: 2, overflow: "hidden", marginTop: 4 } },
+                React.createElement("div", { style: { height: "100%", width: pct + "%", background: color, borderRadius: 2, transition: "width .6s" } })));
+    }));
+}
 function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onClear, viewDay, onSwitchCoach }) {
     const [cTab, setCTab] = React.useState("ask");
     const [typing, setTyping] = React.useState(false);
@@ -1985,6 +2252,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
                 React.createElement("div", { style: { fontSize: 10, color: typing ? coach.color : T.ivoryD, fontFamily: "Inter,system-ui,sans-serif" } }, typing ? "typing…" : lastSeenText(CH[id]))),
             (CH[id] || []).length > 0 && React.createElement("button", { onClick: () => onClear(id), style: { fontSize: 9, color: T.ivoryD, background: "transparent", border: "1px solid " + T.border2, borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontFamily: "Inter,system-ui,sans-serif" } }, "CLEAR")),
         React.createElement("div", { style: { display: "flex", padding: "0 16px", borderBottom: "1px solid " + T.border, overflowX: "auto", scrollbarWidth: "none", flexShrink: 0 } }, ["ask", "tips"].map(t => React.createElement("button", { key: t, style: { padding: "9px 14px", fontSize: 9, letterSpacing: ".1em", textTransform: "uppercase", color: cTab === t ? T.gold : T.ivoryD, cursor: "pointer", border: "none", background: "transparent", borderBottom: cTab === t ? "2px solid " + T.gold : "2px solid transparent", whiteSpace: "nowrap", flexShrink: 0, fontFamily: "Inter,system-ui,sans-serif", fontWeight: cTab === t ? 500 : 300 }, onClick: () => setCTab(t) }, t))),
+        React.createElement(GoalStrip, { coachId: id, color: coach.color, T: T }),
         React.createElement("div", { style: { flex: 1, overflowY: "auto", scrollbarWidth: "none" } },
             cTab === "guide" && (React.createElement("div", { style: { padding: "16px 20px" } },
                 React.createElement("div", { style: { background: "linear-gradient(135deg,#1A1713,#1C1A14)", border: "1px solid rgba(201,162,74,.2)", borderRadius: 12, padding: 14, marginBottom: 14 } },
@@ -3782,6 +4050,17 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         return qa.def || "Ask me something more specific — I know your complete " + id + " routine in detail.";
     };
     const [thinking, setThinking] = React.useState(false);
+    const [levelUp, setLevelUp] = React.useState(null);
+    const [milestone, setMilestone] = React.useState(null);
+    const [photo, setPhoto] = React.useState(null);
+    const fileRef = React.useRef(null);
+    const pickPhoto = async (e) => {
+        const f = e.target.files && e.target.files[0];
+        e.target.value = "";
+        if (!f) return;
+        try { setPhoto({ full: await resizeImage(f, 1024, 0.8), thumb: await resizeImage(f, 320, 0.6) }); }
+        catch (_a) { }
+    };
     React.useEffect(() => { if (onTypingChange) onTypingChange(thinking); }, [thinking]);
     // ── SMART LOCAL RESPONSE ENGINE ──────────────────────────
     const buildResponse = (msg, coachId, L, viewDay, W) => {
@@ -4060,13 +4339,17 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         return fallbacks[coachId] || `Tell me more specifically what you need and I'll give you a precise answer.`;
     };
     const send = async (msg) => {
-        if (!msg.trim() || thinking)
+        const pic = photo;
+        if ((!msg.trim() && !pic) || thinking)
             return;
-        const userMsg = { role: "user", content: msg, ts: Date.now() };
+        const userMsg = { role: "user", content: msg.trim() || "📷", ts: Date.now() };
+        if (pic) userMsg.image = pic.thumb;
+        setPhoto(null);
+        bumpBond(id);
         const newHistUser = [...hist, userMsg];
         const up1 = Object.assign({}, CH, { [id]: newHistUser });
         setCH(up1);
-        store.set("jos_ch", up1);
+        store.set("jos_ch", slimChatImages(up1));
         setInp("");
         setThinking(true);
         // Rich context for the AI coach
@@ -4078,8 +4361,12 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nThis week: " + gymDays7 + "/7 gym days | Avg sleep: " + avgSl + "h | Avg protein: " + avgProt7 + "g\nBackground only — use a number only if it matters for what he just asked.";
         const fullSys = buildCoachSystem(coach, CH, ctx);
         try {
-            const raw = await ai(fullSys, newHistUser.slice(-20), 800);
+            // Only the photo just sent travels to the model; older ones become a note.
+            const aiMsgs = newHistUser.slice(-20).map(m => m.image ? { role: m.role, content: m.content === "📷" ? "[sent a photo]" : "[sent a photo] " + m.content } : m);
+            if (pic) aiMsgs[aiMsgs.length - 1] = { role: "user", content: msg.trim() || "(sent a photo)", image: pic.full };
+            const raw = await ai(fullSys, aiMsgs, 800);
             const reply = processCoachReply(raw, id);
+            if (reply.milestone) { setMilestone(reply.milestone); setTimeout(() => setMilestone(null), 3200); }
             // Deliver the coach's texts one by one, with typing time in between.
             let newHist = newHistUser;
             for (let pi = 0; pi < reply.parts.length; pi++) {
@@ -4088,7 +4375,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
                 if (pi === reply.parts.length - 1 && reply.handoff && id !== "mind") am.handoff = reply.handoff;
                 newHist = [...newHist, am];
                 const snapshot = newHist;
-                setCH(prev => { const up = Object.assign({}, prev, { [id]: snapshot }); store.set("jos_ch", up); return up; });
+                setCH(prev => { const up = Object.assign({}, prev, { [id]: snapshot }); store.set("jos_ch", slimChatImages(up)); return up; });
             }
             const bLvl = getCoachLevel(Math.floor(hist.length / 2));
             const aLvl = getCoachLevel(Math.floor(newHist.length / 2));
@@ -4103,9 +4390,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
             const reason = String((e && e.message) || "AI unavailable").slice(0, 160);
             const assistantMsg = { role: "assistant", content: "[Local · " + reason + "] " + response, ts: Date.now() };
             const newHist = [...newHistUser, assistantMsg];
-            const up2 = Object.assign({}, CH, { [id]: newHist });
-            setCH(up2);
-            store.set("jos_ch", up2);
+            setCH(prev => { const up2 = Object.assign({}, prev, { [id]: newHist }); store.set("jos_ch", slimChatImages(up2)); return up2; });
         }
         finally {
             setThinking(false);
@@ -4133,16 +4418,24 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: "12px 20px", overflowY: "auto", scrollbarWidth: "none" } },
             hist.length === 0 && (React.createElement("div", { style: { maxWidth: "90%", padding: "12px 16px", borderRadius: 14, fontSize: 12, lineHeight: 1.6, background: T.card2, border: "1px solid " + T.border, color: T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } },
                 id === "ronaldo" ? "Talent without working hard is nothing. Tell me what you did today \u2014 gym, sleep, food \u2014 and I'll tell you straight where you stand." : ("Ask me anything about your " + coach.name.toLowerCase() + " routine. I know everything \u2014 your products, schedule, targets."))),
-            hist.map((m, i) => React.createElement(React.Fragment, { key: i }, (m.role === "assistant" && id === "ronaldo" ? React.createElement(VoiceNoteBubble, { key: i, text: m.content, color: coach.color, T: T }) : React.createElement("div", { key: i, style: { maxWidth: "88%", padding: "11px 15px", borderRadius: 14, fontSize: 12, lineHeight: 1.7, background: m.role === "user" ? "rgba(212,175,55,.1)" : T.card2, border: "1px solid " + (m.role === "user" ? "rgba(212,175,55,.2)" : T.border), color: m.role === "user" ? T.gold : T.ivory, alignSelf: m.role === "user" ? "flex-end" : "flex-start", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } }, m.content, msgTime(m))), m.handoff && id !== "mind" && onTalkToMeher && React.createElement("button", { onClick: () => onTalkToMeher(m.handoff), style: { alignSelf: "flex-start", marginTop: -4, padding: "8px 14px", borderRadius: 20, border: "1px solid rgba(142,124,195,.5)", background: "rgba(142,124,195,.12)", color: "#C8B8F0", fontSize: 12, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, cursor: "pointer" } }, "💜 Talk to Dr. Meher"))),
+            hist.map((m, i) => React.createElement(React.Fragment, { key: i }, (m.role === "assistant" && id === "ronaldo" ? React.createElement(VoiceNoteBubble, { key: i, text: m.content, color: coach.color, T: T }) : React.createElement("div", { key: i, style: { maxWidth: "88%", padding: "11px 15px", borderRadius: 14, fontSize: 12, lineHeight: 1.7, background: m.role === "user" ? "rgba(212,175,55,.1)" : T.card2, border: "1px solid " + (m.role === "user" ? "rgba(212,175,55,.2)" : T.border), color: m.role === "user" ? T.gold : T.ivory, alignSelf: m.role === "user" ? "flex-end" : "flex-start", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } }, m.image && React.createElement("img", { src: m.image, alt: "Photo", style: { display: "block", width: "100%", maxWidth: 220, borderRadius: 10, marginBottom: m.content === "📷" ? 0 : 6 } }), m.image && m.content === "📷" ? null : m.content, msgTime(m))), m.handoff && id !== "mind" && onTalkToMeher && React.createElement("button", { onClick: () => onTalkToMeher(m.handoff), style: { alignSelf: "flex-start", marginTop: -4, padding: "8px 14px", borderRadius: 20, border: "1px solid rgba(142,124,195,.5)", background: "rgba(142,124,195,.12)", color: "#C8B8F0", fontSize: 12, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, cursor: "pointer" } }, "💜 Talk to Dr. Meher"))),
             thinking && React.createElement("div", { style: { maxWidth: "60%", padding: "11px 15px", borderRadius: 14, background: T.card2, border: "1px solid " + T.border, alignSelf: "flex-start", display: "flex", gap: 4, alignItems: "center" } }, [0, 1, 2].map(i => React.createElement("div", { key: i, style: { width: 6, height: 6, borderRadius: "50%", background: coach.color, opacity: .6, animation: "pulse 1.2s ease-in-out " + (i * 0.2) + "s infinite" } }))),
             React.createElement("div", { ref: endRef })),
+        React.createElement(LevelUpBanner, { levelUp: levelUp, color: coach.color, T: T, subtitle: levelUp ? "You and " + coach.name + " are getting closer" : "" }),
+        React.createElement(LevelUpBanner, { levelUp: milestone ? { name: milestone.pct === 100 ? "Goal achieved 🏆" : milestone.pct + "% there 🎯", icon: milestone.pct === 100 ? "crown" : "fire" } : null, prefix: "", color: coach.color, T: T, subtitle: milestone ? milestone.goal : "" }),
+        photo && React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 20px 0" } },
+            React.createElement("img", { src: photo.thumb, alt: "Photo to send", style: { width: 48, height: 48, objectFit: "cover", borderRadius: 8, border: "1px solid " + T.border2 } }),
+            React.createElement("span", { style: { flex: 1, fontSize: 10, color: T.ivoryD, fontFamily: "Inter,system-ui,sans-serif" } }, "Photo ready — add a note or just send"),
+            React.createElement("button", { onClick: () => setPhoto(null), "aria-label": "Remove photo", style: { background: "transparent", border: "none", color: T.ivoryD, fontSize: 14, cursor: "pointer" } }, "✕")),
         hist.length === 0 && (React.createElement("div", { style: { display: "flex", gap: 6, padding: "4px 20px 6px", overflowX: "auto", scrollbarWidth: "none", flexWrap: "wrap" } }, ps.map(p => (React.createElement("button", { key: p, onClick: () => send(p), style: { padding: "6px 12px", borderRadius: 18, border: "1px solid " + T.border2, background: T.card, fontSize: 10, color: T.ivoryM, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300, marginBottom: 4 } }, p))))),
         React.createElement("div", { style: { display: "flex", gap: 8, padding: "8px 20px 16px", alignItems: "flex-end" } },
-            React.createElement("input", { style: { flex: 1, background: T.card2, border: "1px solid " + T.border2, borderRadius: 22, color: T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontSize: 12, padding: "11px 18px", outline: "none", fontWeight: 300 }, placeholder: "Ask your coach...", value: inp, onChange: e => setInp(e.target.value), onKeyDown: e => { if (e.key === "Enter") {
+            React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", onChange: pickPhoto, style: { display: "none" } }),
+            React.createElement("button", { onClick: () => fileRef.current && fileRef.current.click(), "aria-label": "Send a photo", title: "Send a photo", style: { width: 40, height: 40, borderRadius: "50%", background: T.card2, border: "1px solid " + T.border2, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 16 } }, "📷"),
+            React.createElement("input", { style: { flex: 1, minWidth: 0, background: T.card2, border: "1px solid " + T.border2, borderRadius: 22, color: T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontSize: 12, padding: "11px 18px", outline: "none", fontWeight: 300 }, placeholder: photo ? "Add a note…" : "Ask your coach...", value: inp, onChange: e => setInp(e.target.value), onKeyDown: e => { if (e.key === "Enter") {
                     send(inp);
                 } } }),
-            React.createElement("button", { disabled: !inp.trim(), onClick: () => send(inp), style: { width: 40, height: 40, borderRadius: "50%", background: inp.trim() ? "linear-gradient(135deg,#D4AF37,#F0D080)" : "rgba(255,255,255,.06)", border: "none", cursor: inp.trim() ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } },
-                React.createElement("svg", { width: "13", height: "13", viewBox: "0 0 24 24", fill: inp.trim() ? "#0A0800" : "#8A857A" },
+            React.createElement("button", { disabled: !inp.trim() && !photo, onClick: () => send(inp), style: { width: 40, height: 40, borderRadius: "50%", background: inp.trim() || photo ? "linear-gradient(135deg,#D4AF37,#F0D080)" : "rgba(255,255,255,.06)", border: "none", cursor: inp.trim() || photo ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } },
+                React.createElement("svg", { width: "13", height: "13", viewBox: "0 0 24 24", fill: inp.trim() || photo ? "#0A0800" : "#8A857A" },
                     React.createElement("path", { d: "M2 21l21-9L2 3v7l15 2-15 2v7z" }))))));
 }
 // ── LEVEL SYSTEM ──────────────────────────────────────────
@@ -4175,7 +4468,7 @@ function LevelBadge({ count, levelDefs, color, T, label }) {
             lvl.next ? (React.createElement("div", { style: { height: 3, background: T.border, borderRadius: 2, overflow: "hidden", marginTop: 5 } },
                 React.createElement("div", { style: { height: "100%", width: lvl.progress + "%", background: color, borderRadius: 2 } }))) : (React.createElement("div", { style: { fontSize: 8, color: color, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 600, marginTop: 3 } }, "Max level reached")))));
 }
-function LevelUpBanner({ levelUp, color, T, subtitle }) {
+function LevelUpBanner({ levelUp, color, T, subtitle, prefix }) {
     if (!levelUp)
         return null;
     return (React.createElement("div", { style: { position: "fixed", top: 60, left: 20, right: 20, maxWidth: 390, margin: "0 auto", zIndex: 200, background: T.card, border: "1px solid " + color + "66", borderRadius: 14, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, boxShadow: "0 6px 24px rgba(0,0,0,.5)" } },
@@ -4183,7 +4476,7 @@ function LevelUpBanner({ levelUp, color, T, subtitle }) {
             React.createElement(Icon, { name: levelUp.icon, size: 20, color: color })),
         React.createElement("div", null,
             React.createElement("div", { style: { fontSize: 11, color: color, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 700 } },
-                "Level Up \u2014 ",
+                prefix != null ? prefix : "Level Up \u2014 ",
                 levelUp.name),
             subtitle && React.createElement("div", { style: { fontSize: 9, color: T.ivoryD, fontFamily: "Inter,system-ui,sans-serif", marginTop: 2 } }, subtitle))));
 }
@@ -4669,6 +4962,8 @@ function JeetOS() {
         store.set("jos_ch", keptCH);
         setCH(keptCH);
         syncCommitments();
+        syncGoals();
+        syncMoments();
         // Messages coaches texted first while the app was closed.
         fetchCoachInbox().then(rows => {
             const seen = new Set(store.get("jos_inbox_seen") || []);
