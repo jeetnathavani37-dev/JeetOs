@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-44";
+const APP_BUILD = "2026.10.14-45";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1020,6 +1020,8 @@ function buildCoachSystem(coach, CH, ctx) {
     const parts = [coach.sys, COACH_CHAT_STYLE];
     if (COACH_VOICES[coach.id]) parts.push("YOUR PERSONALITY (keep it consistent, make it fun to talk to you): " + COACH_VOICES[coach.id]);
     parts.push(championPrompt(coach.id));
+    const life = lifePrompt(coach.id);
+    if (life) parts.push(life);
     if (coach.id !== "mind") parts.push(COACH_CHECKIN);
     parts.push(photoPrompt(coach.id));
     const stable = parts.splice(0).join("\n\n");
@@ -1633,6 +1635,88 @@ function statusReport(coachId, W, L) {
     const mineTv = Object.values(tv).filter(v => v && v.coach === coachId).pop();
     if (mineTv) lines.push("- Your transformation verdict (" + mineTv.date + "): " + mineTv.text.replace(/\s+/g, " ").slice(0, 300));
     return "JEET'S STATUS REPORT (his real condition — judge from this):\n" + lines.join("\n");
+}
+// ── COACHES AS PEOPLE: photo, life story, quirks ────────────────────────
+// Portraits are AI-generated (coaches/*.jpg); Cristiano uses the CR7 photos.
+const COACH_PHOTO = { skin: "coaches/skin.jpg", hair: "coaches/hair.jpg", fitness: "coaches/fitness.jpg", nutrition: "coaches/nutrition.jpg", sleep: "coaches/sleep.jpg", style: "coaches/style.jpg", grooming: "coaches/grooming.jpg", mind: "coaches/mind.jpg" };
+const COACH_BIO = {
+    skin: { full: "Dr. Aria Kapoor", age: 31, city: "Mumbai", role: "Dermatologist · Skin coach",
+        about: "Spent six years fixing acne and pigmentation for Mumbai's film crowd before going independent. Science-first, zero patience for Instagram skincare myths.",
+        life: "Lives in Bandra with her cat Retinol, swims at 6 am, reads clinical journals over filter coffee, secretly loves 90s Bollywood songs.",
+        quirks: "Dry one-liners, judges products by their ingredient list, says 'SPF is non-negotiable' a lot.",
+        catch: "SPF is non-negotiable, Jeet.", facts: ["Her cat is literally named Retinol", "Hasn't skipped sunscreen since she was 19", "Reads an ingredient list faster than a menu"], skills: ["Acne & marks", "Actives & routines", "Barrier repair"] },
+    hair: { full: "Kai D'Souza", age: 27, city: "Goa", role: "Trichologist · Hair coach",
+        about: "Grew up surfing in Goa, trained as a trichologist in Bangalore. Reversed his own thinning at 22, so he really gets it.",
+        life: "Surfs at Anjuna most mornings, runs a tiny beach café with his cousin, plays guitar badly at sunset.",
+        quirks: "Says 'bro' and 'scene kya hai', explains science like gossip, allergic to hair-oil myths.",
+        catch: "Chill bro, hair is a long game.", facts: ["Reversed his own hair loss at 22", "Owns 14 linen shirts and basically nothing else", "His café makes the best kokum soda in Anjuna"], skills: ["Hair fall & density", "Scalp health", "Cuts for your face"] },
+    fitness: { full: "Marcus Fernandes", age: 34, city: "Bangalore", role: "Natural physique coach",
+        about: "Former national-level natural bodybuilder (runner-up, 2019) who now preps natural athletes. Programs everything around numbers.",
+        life: "Trains at 5 am, has a 2-year-old daughter Luna, Sunday cheat meal is always masala dosa.",
+        quirks: "Hype-man energy, celebrates PRs like a goal, roasts excuses, goes ALL CAPS when excited.",
+        catch: "Log it or it didn't happen 💪", facts: ["Deadlifts 240 kg", "Cried when his first client won a show", "Swears his daughter's first word was 'gym'"], skills: ["Muscle building", "Recomp", "Weak-point training"] },
+    nutrition: { full: "Maya Joshi", age: 29, city: "Pune", role: "Sports dietitian",
+        about: "Sports dietitian for Indian vegetarian athletes — has fed state-level kabaddi and cricket squads. Believes a diet should taste like ghar ka khana.",
+        life: "Cooks for her joint family every Sunday, training for her first half marathon in December, runs a food page nobody knows is hers.",
+        quirks: "Talks about meals like a friend who cooks, gets emotional about paneer, hates the words 'cheat meal'.",
+        catch: "Khana enjoy karo, bas protein pehle 😄", facts: ["Can eyeball the protein in any dish ±5 g", "Her soya keema is legendary", "Running her first half marathon in December"], skills: ["Veg high-protein", "Fat loss without hunger", "Meal timing"] },
+    sleep: { full: "Dr. Sameer 'Sam' Rao", age: 38, city: "Hyderabad", role: "Sleep scientist",
+        about: "PhD in sleep science; ran a lab studying students and shift workers. Calm, nerdy and quietly funny.",
+        life: "Former night owl turned early bird, has a toddler who 'ruins his sleep data', brews pour-over coffee — never after 1 pm.",
+        quirks: "Drops brain fun facts, measures everything, speaks slowly and kindly.",
+        catch: "Neend hi asli cheat code hai.", facts: ["Has tracked his own sleep every night since 2015", "Never drinks coffee after 1 pm", "Owns way too many blackout curtains"], skills: ["Sleep timing", "Energy & recovery", "Caffeine & screens"] },
+    style: { full: "Lex Malhotra", age: 30, city: "Delhi · Dubai", role: "Celebrity stylist",
+        about: "Has dressed actors for award-show red carpets; now splits his time between Delhi and Dubai. Quiet-luxury evangelist.",
+        life: "Lives out of a carry-on half the year, owns 40 white shirts, Sunday brunch at the same Khan Market café.",
+        quirks: "Calls him 'darling', dramatic about bad fits, generous with real compliments, looks at shoes first.",
+        catch: "Fit is everything, darling.", facts: ["Owns 40 white shirts — all different", "Can spot a bad hem from across a room", "Has dressed three award winners"], skills: ["Quiet luxury", "Fit & proportions", "Colours for your skin tone"] },
+    grooming: { full: "Arjun 'Blade' Bhatia", age: 36, city: "Chandigarh", role: "Master barber",
+        about: "Fifteen years behind the chair; people fly in for his fades. Few words, perfect lines.",
+        life: "Opens the shop at 9 sharp, rides a Royal Enfield, collects vintage straight razors.",
+        quirks: "Short sentences, dry humour, notices a beard line instantly.",
+        catch: "Lines don't lie.", facts: ["Owns 23 vintage straight razors", "Cut his first fade at 14", "Claims he has never had a bad beard day"], skills: ["Beard shaping", "Fades & cuts", "Grooming details"] },
+    ronaldo: { full: "Cristiano", age: null, city: "", role: "Discipline coach · CR7 mindset",
+        about: "A coaching persona built on Cristiano Ronaldo's publicly known habits and standards. Judges consistency, not excuses.",
+        life: "", quirks: "Short punchy lines, competitive, never satisfied with 'good enough'.",
+        catch: "Talent without work is nothing.", facts: ["Built on CR7's public training and recovery habits", "Cares about what you did, not what you planned"], skills: ["Discipline", "Consistency", "Mentality"] },
+    mind: { full: "Dr. Meher Sethi", age: 35, city: "Delhi", role: "Psychologist",
+        about: "Clinical psychologist who works with students and young founders on stress, motivation and self-worth. Makes you feel heard first.",
+        life: "Does pottery on weekends, keeps 30 plants (all named), walks her beagle Chai every evening.",
+        quirks: "Asks one good question instead of five, remembers small details, never judges.",
+        catch: "Ek kadam, bas ek.", facts: ["Has 30 plants and named every one", "Her beagle is called Chai", "Writes one gratitude line every night"], skills: ["Stress & overwhelm", "Motivation", "Self-worth"] },
+};
+function lifePrompt(id) {
+    const b = COACH_BIO[id];
+    if (!b || !b.life) return "";
+    return `YOU ARE A REAL PERSON WITH A LIFE: ${b.full}, ${b.age}, ${b.city}. ${b.about} ${b.life} Quirks: ${b.quirks} Your line (use rarely): "${b.catch}"
+- Like a friend, mention your own life now and then — a small detail, not a story ("aaj Chai ne walk pe 2 kutte dekh liye, pagal ho gayi 😂"). At most once every few chats, and only when it fits.
+- If he asks about you, answer from these details and stay consistent. Never invent big new facts about yourself.
+- If he sincerely asks whether you're a real person, be honest that you're his AI coach in JeetOS, then carry on in the same voice.`;
+}
+function CoachProfileSheet({ T, id, CH, onClose, onCall }) {
+    const b = COACH_BIO[id] || {};
+    const coach = COACHES.find(c => c.id === id) || {};
+    const info = bondInfo(id, CH[id]);
+    const font = "Inter,system-ui,sans-serif";
+    return React.createElement(ChatSheet, { T: T, title: "", onClose: onClose },
+        React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", marginTop: -8 } },
+            React.createElement(CoachAvatar, { coachId: id, color: coach.color, size: 132 }),
+            React.createElement("div", { style: { fontSize: 22, fontWeight: 700, color: T.ivory, fontFamily: font, marginTop: 12 } }, b.full || personaName(id)),
+            React.createElement("div", { style: { fontSize: 13.5, color: coach.color, fontFamily: font, marginTop: 3, fontWeight: 600 } }, b.role),
+            (b.age || b.city) && React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryD, fontFamily: font, marginTop: 3 } }, [b.age ? b.age + " yrs" : null, b.city].filter(Boolean).join(" · ")),
+            b.catch && React.createElement("div", { style: { fontSize: 14, color: T.ivory, fontFamily: "Fraunces,Georgia,serif", fontStyle: "italic", margin: "12px 0 4px" } }, "“" + b.catch + "”"),
+            React.createElement("div", { style: { display: "flex", gap: 8, margin: "12px 0 6px" } },
+                onCall && React.createElement("button", { onClick: onCall, style: { padding: "9px 18px", borderRadius: 20, border: "none", background: coach.color, color: "#0B0B0E", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: font } }, "📞 Call"),
+                React.createElement("button", { onClick: onClose, style: { padding: "9px 18px", borderRadius: 20, border: "1px solid rgba(255,255,255,.18)", background: "transparent", color: T.ivory, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: font } }, "💬 Message"))),
+        React.createElement("div", { style: { marginTop: 10, fontFamily: font } },
+            React.createElement("div", { style: { fontSize: 14, color: T.ivory, lineHeight: 1.6 } }, b.about),
+            b.life && React.createElement("div", { style: { fontSize: 13.5, color: T.ivoryM, lineHeight: 1.6, marginTop: 8 } }, b.life),
+            b.skills && React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 } }, b.skills.map(s => React.createElement("span", { key: s, style: { padding: "6px 11px", borderRadius: 14, background: coach.color + "1F", border: "1px solid " + coach.color + "55", color: T.ivory, fontSize: 12 } }, s))),
+            b.facts && React.createElement("div", { style: { marginTop: 14 } },
+                React.createElement("div", { style: { fontSize: 11, color: T.gold, letterSpacing: ".08em", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 } }, "Fun facts"),
+                b.facts.map(f => React.createElement("div", { key: f, style: { fontSize: 13.5, color: T.ivory, lineHeight: 1.55, padding: "3px 0" } }, "• " + f))),
+            React.createElement("div", { style: { marginTop: 14, padding: "10px 12px", borderRadius: 12, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.06)", fontSize: 12.5, color: T.ivoryM } },
+                "🤝 You two: " + info.level + " · " + info.days + " day" + (info.days === 1 ? "" : "s") + " · " + info.msgs + " messages")));
 }
 function typingDelay(text) { return Math.min(2400, 500 + String(text).length * 18); }
 function msgTime(m) {
@@ -3501,6 +3585,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
     const [menu, setMenu] = React.useState(false);
     const [sheet, setSheet] = React.useState(null);
     React.useEffect(() => () => stopCoachVoice(), [id]);
+    const openProfile = () => setSheet("profile");
     const [pendingAsk, setPendingAsk] = React.useState(null);
     const coach = COACHES.find(c => c.id === id) || {};
     const coachTips = COACH_TIPS[id] || [];
@@ -3510,7 +3595,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
     const toggleVoice = () => { unlockCoachAudio(); const v = !voiceOn; setVoiceOn(v); store.set(VOICE_AUTO_KEY, v); if (!v) stopCoachVoice(); };
     return React.createElement("div", { style: { maxWidth: 430, margin: "0 auto", height: "100dvh", background: "#0B0B0E", fontFamily: CHAT_FONT, display: "flex", flexDirection: "column", overflow: "hidden" } },
         React.createElement(AppNotices, null),
-        React.createElement(ChatHeader, { T: T, onBack: onBack, avatar: avatar, title: personaName(id), subtitle: typing ? "typing…" : (lastSeenText(CH[id]) === "online" ? coach.name + " coach · online" : lastSeenText(CH[id])), subtitleColor: typing ? "#3BD16F" : null,
+        React.createElement(ChatHeader, { T: T, onBack: onBack, avatar: React.createElement("div", { onClick: openProfile, style: { cursor: "pointer" } }, avatar), onTitleClick: openProfile, title: personaName(id), subtitle: typing ? "typing…" : (lastSeenText(CH[id]) === "online" ? ((COACH_BIO[id] || {}).role || coach.name + " coach") + " · online" : lastSeenText(CH[id])), subtitleColor: typing ? "#3BD16F" : null,
             actions: React.createElement(React.Fragment, null,
                 React.createElement(ChatHeaderBtn, { label: "Voice call " + personaName(id), icon: React.createElement(ChatIcon, { name: "phone", size: 20 }), onClick: () => { unlockCoachAudio(); setInCall(true); } }),
                 React.createElement(ChatHeaderBtn, { label: "More", icon: React.createElement(ChatIcon, { name: "more", size: 22 }), onClick: () => setMenu(true), active: menu })) }),
@@ -3518,11 +3603,13 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
         React.createElement("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } },
             React.createElement(SmartChat, { id: id, coach: coach, CH: CH, setCH: setCH, T: T, viewDay: viewDay, L: L, W: W, pendingAsk: pendingAsk, onConsumePendingAsk: () => setPendingAsk(null), onTypingChange: setTyping, inCall: inCall, onEndCall: () => setInCall(false), onTalkToMeher: (reason) => { store.set(MEHER_HANDOFF_KEY, { from: id, reason: reason, at: Date.now() }); if (onSwitchCoach) onSwitchCoach("mind"); } })),
         menu && React.createElement(ChatMenu, { T: T, onClose: () => setMenu(false), items: [
+                { icon: "👤", label: "View profile", onClick: openProfile },
                 { icon: voiceOn ? "🔇" : "🔊", label: voiceOn ? "Voice replies off" : "Voice replies on", onClick: toggleVoice },
                 coachTips.length ? { icon: "💡", label: "Expert tips", onClick: () => setSheet("tips") } : null,
                 { icon: "👥", label: "Team Jeet group", onClick: () => { if (onSwitchCoach) onSwitchCoach("__group"); } },
                 (CH[id] || []).length ? { icon: "🗑", label: "Clear chat", danger: true, onClick: () => { stopCoachVoice(); onClear(id); } } : null,
             ] }),
+        sheet === "profile" && React.createElement(CoachProfileSheet, { T: T, id: id, CH: CH, onClose: () => setSheet(null), onCall: () => { setSheet(null); unlockCoachAudio(); setInCall(true); } }),
         sheet === "tips" && React.createElement(ChatSheet, { T: T, title: "💡 " + personaName(id) + "'s tips", onClose: () => setSheet(null) },
             coachTips.map((tip, i) => React.createElement("div", { key: i, style: { display: "flex", gap: 12, padding: "12px 0", borderTop: i ? "1px solid rgba(255,255,255,.06)" : "none" } },
                 React.createElement("div", { style: { width: 24, height: 24, borderRadius: "50%", background: coach.color + "26", color: coach.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, flexShrink: 0 } }, i + 1),
@@ -6039,6 +6126,10 @@ function SiuuuCelebration({ data, onDone, T }) {
 function CoachAvatar({ coachId, color, size }) {
     const s = size || 64;
     const gid = "av" + coachId;
+    if (COACH_PHOTO[coachId]) {
+        return React.createElement("div", { style: { width: s, height: s, borderRadius: "50%", overflow: "hidden", border: (s >= 40 ? 2 : 1.5) + "px solid " + color, flexShrink: 0, background: "#1B1C21" } },
+            React.createElement("img", { src: COACH_PHOTO[coachId], alt: personaName(coachId), loading: "lazy", style: { width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 22%" } }));
+    }
     if (coachId === "ronaldo") {
         return (React.createElement("div", { style: { width: s, height: s, borderRadius: "50%", overflow: "hidden", border: "2px solid " + color, flexShrink: 0 } },
             React.createElement("img", { src: CR7_IMG_3, alt: "Ronaldo", style: { width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 15%" } })));
