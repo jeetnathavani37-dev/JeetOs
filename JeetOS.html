@@ -2388,6 +2388,121 @@ fixes: max 3, the most impactful ones.`;
 function trendMark(t, T) {
     return t === "up" ? React.createElement("span", { style: { color: T.green } }, " ▲") : t === "down" ? React.createElement("span", { style: { color: T.red } }, " ▼") : t === "same" ? React.createElement("span", { style: { color: T.ivoryD } }, " ▬") : null;
 }
+// ── TRANSFORMATION: one slot's check-in photos over time ────────────────
+const TRANSFORM_KEY = "jos_transform_verdicts";
+async function loadTransformPhotos(slot) {
+    const list = loadCheckins().filter(c => (c.slots || []).includes(slot)).slice(-8);
+    const primary = (CHECKIN_SLOTS.find(s => s.id === slot) || { coaches: [] }).coaches[0];
+    const out = [];
+    for (const c of list) {
+        const img = await getPhoto(c.id + ":" + slot);
+        const r = c.reviews && primary && c.reviews[primary];
+        if (img) out.push({ id: c.id, date: c.created_on, img: img, score: r && r.score != null ? r.score : null });
+    }
+    return out;
+}
+function loadImg(src) { return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; }); }
+// Draws a shareable before→after grid with dates and scores.
+async function buildCollage(items, slotLabel) {
+    const n = items.length, cols = n <= 4 ? 2 : 3, rows = Math.ceil(n / cols);
+    const W = 1080, pad = 24, head = 150, cell = Math.floor((W - pad * (cols + 1)) / cols);
+    const H = head + rows * (cell + pad) + pad + 40;
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const g = c.getContext("2d");
+    g.fillStyle = "#0B0A08"; g.fillRect(0, 0, W, H);
+    g.fillStyle = "#D4AF37"; g.font = "600 30px Inter, system-ui, sans-serif"; g.fillText("JEETOS · TRANSFORMATION", pad, 58);
+    g.fillStyle = "#F2EFE6"; g.font = "400 52px Georgia, serif"; g.fillText(slotLabel, pad, 118);
+    const span = items[0].date + "  →  " + items[n - 1].date;
+    g.font = "400 26px Inter, system-ui, sans-serif"; g.fillStyle = "#8A857A"; g.fillText(span, W - pad - g.measureText(span).width, 118);
+    for (let i = 0; i < n; i++) {
+        const it = items[i], x = pad + (i % cols) * (cell + pad), y = head + Math.floor(i / cols) * (cell + pad);
+        try {
+            const im = await loadImg(it.img);
+            const s = Math.max(cell / im.width, cell / im.height), w = im.width * s, h = im.height * s;
+            g.save(); g.beginPath(); g.rect(x, y, cell, cell); g.clip(); g.drawImage(im, x + (cell - w) / 2, y + (cell - h) / 2, w, h); g.restore();
+        } catch (_a) { g.fillStyle = "#1C1A14"; g.fillRect(x, y, cell, cell); }
+        g.fillStyle = "rgba(0,0,0,.6)"; g.fillRect(x, y + cell - 54, cell, 54);
+        g.fillStyle = "#F2EFE6"; g.font = "500 24px Inter, system-ui, sans-serif";
+        g.fillText((i === 0 ? "Start · " : i === n - 1 ? "Now · " : "") + new Date(it.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" }), x + 14, y + cell - 19);
+        if (it.score != null) { const t = it.score + "/10"; g.fillStyle = "#D4AF37"; g.fillText(t, x + cell - 14 - g.measureText(t).width, y + cell - 19); }
+    }
+    g.fillStyle = "#5A564E"; g.font = "400 20px Inter, system-ui, sans-serif"; g.fillText("Same pose, same light, every week.", pad, H - 22);
+    return new Promise(res => c.toBlob(b => res(b), "image/jpeg", 0.9));
+}
+async function shareOrSave(blob, name) {
+    const file = new File([blob], name, { type: "image/jpeg" });
+    try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "JeetOS transformation" }); return "shared"; } } catch (e) { if (e && e.name === "AbortError") return "cancelled"; }
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    return "saved";
+}
+async function transformationVerdict(slot, items) {
+    const sl = CHECKIN_SLOTS.find(s => s.id === slot);
+    const coach = COACHES.find(c => c.id === sl.coaches[0]) || COACHES[0];
+    const pickIdx = items.length <= 4 ? items.map((_, i) => i) : [0, Math.round((items.length - 1) / 3), Math.round(2 * (items.length - 1) / 3), items.length - 1];
+    const picks = pickIdx.map(i => items[i]);
+    const sys = `${coach.sys || ""}
+
+You are ${coach.name}. ${COACH_VOICES[coach.id] || ""}
+IGNORE any length or format rules above. This is Jeet's TRANSFORMATION REVIEW for his ${sl.label.toLowerCase()} — the photos are in date order: ${picks.map((p, i) => (i + 1) + ") " + p.date + (p.score != null ? " (you scored " + p.score + "/10)" : "")).join("; ")}.
+Look at them side by side like a real coach. Say honestly what has visibly changed from the first to the latest photo (be specific — and say so if nothing has changed), what improved most, what hasn't moved, and the 2 things to focus on next month. If lighting or pose differ, mention it. ${coach.id === "skin" ? "Observations only, not a diagnosis." : ""}${coach.id === "fitness" ? "Objective, never body-shaming." : ""}
+Write 5-7 short lines in his Hinglish, in your own voice. Plain text, no headings, no markdown.`;
+    const raw = await ai(sys, [{ role: "user", content: "Mera transformation dekho.", images: picks.map(p => p.img) }], 1500);
+    return { coach: coach.id, text: String(raw).replace(/<[^>]+>/g, "").trim(), date: localIsoDate(), count: items.length };
+}
+function TransformView({ T, setCH }) {
+    const font = "Inter,system-ui,sans-serif";
+    const slots = CHECKIN_SLOTS.filter(s => loadCheckins().filter(c => (c.slots || []).includes(s.id)).length > 0);
+    const [slot, setSlot] = React.useState(slots[0] ? slots[0].id : null);
+    const [items, setItems] = React.useState([]);
+    const [busy, setBusy] = React.useState("");
+    const [verdict, setVerdict] = React.useState(null);
+    const [msg, setMsg] = React.useState("");
+    React.useEffect(() => {
+        if (!slot) return;
+        setItems([]); setMsg("");
+        setVerdict((store.get(TRANSFORM_KEY) || {})[slot] || null);
+        loadTransformPhotos(slot).then(setItems);
+    }, [slot]);
+    if (!slots.length) return React.createElement("div", { style: { padding: 24, fontSize: 12, color: T.ivoryD, fontFamily: font, lineHeight: 1.6 } }, "Abhi koi check-in photo nahi hai. Har hafte check-in mein photos daalo — 2+ hafte baad yahan before → after dikhega.");
+    const sl = CHECKIN_SLOTS.find(s => s.id === slot);
+    const save = async () => {
+        setBusy("collage");
+        try { const blob = await buildCollage(items, sl.label); const r = await shareOrSave(blob, "jeetos-" + slot + "-" + localIsoDate() + ".jpg"); setMsg(r === "saved" ? "Collage download ho gaya ✓" : r === "shared" ? "Shared ✓" : ""); }
+        catch (_a) { setMsg("Collage nahi ban paya"); }
+        setBusy("");
+    };
+    const ask = async () => {
+        setBusy("verdict"); setMsg("");
+        try {
+            const v = await transformationVerdict(slot, items);
+            setVerdict(v);
+            store.set(TRANSFORM_KEY, Object.assign({}, store.get(TRANSFORM_KEY) || {}, { [slot]: v }));
+            setCH(prev => { const up = Object.assign({}, prev, { [v.coach]: (prev[v.coach] || []).concat([{ role: "assistant", content: "🎞️ Tera " + sl.label.toLowerCase() + " transformation dekha:\n\n" + v.text, ts: Date.now(), checkin: true }]) }); store.set("jos_ch", slimChatImages(up)); return up; });
+        } catch (_a) { setMsg("Coach tak nahi pahunch paya — dobara try karo."); }
+        setBusy("");
+    };
+    const btn = (label, on, disabled, primary) => React.createElement("button", { onClick: on, disabled: disabled, style: { flex: 1, padding: "12px", borderRadius: 10, border: primary ? "none" : "1px solid " + T.gold, background: primary ? "linear-gradient(135deg,#D4AF37,#F0D080)" : "transparent", color: primary ? "#0A0800" : T.gold, fontSize: 12, fontWeight: 600, fontFamily: font, cursor: disabled ? "default" : "pointer", opacity: disabled ? .5 : 1 } }, label);
+    const first = items[0], last = items[items.length - 1];
+    return React.createElement("div", { style: { padding: "16px 20px 40px" } },
+        React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 } }, slots.map(s => React.createElement("button", { key: s.id, onClick: () => setSlot(s.id), style: { padding: "7px 12px", borderRadius: 18, border: "1px solid " + (slot === s.id ? T.gold : T.border2), background: slot === s.id ? "rgba(212,175,55,.12)" : T.card, color: slot === s.id ? T.gold : T.ivoryM, fontSize: 11, fontFamily: font, cursor: "pointer" } }, s.icon + " " + s.label))),
+        items.length >= 2 && React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 12 } }, [first, last].map((it, i) => React.createElement("div", { key: i, style: { flex: 1 } },
+            React.createElement("img", { src: it.img, alt: i ? "Now" : "Start", style: { width: "100%", height: 200, objectFit: "cover", borderRadius: 10, border: "1px solid " + (i ? T.gold : T.border2) } }),
+            React.createElement("div", { style: { fontSize: 10, color: i ? T.gold : T.ivoryD, fontFamily: font, textAlign: "center", marginTop: 4 } }, (i ? "Now · " : "Start · ") + it.date + (it.score != null ? " · " + it.score + "/10" : ""))))),
+        React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6, marginBottom: 14 } }, items.map(it => React.createElement("div", { key: it.id },
+            React.createElement("img", { src: it.img, alt: it.date, style: { width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: 6 } }),
+            React.createElement("div", { style: { fontSize: 8, color: T.ivoryD, fontFamily: font, textAlign: "center", marginTop: 2 } }, it.date.slice(5))))),
+        items.length < 2 && React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, fontFamily: font, marginBottom: 12, lineHeight: 1.5 } }, "Abhi " + items.length + " photo hai — agle check-in ke baad comparison banega."),
+        React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 12 } },
+            btn(busy === "collage" ? "Ban raha hai…" : "📥 Collage save / share", save, !items.length || !!busy, false),
+            btn(busy === "verdict" ? coachLabel(sl.coaches[0]) + " dekh rahe…" : "🧐 " + coachLabel(sl.coaches[0]) + " ka verdict", ask, items.length < 2 || !!busy, true)),
+        msg && React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, fontFamily: font, marginBottom: 10 } }, msg),
+        verdict && React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "14px 16px" } },
+            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 8 } },
+                React.createElement(CoachAvatar, { coachId: verdict.coach, color: (COACHES.find(c => c.id === verdict.coach) || {}).color || T.gold, size: 30 }),
+                React.createElement("div", { style: { flex: 1, fontSize: 12, color: T.ivory, fontFamily: font } }, coachLabel(verdict.coach), React.createElement("div", { style: { fontSize: 9, color: T.ivoryD } }, verdict.date + " · " + verdict.count + " check-ins")),
+                React.createElement(SpeakButton, { coachId: verdict.coach, text: verdict.text, color: T.gold })),
+            React.createElement("div", { style: { fontSize: 12, color: T.ivory, fontFamily: font, lineHeight: 1.7, whiteSpace: "pre-wrap" } }, verdict.text)));
+}
 function CheckinScreen({ T, W, setCH, onBack, onOpenCoach, onCoachMessages }) {
     const font = "Inter,system-ui,sans-serif";
     const [view, setView] = React.useState("new");
@@ -2474,10 +2589,11 @@ function CheckinScreen({ T, W, setCH, onBack, onOpenCoach, onCoachMessages }) {
     const bullets = (arr, color) => arr.map((x, i) => React.createElement("div", { key: i, style: { fontSize: 12, color: T.ivory, fontFamily: font, lineHeight: 1.6, paddingLeft: 14, position: "relative", marginBottom: 3 } },
         React.createElement("span", { style: { position: "absolute", left: 0, color: color } }, "•"), x));
     const header = React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "16px 20px 12px", borderBottom: "1px solid " + T.border, flexShrink: 0 } },
-        React.createElement("button", { onClick: view === "report" || view === "history" ? () => setView("new") : onBack, "aria-label": "Back", style: { width: 34, height: 34, borderRadius: "50%", border: "1px solid " + T.border2, background: T.card, color: T.ivory, cursor: "pointer", fontSize: 16 } }, "←"),
+        React.createElement("button", { onClick: view === "report" || view === "history" || view === "transform" ? () => setView("new") : onBack, "aria-label": "Back", style: { width: 34, height: 34, borderRadius: "50%", border: "1px solid " + T.border2, background: T.card, color: T.ivory, cursor: "pointer", fontSize: 16 } }, "←"),
         React.createElement("div", { style: { flex: 1 } },
-            React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 18, color: T.ivory } }, view === "report" ? "Weekly Report" : view === "history" ? "Past Check-ins" : "Weekly Check-in"),
+            React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 18, color: T.ivory } }, view === "report" ? "Weekly Report" : view === "history" ? "Past Check-ins" : view === "transform" ? "Transformation" : "Weekly Check-in"),
             React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, fontFamily: font } }, view === "report" && report ? new Date(report.created_on).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short" }) : list.length ? "Last check-in " + agoText(list[list.length - 1].created_on) : "Your first check-in")),
+        view === "new" && list.some(c => (c.slots || []).length) && React.createElement("button", { onClick: () => setView("transform"), style: { fontSize: 10, color: T.gold, background: "transparent", border: "1px solid " + T.gold, borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: font } }, "🎞️ Transform"),
         view === "new" && list.length > 0 && React.createElement("button", { onClick: () => setView("history"), style: { fontSize: 10, color: T.ivoryD, background: "transparent", border: "1px solid " + T.border2, borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: font } }, "History"));
     let body;
     if (view === "new") {
@@ -2516,6 +2632,9 @@ function CheckinScreen({ T, W, setCH, onBack, onOpenCoach, onCoachMessages }) {
                 cid === "team" ? React.createElement("div", { style: { width: 30, textAlign: "center", fontSize: 18 } }, "🤝") : React.createElement(CoachAvatar, { coachId: cid, color: (COACHES.find(c => c.id === cid) || {}).color || T.gold, size: 30 }),
                 React.createElement("div", { style: { flex: 1, fontSize: 12, color: T.ivory, fontFamily: font } }, cid === "team" ? "Team meeting" : coachLabel(cid)),
                 React.createElement("div", { style: { fontSize: 11, fontFamily: font, color: progress[cid] === "done" ? T.green : progress[cid] === "error" ? T.red : T.ivoryD } }, progress[cid] === "done" ? "✓ done" : progress[cid] === "error" ? "✗ failed" : "dekh rahe hain…"))));
+    }
+    else if (view === "transform") {
+        body = React.createElement(TransformView, { T: T, setCH: setCH });
     }
     else if (view === "history") {
         const max = 100;
@@ -2605,6 +2724,8 @@ function GoalStrip({ coachId, color, T }) {
 function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onClear, viewDay, onSwitchCoach }) {
     const [cTab, setCTab] = React.useState("ask");
     const [typing, setTyping] = React.useState(false);
+    const [voiceOn, setVoiceOn] = React.useState(voiceAutoOn());
+    React.useEffect(() => () => stopCoachVoice(), [id]);
     const [pendingAsk, setPendingAsk] = React.useState(null);
     const coach = COACHES.find(c => c.id === id) || {};
     const tips = { mind: ["Name the feeling — \"I feel anxious\" calms the brain more than fighting it.", "Box breathing: in 4, hold 4, out 4, hold 4. Repeat 4 rounds when stressed.", "5-4-3-2-1 grounding: 5 things you see, 4 hear, 3 touch, 2 smell, 1 taste.", "Stuck on a task? Do just 2 minutes. Starting is the hardest part.", "Brain dump at night — write every worry on paper so it stops looping in bed.", "A missed day is data, not failure. Ask why, not what's wrong with me.", "Talking to a real friend or therapist is strength, not weakness."], skin: ["SPF every morning. #1 anti-aging step.", "Niacinamide and Vit C not at same time. One AM one PM.", "Moisturizer on damp skin — locks hydration.", "Retinol at night only — start 2x per week.", "If skin tight after cleanser it is too harsh."], hair: ["Wash 2-3x per week max — overwashing strips oils.", "Condition ends only, never scalp.", "Pat dry, never rub — use microfiber towel.", "Oil on lengths only, not scalp — 30 min before wash.", "Hairstyle should match face shape."], fitness: ["Progressive overload — lift more every week.", "Protein 2g per kg bodyweight every day.", "Rest day is not lazy — muscle grows during rest.", "Sleep 7-8h is part of training. Non-negotiable.", "Compounds first — squat deadlift bench row."], nutrition: ["One glass water first thing in morning.", "Protein in every meal — full and builds muscle.", "Never skip breakfast on training mornings.", "Caffeine after 2pm ruins sleep even if fine.", "Carbs around workout — before energy after recovery."], sleep: ["Same bedtime every night including weekends.", "No screens 1 hour before sleep — melatonin blocked.", "Cool dark room — 18-20 degrees for best sleep.", "Caffeine half-life 6 hours. Last by 2-3pm.", "Cannot sleep? Get up and do something calm."], style: ["Fit beats price — well-fitted cheap wins.", "Capsule: 3 tees 2 jeans 1 chino 2 shirts 2 shoes.", "Shoes and belt same tone — always.", "One statement piece max per outfit.", "Grooming completes the outfit."], grooming: ["Bath every day — non-negotiable.", "Beard oil after shower on slightly damp beard.", "Neckline trim separates sharp from sloppy.", "Fresh clothes daily.", "Oral: 2 min brush tongue scraper floss at night."], ronaldo: ["Train like it's session one, not session five thousand — intensity doesn't get to fade.", "Extra reps after the set ends is where the gap between good and great gets made.", "Discipline in food is discipline everywhere else — protect it even on the hard days.", "Protect your sleep like it's part of training, because it is.", "Review your own day harder than anyone else would — that's how standards rise."] };
@@ -2619,6 +2740,7 @@ function CoachScreen({ id, CH, setCH, CL, L, W, T, gymDay, onBack, onSend, onCle
                     coach.name,
                     " Coach"),
                 React.createElement("div", { style: { fontSize: 10, color: typing ? coach.color : T.ivoryD, fontFamily: "Inter,system-ui,sans-serif" } }, typing ? "typing…" : lastSeenText(CH[id]))),
+            React.createElement("button", { onClick: () => { unlockCoachAudio(); const v = !voiceOn; setVoiceOn(v); store.set(VOICE_AUTO_KEY, v); if (!v) stopCoachVoice(); }, "aria-label": voiceOn ? "Turn coach voice off" : "Turn coach voice on", title: voiceOn ? "Voice on — replies are spoken" : "Voice off", style: { width: 32, height: 32, borderRadius: "50%", border: "1px solid " + (voiceOn ? coach.color : T.border2), background: voiceOn ? coach.color + "22" : "transparent", cursor: "pointer", fontSize: 14, flexShrink: 0 } }, voiceOn ? "🔊" : "🔈"),
             (CH[id] || []).length > 0 && React.createElement("button", { onClick: () => onClear(id), style: { fontSize: 9, color: T.ivoryD, background: "transparent", border: "1px solid " + T.border2, borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontFamily: "Inter,system-ui,sans-serif" } }, "CLEAR")),
         React.createElement("div", { style: { display: "flex", padding: "0 16px", borderBottom: "1px solid " + T.border, overflowX: "auto", scrollbarWidth: "none", flexShrink: 0 } }, ["ask", "tips"].map(t => React.createElement("button", { key: t, style: { padding: "9px 14px", fontSize: 9, letterSpacing: ".1em", textTransform: "uppercase", color: cTab === t ? T.gold : T.ivoryD, cursor: "pointer", border: "none", background: "transparent", borderBottom: cTab === t ? "2px solid " + T.gold : "2px solid transparent", whiteSpace: "nowrap", flexShrink: 0, fontFamily: "Inter,system-ui,sans-serif", fontWeight: cTab === t ? 500 : 300 }, onClick: () => setCTab(t) }, t))),
         React.createElement(GoalStrip, { coachId: id, color: coach.color, T: T }),
@@ -4270,26 +4392,122 @@ const COACH_QA = {
         def: "Ask me for a tip, a motivation push, or to rate your day — I'll answer straight, based on what you actually did today, not what you meant to do.",
     },
 };
-// ── CR7 VOICE NOTES (Web Speech API — no keys, no backend) ──
-function speakCR7(text, onStart, onEnd) {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return false;
-    window.speechSynthesis.cancel();
+// ── COACH VOICES ────────────────────────────────────────────────────────
+// Each coach speaks in their own voice via /api/tts (ElevenLabs / OpenAI /
+// Gemini, whichever key is set). Without a key, or offline, the phone's
+// built-in voices are used with a per-coach pitch and pace.
+const VOICE_PROFILE = {
+    skin: { female: true, rate: 0.98, pitch: 1.05 }, hair: { rate: 0.94, pitch: 0.95 }, fitness: { rate: 1.08, pitch: 0.85 },
+    nutrition: { female: true, rate: 1.0, pitch: 1.12 }, sleep: { rate: 0.86, pitch: 0.95 }, style: { rate: 1.06, pitch: 1.1 },
+    grooming: { rate: 0.92, pitch: 0.75 }, ronaldo: { rate: 0.96, pitch: 0.82 }, mind: { female: true, rate: 0.9, pitch: 1.0 },
+};
+const VOICE_AUTO_KEY = "jos_voice_auto";
+let coachAudio = null, ttsUnavailable = false, voiceSeq = 0;
+const ttsCache = new Map();
+// iOS only lets audio play after a tap; prime the shared player on the first one.
+function unlockCoachAudio() {
+    if (coachAudio) return;
+    try { coachAudio = new Audio(); coachAudio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="; const p = coachAudio.play(); if (p && p.catch) p.catch(() => { }); } catch (_a) { }
+}
+function stopCoachVoice() {
+    voiceSeq++;
+    try { if (coachAudio) coachAudio.pause(); } catch (_a) { }
+    try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (_a) { }
+}
+function voiceText(t) {
+    return String(t || "").replace(/<[^>]+>/g, "").replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, "").replace(/[•*_#]/g, "").replace(/\s+/g, " ").replace(/\s+([.,!?])/g, "$1").replace(/([.,!?])\1+/g, "$1").trim();
+}
+function browserVoiceFor(coachId) {
+    const voices = (window.speechSynthesis && window.speechSynthesis.getVoices()) || [];
+    const prof = VOICE_PROFILE[coachId] || {};
+    const fem = /female|woman|veena|lekha|heera|kalpana|zira|samantha|karen|moira|tessa|susan|victoria|fiona|neerja|swara/i;
+    const male = /male|rishi|ravi|hemant|david|daniel|alex|fred|aaron|arthur|prabhat|madhur/i;
+    const want = v => prof.female ? fem.test(v.name) && !/\bmale/i.test(v.name.replace(/female/i, "")) : male.test(v.name.replace(/female/i, "")) && !fem.test(v.name);
+    const indian = voices.filter(v => /en[-_]IN/i.test(v.lang));
+    return indian.find(want) || voices.filter(v => /^en/i.test(v.lang)).find(want) || indian[0] || voices.find(v => /^en/i.test(v.lang)) || null;
+}
+function speakBrowser(coachId, text, onStart, onEnd) {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) { if (onEnd) onEnd(); return false; }
+    const prof = VOICE_PROFILE[coachId] || {};
     const u = new SpeechSynthesisUtterance(text);
-    const voices = window.speechSynthesis.getVoices();
-    const preferred = voices.find(v => /male|david|daniel|alex|fred|google uk english male/i.test(v.name)) || voices.find(v => v.lang && v.lang.startsWith("en"));
-    if (preferred) u.voice = preferred;
-    u.rate = 0.96;
-    u.pitch = 0.82;
-    u.onstart = onStart;
-    u.onend = onEnd;
-    u.onerror = onEnd;
+    const v = browserVoiceFor(coachId);
+    if (v) { u.voice = v; u.lang = v.lang; } else u.lang = "en-IN";
+    u.rate = prof.rate || 1; u.pitch = prof.pitch || 1;
+    u.onstart = onStart; u.onend = onEnd; u.onerror = onEnd;
+    window.speechSynthesis.cancel();
     window.speechSynthesis.speak(u);
     return true;
+}
+function speakCoach(coachId, text, onStart, onEnd) {
+    stopCoachVoice();
+    const seq = voiceSeq;
+    const t = voiceText(text);
+    if (!t) { if (onEnd) onEnd(); return false; }
+    if (onStart) onStart();
+    const done = () => { if (seq === voiceSeq && onEnd) onEnd(); };
+    (async () => {
+        if (!ttsUnavailable) {
+            try {
+                const key = coachId + "|" + t;
+                let url = ttsCache.get(key);
+                if (!url) {
+                    const r = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ coach: coachId, text: t }) });
+                    if (r.status === 501 || r.status === 404) ttsUnavailable = true;
+                    if (!r.ok) throw new Error("tts " + r.status);
+                    url = URL.createObjectURL(await r.blob());
+                    ttsCache.set(key, url);
+                }
+                if (seq !== voiceSeq) return;
+                if (!coachAudio) coachAudio = new Audio();
+                coachAudio.onended = done; coachAudio.onerror = done;
+                coachAudio.src = url;
+                await coachAudio.play();
+                return;
+            } catch (_a) { if (seq !== voiceSeq) return; }
+        }
+        speakBrowser(coachId, t, null, done);
+    })();
+    return true;
+}
+function voiceAutoOn() { return !!store.get(VOICE_AUTO_KEY); }
+function SpeakButton({ coachId, text, color }) {
+    const [playing, setPlaying] = React.useState(false);
+    const toggle = (e) => {
+        e.stopPropagation();
+        unlockCoachAudio();
+        if (playing) { stopCoachVoice(); setPlaying(false); return; }
+        speakCoach(coachId, text, () => setPlaying(true), () => setPlaying(false));
+    };
+    return React.createElement("button", { onClick: toggle, "aria-label": playing ? "Stop voice" : "Play in coach's voice", style: { background: "transparent", border: "none", padding: "0 2px", cursor: "pointer", fontSize: 12, color: color, opacity: playing ? 1 : .55, lineHeight: 1 } }, playing ? "⏸" : "🔊");
+}
+// Voice typing: Hinglish dictation into the chat box (en-IN keeps it in English letters).
+function speechRecognitionCtor() { return typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition) || null; }
+function MicButton({ T, onText }) {
+    const [on, setOn] = React.useState(false);
+    const recRef = React.useRef(null);
+    const Ctor = speechRecognitionCtor();
+    if (!Ctor) return null;
+    const toggle = () => {
+        if (on && recRef.current) { recRef.current.stop(); return; }
+        stopCoachVoice();
+        const rec = new Ctor();
+        rec.lang = "en-IN"; rec.interimResults = false; rec.continuous = false;
+        rec.onresult = (e) => { const t = Array.from(e.results).map(r => r[0].transcript).join(" ").trim(); if (t) onText(t); };
+        rec.onend = () => setOn(false); rec.onerror = () => setOn(false);
+        recRef.current = rec;
+        try { rec.start(); setOn(true); } catch (_a) { setOn(false); }
+    };
+    return React.createElement("button", { onClick: toggle, "aria-label": on ? "Stop listening" : "Speak your message", title: on ? "Listening… tap to stop" : "Speak", style: { width: 40, height: 40, borderRadius: "50%", background: on ? "#C42A2A" : T.card2, border: "1px solid " + (on ? "#FF3B3B" : T.border2), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 16, animation: on ? "pulse 1.2s ease-in-out infinite" : "none" } }, "🎤");
+}
+// Ronaldo's daily-tip voice notes use the same coach voice.
+function speakCR7(text, onStart, onEnd) {
+    unlockCoachAudio();
+    return speakCoach("ronaldo", text, onStart, onEnd);
 }
 function MiniVoiceButton({ text, color, T }) {
     const [playing, setPlaying] = React.useState(false);
     const toggle = () => {
-        if (playing) { window.speechSynthesis.cancel(); setPlaying(false); return; }
+        if (playing) { stopCoachVoice(); setPlaying(false); return; }
         const ok = speakCR7(text, () => setPlaying(true), () => setPlaying(false));
         if (!ok) setPlaying(false);
     };
@@ -4298,14 +4516,15 @@ function MiniVoiceButton({ text, color, T }) {
             ? React.createElement("svg", { width: "8", height: "8", viewBox: "0 0 24 24", fill: "#0A0800" }, React.createElement("rect", { x: "5", y: "4", width: "5", height: "16" }), React.createElement("rect", { x: "14", y: "4", width: "5", height: "16" }))
             : React.createElement("svg", { width: "9", height: "9", viewBox: "0 0 24 24", fill: "#0A0800" }, React.createElement("path", { d: "M6 4l15 8-15 8V4z" })));
 }
-function VoiceNoteBubble({ text, color, T }) {
+function VoiceNoteBubble({ text, color, T, coachId }) {
     const [playing, setPlaying] = React.useState(false);
     const bars = React.useMemo(() => Array.from({ length: 22 }).map(() => 5 + Math.round(Math.random() * 14)), [text]);
     const estSec = Math.max(2, Math.round(text.split(/\s+/).length / 2.4));
     const mm = Math.floor(estSec / 60), ss = estSec % 60;
     const toggle = () => {
-        if (playing) { window.speechSynthesis.cancel(); setPlaying(false); return; }
-        const ok = speakCR7(text, () => setPlaying(true), () => setPlaying(false));
+        if (playing) { stopCoachVoice(); setPlaying(false); return; }
+        unlockCoachAudio();
+        const ok = speakCoach(coachId || "ronaldo", text, () => setPlaying(true), () => setPlaying(false));
         if (!ok) setPlaying(false);
     };
     return (React.createElement("div", { style: { maxWidth: "88%", alignSelf: "flex-start", display: "flex", flexDirection: "column", gap: 6 } },
@@ -4714,6 +4933,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const userMsg = { role: "user", content: msg.trim() || "📷", ts: Date.now() };
         if (pic) userMsg.image = pic.thumb;
         setPhoto(null);
+        unlockCoachAudio();
         bumpBond(id);
         const newHistUser = [...hist, userMsg];
         const up1 = Object.assign({}, CH, { [id]: newHistUser });
@@ -4736,6 +4956,8 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
             const raw = await ai(fullSys, aiMsgs, 800);
             const reply = processCoachReply(raw, id);
             if (reply.milestone) { setMilestone(reply.milestone); setTimeout(() => setMilestone(null), 3200); }
+            // With voice on, the coach starts talking as the first text lands.
+            if (voiceAutoOn()) speakCoach(id, reply.parts.map(x => /[.!?]$/.test(x.trim()) ? x : x + ".").join(" "));
             // Deliver the coach's texts one by one, with typing time in between.
             let newHist = newHistUser;
             for (let pi = 0; pi < reply.parts.length; pi++) {
@@ -4787,7 +5009,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: "12px 20px", overflowY: "auto", scrollbarWidth: "none" } },
             hist.length === 0 && (React.createElement("div", { style: { maxWidth: "90%", padding: "12px 16px", borderRadius: 14, fontSize: 12, lineHeight: 1.6, background: T.card2, border: "1px solid " + T.border, color: T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } },
                 id === "ronaldo" ? "Talent without working hard is nothing. Tell me what you did today \u2014 gym, sleep, food \u2014 and I'll tell you straight where you stand." : ("Ask me anything about your " + coach.name.toLowerCase() + " routine. I know everything \u2014 your products, schedule, targets."))),
-            hist.map((m, i) => React.createElement(React.Fragment, { key: i }, (m.role === "assistant" && id === "ronaldo" ? React.createElement(VoiceNoteBubble, { key: i, text: m.content, color: coach.color, T: T }) : React.createElement("div", { key: i, style: { maxWidth: "88%", padding: "11px 15px", borderRadius: 14, fontSize: 12, lineHeight: 1.7, background: m.role === "user" ? "rgba(212,175,55,.1)" : T.card2, border: "1px solid " + (m.role === "user" ? "rgba(212,175,55,.2)" : T.border), color: m.role === "user" ? T.gold : T.ivory, alignSelf: m.role === "user" ? "flex-end" : "flex-start", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } }, m.image && React.createElement("img", { src: m.image, alt: "Photo", style: { display: "block", width: "100%", maxWidth: 220, borderRadius: 10, marginBottom: m.content === "📷" ? 0 : 6 } }), m.image && m.content === "📷" ? null : m.content, msgTime(m))), m.handoff && id !== "mind" && onTalkToMeher && React.createElement("button", { onClick: () => onTalkToMeher(m.handoff), style: { alignSelf: "flex-start", marginTop: -4, padding: "8px 14px", borderRadius: 20, border: "1px solid rgba(142,124,195,.5)", background: "rgba(142,124,195,.12)", color: "#C8B8F0", fontSize: 12, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, cursor: "pointer" } }, "💜 Talk to Dr. Meher"))),
+            hist.map((m, i) => React.createElement(React.Fragment, { key: i }, (m.role === "assistant" && id === "ronaldo" ? React.createElement(VoiceNoteBubble, { key: i, text: m.content, color: coach.color, T: T }) : React.createElement("div", { key: i, style: { maxWidth: "88%", padding: "11px 15px", borderRadius: 14, fontSize: 12, lineHeight: 1.7, background: m.role === "user" ? "rgba(212,175,55,.1)" : T.card2, border: "1px solid " + (m.role === "user" ? "rgba(212,175,55,.2)" : T.border), color: m.role === "user" ? T.gold : T.ivory, alignSelf: m.role === "user" ? "flex-end" : "flex-start", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300 } }, m.image && React.createElement("img", { src: m.image, alt: "Photo", style: { display: "block", width: "100%", maxWidth: 220, borderRadius: 10, marginBottom: m.content === "📷" ? 0 : 6 } }), m.image && m.content === "📷" ? null : m.content, m.role === "assistant" ? React.createElement("div", { style: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10 } }, React.createElement(SpeakButton, { coachId: id, text: m.content, color: coach.color }), msgTime(m)) : msgTime(m))), m.handoff && id !== "mind" && onTalkToMeher && React.createElement("button", { onClick: () => onTalkToMeher(m.handoff), style: { alignSelf: "flex-start", marginTop: -4, padding: "8px 14px", borderRadius: 20, border: "1px solid rgba(142,124,195,.5)", background: "rgba(142,124,195,.12)", color: "#C8B8F0", fontSize: 12, fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, cursor: "pointer" } }, "💜 Talk to Dr. Meher"))),
             thinking && React.createElement("div", { style: { maxWidth: "60%", padding: "11px 15px", borderRadius: 14, background: T.card2, border: "1px solid " + T.border, alignSelf: "flex-start", display: "flex", gap: 4, alignItems: "center" } }, [0, 1, 2].map(i => React.createElement("div", { key: i, style: { width: 6, height: 6, borderRadius: "50%", background: coach.color, opacity: .6, animation: "pulse 1.2s ease-in-out " + (i * 0.2) + "s infinite" } }))),
             React.createElement("div", { ref: endRef })),
         React.createElement(LevelUpBanner, { levelUp: levelUp, color: coach.color, T: T, subtitle: levelUp ? "You and " + coach.name + " are getting closer" : "" }),
@@ -4799,6 +5021,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         hist.length === 0 && (React.createElement("div", { style: { display: "flex", gap: 6, padding: "4px 20px 6px", overflowX: "auto", scrollbarWidth: "none", flexWrap: "wrap" } }, ps.map(p => (React.createElement("button", { key: p, onClick: () => send(p), style: { padding: "6px 12px", borderRadius: 18, border: "1px solid " + T.border2, background: T.card, fontSize: 10, color: T.ivoryM, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 300, marginBottom: 4 } }, p))))),
         React.createElement("div", { style: { display: "flex", gap: 8, padding: "8px 20px 16px", alignItems: "flex-end" } },
             React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", onChange: pickPhoto, style: { display: "none" } }),
+            React.createElement(MicButton, { T: T, onText: (t) => setInp(prev => (prev ? prev + " " : "") + t) }),
             React.createElement("button", { onClick: () => fileRef.current && fileRef.current.click(), "aria-label": "Send a photo", title: "Send a photo", style: { width: 40, height: 40, borderRadius: "50%", background: T.card2, border: "1px solid " + T.border2, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 16 } }, "📷"),
             React.createElement("input", { style: { flex: 1, minWidth: 0, background: T.card2, border: "1px solid " + T.border2, borderRadius: 22, color: T.ivory, fontFamily: "Inter,system-ui,sans-serif", fontSize: 12, padding: "11px 18px", outline: "none", fontWeight: 300 }, placeholder: photo ? "Add a note…" : "Ask your coach...", value: inp, onChange: e => setInp(e.target.value), onKeyDown: e => { if (e.key === "Enter") {
                     send(inp);
