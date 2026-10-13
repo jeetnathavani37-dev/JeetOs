@@ -1022,6 +1022,9 @@ function buildCoachSystem(coach, CH, ctx) {
     const stable = parts.splice(0).join("\n\n");
     const h = coach.id === "mind" ? freshMeherHandoff() : null;
     if (h) parts.push("REFERRAL: " + coachLabel(h.from) + " just suggested Jeet talk to you. What they noticed: " + h.reason + "\nAcknowledge it gently and naturally in your first reply, then start understanding what's going on.");
+    parts.push(profilePrompt());
+    const past = pastConvosPrompt(coach.id);
+    if (past) parts.push(past);
     parts.push(teamMemoryPrompt(CH, coach.id));
     parts.push(commitmentsPrompt(coach.id));
     parts.push(goalsPrompt(coach.id));
@@ -1375,6 +1378,172 @@ function aiErrorText(e) {
         : /529|overloaded|5\d\d/i.test(r) ? "AI server abhi busy hai"
         : r.slice(0, 120) || "AI tak nahi pahunch paya";
     return "⚠️ Message coach tak nahi pahuncha: " + why + ".";
+}
+// ── LONG-TERM MEMORY: who Jeet is + what was said in past chats ────────
+// A background "memory pass" reads new messages from every chat and keeps a
+// profile up to date; old turns that leave the 20-message window are kept as
+// short dated summaries. Both sync to Supabase and go into every coach prompt.
+const PROFILE_KEY = "jos_profile";
+const SUMMARIES_KEY = "jos_convo_summaries";
+const MEMSTATE_KEY = "jos_mem_state";
+const PROFILE_SECTIONS = [
+    { k: "about", l: "Who he is", i: "🙋" },
+    { k: "goals", l: "What he wants", i: "🎯" },
+    { k: "routine", l: "Routine & constraints", i: "🗓" },
+    { k: "preferences", l: "Likes & dislikes", i: "❤️" },
+    { k: "struggles", l: "What gets in the way", i: "🧱" },
+    { k: "wins", l: "Wins & progress", i: "🏆" },
+    { k: "style", l: "How to coach him", i: "🧭" },
+    { k: "life", l: "Life & people", i: "👥" },
+];
+function emptyProfile() { const p = { updated: 0 }; PROFILE_SECTIONS.forEach(s => { p[s.k] = []; }); return p; }
+function loadProfile() { const p = store.get(PROFILE_KEY); return Object.assign(emptyProfile(), p && typeof p === "object" ? p : {}); }
+function saveProfile(p, fromServer) {
+    p.updated = fromServer ? p.updated : Date.now();
+    store.set(PROFILE_KEY, p);
+    if (!fromServer) pushProfile(p);
+}
+async function pushProfile(p) {
+    if (!supabaseReady()) return;
+    try {
+        await fetch(SUPABASE_URL + "/rest/v1/jeetos_profile?on_conflict=id", { method: "POST", headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }),
+            body: JSON.stringify({ id: "jeet", data: p, updated_at: new Date(p.updated || Date.now()).toISOString() }) });
+    } catch (_a) { }
+}
+async function syncProfile() {
+    if (!supabaseReady()) return loadProfile();
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_profile?id=eq.jeet&select=data", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        const local = loadProfile();
+        const remote = r.ok && Array.isArray(rows) && rows[0] && rows[0].data;
+        if (remote && (remote.updated || 0) > (local.updated || 0)) saveProfile(Object.assign(emptyProfile(), remote), true);
+        else if ((local.updated || 0) > ((remote && remote.updated) || 0)) pushProfile(local);
+    } catch (_a) { }
+    return loadProfile();
+}
+function profileCount(p) { p = p || loadProfile(); return PROFILE_SECTIONS.reduce((n, s) => n + (p[s.k] || []).length, 0); }
+// Applies {add, update, remove} from the memory pass (or the UI) to the profile.
+function applyProfileOps(ops, src) {
+    if (!ops) return 0;
+    const p = loadProfile();
+    const norm = t => String(t || "").trim().toLowerCase();
+    let n = 0;
+    (ops.remove || []).forEach(o => { const list = p[o.section]; if (!list) return; const i = list.findIndex(x => norm(x.t) === norm(o.text)); if (i >= 0) { list.splice(i, 1); n++; } });
+    (ops.update || []).forEach(o => { const list = p[o.section]; if (!list || !o.new) return; const it = list.find(x => norm(x.t) === norm(o.old)); if (it) { it.t = String(o.new).slice(0, 220); it.d = localIsoDate(); n++; } else { list.push({ t: String(o.new).slice(0, 220), d: localIsoDate(), src: src }); n++; } });
+    (ops.add || []).forEach(o => { const list = p[o.section]; const t = String(o.text || "").trim(); if (!list || !t || list.some(x => norm(x.t) === norm(t))) return; list.push({ t: t.slice(0, 220), d: localIsoDate(), src: src }); n++; });
+    PROFILE_SECTIONS.forEach(s => { if (p[s.k].length > 14) p[s.k] = p[s.k].slice(-14); });
+    if (n) saveProfile(p);
+    return n;
+}
+function loadSummaries() { const l = store.get(SUMMARIES_KEY); return Array.isArray(l) ? l : []; }
+function saveSummaries(l) { store.set(SUMMARIES_KEY, l.slice(-150)); }
+async function pushSummary(s) {
+    if (!supabaseReady()) return;
+    try { await fetch(SUPABASE_URL + "/rest/v1/jeetos_convo_summaries?on_conflict=id", { method: "POST", headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=ignore-duplicates" }), body: JSON.stringify({ id: s.id, coach: s.coach, from_ts: s.from, to_ts: s.to, summary: s.text }) }); } catch (_a) { }
+}
+async function syncSummaries() {
+    if (!supabaseReady()) return loadSummaries();
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_convo_summaries?select=id,coach,from_ts,to_ts,summary&order=to_ts.asc&limit=150", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        if (!r.ok || !Array.isArray(rows)) return loadSummaries();
+        const byId = {};
+        loadSummaries().forEach(s => { byId[s.id] = s; });
+        rows.forEach(x => { if (!byId[x.id]) byId[x.id] = { id: x.id, coach: x.coach, from: +x.from_ts, to: +x.to_ts, text: x.summary }; });
+        const rowIds = new Set(rows.map(x => x.id));
+        const all = Object.values(byId).sort((a, b) => a.to - b.to);
+        all.filter(s => !rowIds.has(s.id)).forEach(pushSummary);
+        saveSummaries(all);
+    } catch (_a) { }
+    return loadSummaries();
+}
+function threadName(k) { return k === "team" ? "the Team Jeet group" : personaName(k); }
+function chatLine(k, m) {
+    const who = m.role === "user" ? "Jeet" : personaName(m.coach || k);
+    return who + ": " + (m.image ? "[photo] " : "") + String(m.content || "").replace(/\s+/g, " ").slice(0, 400);
+}
+// Summarise turns that have scrolled out of the 20-message window (or all of them before a clear).
+async function summarizeOldTurns(k, list, force) {
+    const h = (list || []).filter(m => !m.error && m.ts && m.content);
+    const done = loadSummaries().filter(s => s.coach === k);
+    const lastTo = done.length ? Math.max(...done.map(s => s.to)) : 0;
+    const pending = (force ? h : h.slice(0, Math.max(0, h.length - 20))).filter(m => m.ts > lastTo);
+    if (pending.length < (force ? 2 : 10)) return;
+    for (let i = 0; i < pending.length; i += 40) {
+        const chunk = pending.slice(i, i + 40);
+        try {
+            const raw = await ai(`Summarise this past WhatsApp chat between Jeet and ${threadName(k)} in 2-4 short lines, third person, past tense. Keep what matters later: what he asked or told about himself, what was advised or decided, numbers, promises, how he felt. Specific, no fluff, no intro. Plain text.`,
+                [{ role: "user", content: chunk.map(m => chatLine(k, m)).join("\n") }], 600);
+            const text = String(raw).replace(/<[^>]+>/g, "").trim().slice(0, 700);
+            if (!text) continue;
+            const s = { id: "s" + chunk[0].ts.toString(36) + k, coach: k, from: chunk[0].ts, to: chunk[chunk.length - 1].ts, text: text };
+            saveSummaries(loadSummaries().concat([s]));
+            pushSummary(s);
+        } catch (_a) { return; }
+    }
+}
+let memoryBusy = false;
+// Learns durable things about Jeet from everything said since the last pass.
+async function runMemoryPass(CH, force) {
+    if (memoryBusy) return 0;
+    const st = store.get(MEMSTATE_KEY) || { lastTs: 0 };
+    const fresh = [];
+    Object.keys(CH || {}).forEach(k => (CH[k] || []).forEach(m => { if (m && m.ts > st.lastTs && !m.error && m.content) fresh.push({ k: k, m: m }); }));
+    if (fresh.filter(x => x.m.role === "user").length < (force ? 1 : 4)) return 0;
+    fresh.sort((a, b) => a.m.ts - b.m.ts);
+    const slice = fresh.slice(-80);
+    memoryBusy = true;
+    try {
+        const p = loadProfile();
+        const current = PROFILE_SECTIONS.map(s => s.k + ":\n" + ((p[s.k] || []).map(x => "- " + x.t).join("\n") || "- (empty)")).join("\n");
+        const sys = `You keep the long-term profile of Jeet that all his coaches share (fitness, nutrition, skin, hair, sleep, style, grooming, discipline, mental health). Read the new chat messages and update the profile with DURABLE, useful things about him — the kind a coach who's known him for months would remember.
+
+Sections: about (who he is, work, studies, body stats), goals (what he wants, short and long term, and WHY), routine (schedule, timings, constraints like college/work/travel/budget/equipment), preferences (likes, dislikes, foods, products, styles), struggles (recurring blockers, patterns, why he skips), wins (progress, PRs, things that worked), style (how he likes to be coached — tough love vs gentle, language, detail level), life (family, friends, Luxella, events coming up).
+
+Rules:
+- Only what Jeet said or clearly confirmed — not the coaches' advice. Ignore small talk and one-off moods.
+- Short third-person items with specifics ("Wants visible abs by March for Dubai trip", "College 9-3 on weekdays, gym only after 6 pm").
+- If new info changes an existing item, use update with the exact old text. Remove items he says are no longer true.
+- Never store passwords, keys, money/account numbers or crisis/self-harm details.
+
+CURRENT PROFILE:
+${current}
+
+Reply with ONLY JSON: {"add":[{"section":"goals","text":"..."}],"update":[{"section":"...","old":"exact current text","new":"..."}],"remove":[{"section":"...","text":"exact current text"}]} — empty arrays if nothing new.`;
+        const transcript = slice.map(x => "[" + new Date(x.m.ts).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) + ", " + threadName(x.k) + "] " + chatLine(x.k, x.m)).join("\n");
+        const raw = await ai(sys, [{ role: "user", content: transcript }], 2000);
+        const ops = parseJsonLoose(raw);
+        if (!ops) return 0;
+        const n = applyProfileOps(ops, "memory");
+        store.set(MEMSTATE_KEY, { lastTs: slice[slice.length - 1].m.ts, at: Date.now() });
+        return n;
+    } catch (_a) { return 0; }
+    finally { memoryBusy = false; }
+}
+// Called after every reply: learn in the background, summarise what scrolled away.
+function afterChatTurn(k, CH) {
+    setTimeout(() => { runMemoryPass(CH); summarizeOldTurns(k, CH[k]); }, 1500);
+}
+function profilePrompt() {
+    const p = loadProfile();
+    const filled = PROFILE_SECTIONS.filter(s => (p[s.k] || []).length);
+    const gaps = PROFILE_SECTIONS.filter(s => ["goals", "routine", "style", "struggles", "preferences"].includes(s.k) && !(p[s.k] || []).length).map(s => s.l.toLowerCase());
+    return `WHO JEET IS — built up from all his conversations with the team (trust this, it's what he told you over time):
+${filled.length ? filled.map(s => s.l.toUpperCase() + ":\n" + p[s.k].map(x => "- " + x.t).join("\n")).join("\n") : "- Still getting to know him."}
+How to use it:
+- Talk like someone who knows him. Bring things up naturally when relevant ("tu bola tha Dubai trip se pehle abs chahiye…") — never recite the list.
+- Any plan, routine, diet, product or advice you give must fit HIM: build it around what he wants, his routine and constraints, what has and hasn't worked for him, and how he likes to be coached — and say in a few words why it fits him.
+- If he says something that contradicts this, go with what he says now.${gaps.length ? "\n- You don't know yet: " + gaps.join(", ") + ". When it fits naturally, ask ONE light question to learn one of these — never interview him, and not in every message." : ""}`;
+}
+function pastConvosPrompt(k) {
+    const all = loadSummaries();
+    const mine = all.filter(s => s.coach === k).slice(-8);
+    const others = all.filter(s => s.coach !== k).slice(-4);
+    if (!mine.length && !others.length) return "";
+    return `PAST CONVERSATIONS (older than the messages below — this is what happened before):
+${mine.map(s => "- " + agoText(localIsoDate(new Date(s.to))) + ": " + s.text).join("\n") || "- nothing older with you yet"}${others.length ? "\nRecently with the rest of the team:\n" + others.map(s => "- " + threadName(s.coach) + ", " + agoText(localIsoDate(new Date(s.to))) + ": " + s.text).join("\n") : ""}
+Remember these like a real coach would — refer back to them when it helps, and don't ask him things he already told you.`;
 }
 function typingDelay(text) { return Math.min(2400, 500 + String(text).length * 18); }
 function msgTime(m) {
@@ -2133,16 +2302,43 @@ function TeamMemoryCard({ T }) {
     const [list, setList] = React.useState(loadTeamMemory());
     const [promises, setPromises] = React.useState(loadCommitments());
     const [goals, setGoals] = React.useState(loadGoals());
-    React.useEffect(() => { if (open) { setList(loadTeamMemory()); syncTeamMemory().then(setList); setPromises(loadCommitments()); syncCommitments().then(setPromises); setGoals(loadGoals()); syncGoals().then(setGoals); } }, [open]);
+    const [profile, setProfile] = React.useState(loadProfile());
+    const [summaries, setSummaries] = React.useState(loadSummaries());
+    const [addSec, setAddSec] = React.useState("goals");
+    const [addText, setAddText] = React.useState("");
+    const [learning, setLearning] = React.useState("");
+    React.useEffect(() => { if (open) { setList(loadTeamMemory()); syncTeamMemory().then(setList); setPromises(loadCommitments()); syncCommitments().then(setPromises); setGoals(loadGoals()); syncGoals().then(setGoals); syncProfile().then(setProfile); syncSummaries().then(setSummaries); } }, [open]);
+    const removeItem = (sec, t) => { applyProfileOps({ remove: [{ section: sec, text: t }] }); setProfile(loadProfile()); };
+    const addItem = () => { if (!addText.trim()) return; applyProfileOps({ add: [{ section: addSec, text: addText.trim() }] }, "you"); setAddText(""); setProfile(loadProfile()); };
+    const learnNow = async () => { setLearning("Coaches tumhari chats padh rahe hain…"); const n = await runMemoryPass(store.get("jos_ch") || {}, true); setProfile(loadProfile()); setLearning(n ? n + " nayi baatein yaad rakhi ✓" : "Kuch naya nahi mila — aur baat karo coaches se 🙂"); };
     const remove = (i) => { const gone = list[i]; const next = list.filter((_, j) => j !== i); saveTeamMemory(next); setList(next); if (gone) deleteTeamMemoryFact(gone.text); };
     const font = "Inter,system-ui,sans-serif";
     return React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 14px", marginBottom: 16 } },
         React.createElement("div", { onClick: () => setOpen(!open), style: { display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" } },
             React.createElement("div", null,
-                React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontFamily: font, fontWeight: 500 } }, "🧠 Team Memory"),
-                React.createElement("div", { style: { fontSize: 10, color: T.ivoryD, fontFamily: font, marginTop: 2 } }, list.length + (list.length === 1 ? " thing" : " things") + " your coaches know about you · synced across devices")),
+                React.createElement("div", { style: { fontSize: 14, color: T.ivory, fontFamily: font, fontWeight: 600 } }, "🧠 Coaches tumhe kitna jaante hain"),
+                React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD, fontFamily: font, marginTop: 3 } }, (profileCount(profile) + list.length) + " baatein yaad · " + summaries.length + " purani conversations · har device pe sync")),
             React.createElement("span", { style: { color: T.ivoryD, fontSize: 12 } }, open ? "▴" : "▾")),
         open && React.createElement("div", { style: { marginTop: 10 } },
+            React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, fontFamily: font, lineHeight: 1.55, marginBottom: 8 } }, "Jo bhi tum kisi coach ko batate ho, coaches dheere-dheere yahan yaad rakhte hain aur usi hisaab se plan karte hain. Galat ho to ✕ dabao, kuch add karna ho to neeche likho."),
+            PROFILE_SECTIONS.map(sec => React.createElement("div", { key: sec.k, style: { padding: "8px 0", borderTop: "1px solid " + T.border } },
+                React.createElement("div", { style: { fontSize: 12, color: T.gold, fontFamily: font, fontWeight: 600, marginBottom: 4 } }, sec.i + " " + sec.l),
+                (profile[sec.k] || []).length === 0 ? React.createElement("div", { style: { fontSize: 12, color: T.ivoryD, fontFamily: font, fontStyle: "italic" } }, "Abhi pata nahi")
+                    : profile[sec.k].map((it, j) => React.createElement("div", { key: j, style: { display: "flex", gap: 8, alignItems: "flex-start", padding: "3px 0" } },
+                        React.createElement("div", { style: { flex: 1, fontSize: 13, color: T.ivory, fontFamily: font, lineHeight: 1.5 } }, it.t, React.createElement("span", { style: { fontSize: 10.5, color: T.ivoryD, marginLeft: 6 } }, it.d ? agoText(it.d) : "")),
+                        React.createElement("button", { onClick: () => removeItem(sec.k, it.t), "aria-label": "Forget: " + it.t, style: { background: "transparent", border: "none", color: T.ivoryD, fontSize: 13, cursor: "pointer", padding: "0 4px" } }, "✕"))))),
+            React.createElement("div", { style: { display: "flex", gap: 6, margin: "10px 0 6px" } },
+                React.createElement("select", { value: addSec, onChange: e => setAddSec(e.target.value), "aria-label": "Section", style: { background: T.card2, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 10, padding: "0 6px", fontSize: 12, fontFamily: font, maxWidth: 120 } }, PROFILE_SECTIONS.map(sec => React.createElement("option", { key: sec.k, value: sec.k }, sec.l))),
+                React.createElement("input", { value: addText, onChange: e => setAddText(e.target.value), onKeyDown: e => { if (e.key === "Enter") addItem(); }, placeholder: "Khud add karo…", style: { flex: 1, minWidth: 0, background: T.card2, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 10, padding: "9px 10px", fontSize: 13, fontFamily: font, outline: "none" } }),
+                React.createElement("button", { onClick: addItem, style: { padding: "0 12px", borderRadius: 10, border: "none", background: T.gold, color: "#16120A", fontWeight: 700, fontSize: 12, cursor: "pointer" } }, "Add")),
+            React.createElement("button", { onClick: learnNow, disabled: !!learning && learning.endsWith("…"), style: { width: "100%", padding: "9px", borderRadius: 10, border: "1px solid " + T.border2, background: "transparent", color: T.ivory, fontSize: 12.5, fontFamily: font, cursor: "pointer", marginBottom: 4 } }, "🔄 Abhi chats se seekho"),
+            learning && React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD, fontFamily: font, textAlign: "center", marginBottom: 6 } }, learning),
+            summaries.length > 0 && React.createElement("div", { style: { marginTop: 10 } },
+                React.createElement("div", { style: { fontSize: 11, color: T.gold, fontFamily: font, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 } }, "💬 Purani baatein"),
+                summaries.slice(-10).reverse().map(sm => React.createElement("div", { key: sm.id, style: { padding: "6px 0", borderTop: "1px solid " + T.border } },
+                    React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD, fontFamily: font } }, threadName(sm.coach) + " · " + agoText(localIsoDate(new Date(sm.to)))),
+                    React.createElement("div", { style: { fontSize: 12.5, color: T.ivory, fontFamily: font, lineHeight: 1.5 } }, sm.text)))),
+            React.createElement("div", { style: { fontSize: 11, color: T.gold, fontFamily: font, letterSpacing: ".08em", textTransform: "uppercase", margin: "12px 0 4px" } }, "📝 Other notes"),
             list.length === 0
                 ? React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, fontFamily: font, lineHeight: 1.6 } }, "Nothing yet. Tell any coach about your goals, routine or changes — every coach will remember it.")
                 : list.slice().reverse().map((f, ri) => {
@@ -2397,7 +2593,9 @@ LAST WEEK: ${statsText(prevStats)}
 ${stats.dayNotes.length ? "His day notes: " + stats.dayNotes.join(" | ") + "\n" : ""}${prevRev ? `YOUR LAST CHECK-IN (${prevCheckin.created_on}): you gave ${prevRev.score != null ? prevRev.score + "/10" : "no score"}; your plan was: ${(prevRev.plan || []).join("; ")}. Judge whether he followed that plan and whether it worked.` : "This is your first weekly check-in with him."}
 His goals with you: ${goals.map(goalLine).join("; ") || "none yet — suggest one in the plan if it makes sense"}.
 Promises due this week: ${promises.map(c => `"${c.text}" (${c.status}, to ${coachLabel(c.coach)})`).join("; ") || "none"}.
-What the team knows about him: ${loadTeamMemory().map(f => f.text).join("; ") || "nothing yet"}.
+${profilePrompt()}
+Other notes: ${loadTeamMemory().map(f => f.text).join("; ") || "none"}.
+Make the plan fit what he wants and his routine/constraints from the profile.
 His own note about the week: ${note ? "\"" + note + "\"" : "none"}.
 PHOTOS: ${labels.length ? "attached in this order — " + labels.map((l, i) => (i + 1) + ") " + l).join("; ") + ". Compare them carefully." : "none for your area this week — judge on the numbers."}
 
@@ -2787,7 +2985,9 @@ HIDDEN TAGS (inside a coach's text, at its end; the app strips them):
 - <commit due="YYYY-MM-DD">promise he just made</commit> — on the coach he promised.
 - <resolve id="ID">done|missed</resolve> — when he says how a promise went.
 
-WHAT THE TEAM KNOWS: ${loadTeamMemory().map(f => f.text).join("; ") || "nothing yet"}
+${profilePrompt()}
+${pastConvosPrompt("team")}
+OTHER NOTES THE TEAM SAVED: ${loadTeamMemory().map(f => f.text).join("; ") || "none"}
 OPEN PROMISES (today ${today}):
 ${promises || "- none"}
 ACTIVE GOALS:
@@ -2857,6 +3057,7 @@ function GroupScreen({ T, CH, setCH, L, W, viewDay, onBack, onOpenCoach }) {
                 list = list.concat([{ role: "assistant", coach: replies[i].coach, content: replies[i].text, ts: Date.now() }]);
                 save(list);
             }
+            afterChatTurn(GROUP_ID, Object.assign({}, CH, { [GROUP_ID]: list }));
         } catch (e) {
             list = list.concat([{ role: "assistant", coach: "ronaldo", content: "Network down lag raha hai. Thodi der mein phir try kar.", ts: Date.now() }]);
             save(list);
@@ -2905,7 +3106,7 @@ function GroupScreen({ T, CH, setCH, L, W, viewDay, onBack, onOpenCoach }) {
         React.createElement(ChatComposer, { T: T, value: inp, setValue: setInp, onSend: () => send(inp), photo: photo, onPhoto: setPhoto, onRemovePhoto: () => setPhoto(null), placeholder: photo ? "Add a caption…" : "Message Team Jeet", busy: busy }),
         menu && React.createElement(ChatMenu, { T: T, onClose: () => setMenu(false), items: [
                 { icon: voiceOn ? "🔇" : "🔊", label: voiceOn ? "Voice replies off" : "Voice replies on", onClick: () => { unlockCoachAudio(); const v = !voiceOn; setVoiceOn(v); store.set(VOICE_AUTO_KEY, v); if (!v) stopCoachVoice(); } },
-                hist.length ? { icon: "🗑", label: "Clear group chat", danger: true, onClick: () => { stopCoachVoice(); save([]); } } : null,
+                hist.length ? { icon: "🗑", label: "Clear group chat", danger: true, onClick: () => { stopCoachVoice(); summarizeOldTurns(GROUP_ID, hist, true); save([]); } } : null,
             ] }));
 }
 // Group voice call: he talks, 1-2 coaches answer one after another, each in their own voice.
@@ -5559,6 +5760,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
                 const snapshot = newHist;
                 setCH(prev => { const up = Object.assign({}, prev, { [id]: snapshot }); store.set("jos_ch", slimChatImages(up)); return up; });
             }
+            afterChatTurn(id, Object.assign({}, CH, { [id]: newHist }));
             const bLvl = getCoachLevel(Math.floor(hist.length / 2));
             const aLvl = getCoachLevel(Math.floor(newHist.length / 2));
             if (aLvl.current.name !== bLvl.current.name) {
@@ -6159,6 +6361,8 @@ function JeetOS() {
         syncCommitments();
         syncGoals();
         syncMoments();
+        // Long-term memory: pull the profile/summaries, then learn from anything new.
+        Promise.all([syncProfile(), syncSummaries()]).then(() => runMemoryPass(keptCH));
         syncCheckins();
         // Messages coaches texted first while the app was closed.
         fetchCoachInbox().then(rows => {
@@ -6796,7 +7000,7 @@ function JeetOS() {
     }
     // Coach screen
     if (screen === "coach" && activeCoach) {
-        return React.createElement(CoachScreen, { id: activeCoach, CH: CH, setCH: setCH, CL: CL, L: L, W: W, T: T, gymDay: todayGymDay, onSwitchCoach: (cid) => { if (cid === "__group") setScreen("group"); else setActiveCoach(cid); }, onBack: () => setScreen("home"), onSend: sendMsg, onClear: (id) => { const up = Object.assign({}, CH, { [id]: [] }); setCH(up); store.set("jos_ch", up); showToast("Cleared"); }, viewDay: viewDay });
+        return React.createElement(CoachScreen, { id: activeCoach, CH: CH, setCH: setCH, CL: CL, L: L, W: W, T: T, gymDay: todayGymDay, onSwitchCoach: (cid) => { if (cid === "__group") setScreen("group"); else setActiveCoach(cid); }, onBack: () => setScreen("home"), onSend: sendMsg, onClear: (id) => { summarizeOldTurns(id, CH[id], true); const up = Object.assign({}, CH, { [id]: [] }); setCH(up); store.set("jos_ch", up); showToast("Cleared"); }, viewDay: viewDay });
     }
     const tabScore = (() => {
         switch (tab) {
