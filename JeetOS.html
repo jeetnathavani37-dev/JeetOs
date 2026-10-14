@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-50";
+const APP_BUILD = "2026.10.14-51";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1043,6 +1043,8 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(commitmentsPrompt(coach.id));
     parts.push(goalsPrompt(coach.id));
     parts.push(bondPrompt(coach.id, CH[coach.id]));
+    const intake = intakePrompt(coach.id, CH[coach.id]);
+    if (intake) parts.push(intake);
     parts.push(ctx);
     return stable + PROMPT_LIVE + parts.join("\n\n");
 }
@@ -1057,14 +1059,14 @@ function localIsoDate(d) {
     return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 function loadCommitments() { const l = store.get(COMMIT_KEY); return Array.isArray(l) ? l : []; }
-function saveCommitments(l) { store.set(COMMIT_KEY, l.slice(-60)); }
+function saveCommitments(l) { store.set(COMMIT_KEY, l.slice(-80)); }
 async function pushCommitment(c) {
     if (!supabaseReady()) return;
     try {
         const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_commitments?on_conflict=id", {
             method: "POST",
             headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }),
-            body: JSON.stringify({ id: c.id, coach: c.coach, text: c.text, due: c.due, status: c.status, resolved_at: c.status === "open" ? null : new Date().toISOString() }),
+            body: JSON.stringify({ id: c.id, coach: c.coach, text: c.text, due: c.due, status: c.status, owner: c.owner || "jeet", resolved_at: c.status === "open" ? null : new Date().toISOString() }),
         });
         if (r.ok) { const l = loadCommitments(); const f = l.find(x => x.id === c.id); if (f) { f.synced = true; saveCommitments(l); } }
     } catch (_a) { }
@@ -1072,7 +1074,7 @@ async function pushCommitment(c) {
 async function syncCommitments() {
     if (!supabaseReady()) return loadCommitments();
     try {
-        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_commitments?select=id,coach,text,due,status&order=created_at.asc&limit=60", { headers: SUPA_HEADERS() });
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_commitments?select=id,coach,text,due,status,owner&order=created_at.asc&limit=80", { headers: SUPA_HEADERS() });
         const rows = await r.json();
         if (!r.ok || !Array.isArray(rows)) return loadCommitments();
         const merged = rows.map(x => Object.assign({}, x, { synced: true }));
@@ -1095,28 +1097,95 @@ function applyCommitTags(text, coachId) {
         }
         return "";
     });
+    // The coach's OWN promise to him: "Monday ko bench number check karunga".
+    clean = clean.replace(/<followup(?:\s+due="([^"]*)")?\s*>([\s\S]*?)<\/followup>/gi, (_, due, body) => {
+        const t = body.trim().slice(0, 200);
+        if (t && !list.some(c => c.status === "open" && c.owner === "coach" && c.coach === coachId && c.text.toLowerCase() === t.toLowerCase())) {
+            const c = { id: "f" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), coach: coachId, owner: "coach", text: t,
+                due: /^\d{4}-\d{2}-\d{2}$/.test(due || "") ? due : localIsoDate(new Date(Date.now() + 86400000)), status: "open", synced: false };
+            list.push(c); changed.push(c);
+        }
+        return "";
+    });
     clean = clean.replace(/<resolve\s+id="([^"]+)"\s*>\s*(done|missed)\s*<\/resolve>/gi, (_, id, st) => {
         const c = list.find(x => x.id === id);
         if (c && c.status === "open") { c.status = st.toLowerCase(); c.synced = false; changed.push(c); }
         return "";
-    }).replace(/<\/?(commit|resolve)[^>]*>/gi, "").trim();
+    }).replace(/<\/?(commit|resolve|followup)[^>]*>/gi, "").trim();
     if (changed.length) { saveCommitments(list); changed.forEach(pushCommitment); }
     return clean;
 }
+// How reliably he keeps his word with this coach — real coaches remember.
+function promiseRecord(coachId) {
+    const mine = loadCommitments().filter(c => c.coach === coachId && c.owner !== "coach" && (c.status === "done" || c.status === "missed"));
+    if (!mine.length) return null;
+    const kept = mine.filter(c => c.status === "done").length;
+    let missStreak = 0;
+    for (let i = mine.length - 1; i >= 0 && mine[i].status === "missed"; i--) missStreak++;
+    let keptStreak = 0;
+    for (let i = mine.length - 1; i >= 0 && mine[i].status === "done"; i--) keptStreak++;
+    return { kept: kept, missed: mine.length - kept, total: mine.length, pct: Math.round(kept / mine.length * 100), missStreak: missStreak, keptStreak: keptStreak,
+        recent: mine.slice(-5).map(c => (c.status === "done" ? "✓ " : "✗ ") + c.text) };
+}
 function commitmentsPrompt(coachId) {
     const today = localIsoDate();
-    const open = loadCommitments().filter(c => c.status === "open");
-    const lines = open.map(c => "- [id " + c.id + "] \"" + c.text + "\" — promised to " + coachLabel(c.coach) + ", check on " + c.due + (c.due < today ? " (OVERDUE)" : c.due === today ? " (DUE TODAY)" : ""));
-    return `PROMISES (today is ${new Date().toLocaleDateString("en-IN", { weekday: "long" })} ${today}):
-${lines.length ? lines.join("\n") : "- None open."}
-- When Jeet commits to something concrete ("kal se 6 baje uthunga", "is hafte 4 din gym", "Sunday tak shampoo badal dunga"), save it: add <commit due="YYYY-MM-DD">short promise in third person</commit> at the very end of your reply, with the date you'd check on it.
-- If one of YOUR promises is due today or overdue and you haven't asked yet in this chat, bring it up naturally ("6 baje uthe aaj? sach bata 😄"). Promises to other coaches you may mention lightly, but let their coach chase them.
-- When he tells you how a promise went, close it: <resolve id="ID">done</resolve> or <resolve id="ID">missed</resolve>. Celebrate a done one for real; for a missed one ask why, kindly, and help him reset.
+    const all = loadCommitments();
+    const tag = c => c.due < today ? " (OVERDUE)" : c.due === today ? " (DUE TODAY)" : "";
+    const his = all.filter(c => c.status === "open" && c.owner !== "coach");
+    const mineOwn = all.filter(c => c.status === "open" && c.owner === "coach" && c.coach === coachId);
+    const rec = promiseRecord(coachId);
+    const recText = !rec ? "- No promises closed with you yet." : "- Kept " + rec.kept + " of " + rec.total + " (" + rec.pct + "%)." +
+        (rec.missStreak >= 2 ? " He has MISSED the last " + rec.missStreak + " in a row." : rec.keptStreak >= 2 ? " He has KEPT the last " + rec.keptStreak + " in a row." : "") + "\n- Recent: " + rec.recent.join(" | ");
+    return `ACCOUNTABILITY (today is ${new Date().toLocaleDateString("en-IN", { weekday: "long" })} ${today}). You are responsible for his results in your field — act like it.
+HIS OPEN PROMISES:
+${his.length ? his.map(c => "- [id " + c.id + "] \"" + c.text + "\" — to " + coachLabel(c.coach) + ", check on " + c.due + tag(c)).join("\n") : "- None open."}
+HIS TRACK RECORD WITH YOU:
+${recText}
+YOUR OWN PROMISES TO HIM (things you said you'd check, send or plan):
+${mineOwn.length ? mineOwn.map(c => "- [id " + c.id + "] " + c.text + " — by " + c.due + tag(c)).join("\n") : "- None open."}
+HOW A RESPONSIBLE COACH ACTS:
+- Every real plan ends with a concrete commitment from him: what, how much, by when. Save it: <commit due="YYYY-MM-DD">short promise in third person</commit> at the very end of your reply.
+- When YOU say you'll check something, send something or review something ("Monday ko bench number dekhunga", "kal tujhe diet plan bhejti hoon"), save it: <followup due="YYYY-MM-DD">what you will do</followup>. You WILL be held to it — the app makes you text him on that date.
+- If one of HIS promises to you is due or overdue and you haven't asked yet in this chat, ask straight — "6 baje uthe aaj? sach bata 😄". Never let a promise silently disappear.
+- When he tells you how it went, close it: <resolve id="ID">done</resolve> or <resolve id="ID">missed</resolve>.
+- Kept: celebrate for real and raise the bar a little. Missed once: ask why without judgement and fix the obstacle. Missed 2+ in a row: get firm — name the pattern, no sugar-coating, then shrink the commitment to something he can't fail and hold him to it.
+- Own your side too: if your plan didn't work, say "mera plan galat tha" and change it. Don't blame him for a bad plan.
 - Never mention the tags.`;
+}
+// When a coach's own promise falls due, that coach texts him first — at most
+// two per app open, once per promise. Returns [{coach, text, ts}].
+async function runCoachFollowups(CH) {
+    const today = localIsoDate();
+    const list = loadCommitments();
+    const due = list.filter(c => c.owner === "coach" && c.status === "open" && c.due <= today && COACHES.some(x => x.id === c.coach));
+    const byCoach = {};
+    due.forEach(c => { (byCoach[c.coach] = byCoach[c.coach] || []).push(c); });
+    const out = [];
+    for (const coachId of Object.keys(byCoach).slice(0, 2)) {
+        const items = byCoach[coachId];
+        const coach = COACHES.find(x => x.id === coachId);
+        const W = store.get("jos_history") || [], L = store.get("jos_log") || null;
+        const sys = buildCoachSystem(coach, CH, statusReport(coachId, W, L), W) + `
+
+YOU'RE TEXTING HIM FIRST, because you promised to: ${items.map(c => "\"" + c.text + "\" (promised for " + c.due + ")").join("; ")}.
+Do exactly what you promised — check the thing, send the plan, give the review — using his real data above. If you need a number or photo from him to do it, ask for that one thing. Short WhatsApp texts in your voice; don't say "as promised" or mention reminders.`;
+        try {
+            const raw = await ai(sys, (CH[coachId] || []).filter(m => !m.error).slice(-12).map(m => ({ role: m.role, content: String(m.content || "") })).concat([{ role: "user", content: "(Jeet hasn't messaged — it's the day you said you'd follow up. Text him now.)" }]), 1200, { tier: "pro", effort: "medium" });
+            const reply = processCoachReply(raw, coachId);
+            const fresh = loadCommitments();
+            items.forEach(c => { const f = fresh.find(x => x.id === c.id); if (f) { f.status = "done"; f.synced = false; } });
+            saveCommitments(fresh);
+            items.forEach(c => pushCommitment(fresh.find(x => x.id === c.id)));
+            const ts = Date.now();
+            reply.parts.forEach((t, i) => out.push({ coach: coachId, text: t, ts: ts + i }));
+        } catch (_a) { /* try again next time the app opens */ }
+    }
+    return out;
 }
 // Strips every hidden tag from a coach reply, applies them, and splits the
 // reply into the separate texts the coach "sent".
 function processCoachReply(raw, coachId) {
+    if (/<intake_done\s*\/?>/i.test(raw)) { markIntakeDone(coachId); raw = String(raw).replace(/<\/?intake_done\s*\/?>/gi, ""); }
     const mem = extractTeamMemory(raw);
     addTeamMemoryFacts(mem.facts, coachId);
     const ho = extractHandoff(mem.clean || raw);
@@ -1638,6 +1707,33 @@ function teamViewText(coachId) {
     if (lc && lc.reviews) Object.keys(lc.reviews).filter(k => k !== coachId).forEach(k => { const r = lc.reviews[k]; if (r && r.didnt_go_well && r.didnt_go_well[0]) lines.push("- " + threadName(k) + " at the last check-in: " + r.didnt_go_well[0]); });
     if (!lines.length) return "";
     return "WHAT YOUR TEAMMATES SEE IN HIM (use it when their field explains yours — \"Sam bol raha tha neend 5h pe hai, isliye tera bench atka hai\"):\n" + lines.slice(0, 12).join("\n");
+}
+// ── FIRST CONSULTATION: each coach gets to know him properly ──────────────
+const COACH_INTAKE = {
+    skin: ["his skin type and what bothers him most (acne, marks, oil, dullness)", "every product he uses now, AM and PM", "what he has tried before and how it went", "allergies or reactions, and any medicines (isotretinoin, antibiotics)", "budget per month for skincare"],
+    hair: ["what worries him — hairfall, hairline, crown, dandruff, texture", "family history of hair loss", "current shampoo, oil and products, and how often he washes", "how long the problem has been there and anything he tried", "the hairstyle he wants"],
+    fitness: ["his height, weight and the physique he wants (and by when)", "training history — how long, what split, best lifts", "where he trains, what equipment, how many days and minutes he really has", "injuries or pain", "what made him quit or skip in the past"],
+    nutrition: ["veg / egg / non-veg, and foods he loves or hates", "a normal day of eating, meal by meal", "who cooks and what he can actually make or buy", "supplements he takes", "budget and eating out habits"],
+    sleep: ["usual bedtime and wake time on weekdays and weekends", "what he does in the last hour before bed (phone, study, gaming)", "caffeine — what and when", "how he feels on waking and through the day", "anything that wakes him at night"],
+    style: ["his height, build and what he feels about his body in clothes", "the vibe he wants (and 1-2 people whose style he likes)", "what's in his wardrobe right now", "where he dresses for most — college, work, dates, events", "budget and where he shops"],
+    grooming: ["his face shape and current beard / haircut", "how often he trims or visits a barber", "tools and products he owns", "fragrance he uses", "the look he wants"],
+    ronaldo: ["his biggest goal and why it matters to him", "what he wants to be known for in a year", "his daily routine from wake to sleep", "where he usually breaks — what excuse comes most", "who or what pushes him"],
+    mind: ["how he's been feeling lately, honestly", "what stresses him most (studies, family, money, relationships, future)", "how he usually copes", "what gives him energy and joy", "what he wants from these chats"],
+};
+const INTAKE_KEY = "jos_intake";
+function intakeDone(coachId) { return !!(store.get(INTAKE_KEY) || {})[coachId]; }
+function markIntakeDone(coachId) { const s = store.get(INTAKE_KEY) || {}; s[coachId] = localIsoDate(); store.set(INTAKE_KEY, s); }
+function intakePrompt(coachId, hist) {
+    const qs = COACH_INTAKE[coachId];
+    if (!qs || intakeDone(coachId)) return "";
+    const asked = (hist || []).filter(m => m.role === "user").length;
+    if (asked >= 14) { markIntakeDone(coachId); return ""; }
+    return `FIRST CONSULTATION — YOU DON'T REALLY KNOW HIM YET.
+A real expert never gives a plan to a stranger. Before your advice can be personal you need these (skip any that WHO HE IS or this chat already answers):
+${qs.map(q => "- " + q).join("\n")}
+- Ask like a person in a first session, not a form: ONE question per reply, woven in after you've helped with what he asked. If his message is urgent, help first and ask later.
+- Use each answer immediately ("acha, raat ko 1 baje tak phone — isliye…").
+- Once you know enough to coach him properly, tell him you've got the full picture and give him the first personal plan with a commitment, then add <intake_done/> at the very end.`;
 }
 function championPrompt(id) {
     const c = COACH_CHAMPION[id];
@@ -7202,7 +7298,22 @@ function JeetOS() {
         });
         store.set("jos_ch", keptCH);
         setCH(keptCH);
-        syncCommitments();
+        // Coaches keep their word: anything they promised to check today, they text about now.
+        syncCommitments().then(() => runCoachFollowups(keptCH)).then(msgs => {
+            if (!msgs || !msgs.length) return;
+            setCH(prev => {
+                const up = Object.assign({}, prev);
+                msgs.forEach(m => { up[m.coach] = [...(up[m.coach] || []), { role: "assistant", content: m.text, ts: m.ts, inbox: true }]; });
+                store.set("jos_ch", slimChatImages(up));
+                return up;
+            });
+            setUnread(prev => {
+                const up = Object.assign({}, prev);
+                msgs.forEach(m => { up[m.coach] = (up[m.coach] || 0) + 1; });
+                store.set("jos_unread", up);
+                return up;
+            });
+        });
         syncGoals();
         syncMoments();
         // Long-term memory: pull the profile/summaries, then learn from anything new.
