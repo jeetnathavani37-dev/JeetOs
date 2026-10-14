@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.15-71";
+const APP_BUILD = "2026.10.15-72";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -2566,12 +2566,14 @@ async function loadLedger() {
     try {
         const month = localIsoDate().slice(0, 7) + "-01";
         const q = p => fetch(SUPABASE_URL + "/rest/v1/" + p, { headers: SUPA_HEADERS() }).then(r => r.ok ? r.json() : Promise.reject(r.status));
-        const [pol, inc, ent] = await Promise.all([
+        const [pol, inc, ent, payee, pays] = await Promise.all([
             q("jeetos_penalty_policies?status=eq.active&order=version.desc&limit=1&select=version,mode,rules,confirmed_at"),
             q("jeetos_penalty_incidents?select=id,category,title,status,detail,opened_at,updated_at&order=updated_at.desc&limit=30"),
             q("jeetos_penalty_entries?local_date=gte." + month + "&select=id,incident_id,kind,day_n,local_date,amount_paise,calc&order=id.desc&limit=200"),
+            q("jeetos_payees?id=eq.charity&select=name,vpa"),
+            q("jeetos_payments?select=id,kind,amount_paise,payee_name,payee_vpa,status,utr,created_at,reported_at&order=created_at.desc&limit=5"),
         ]);
-        const l = { policy: pol[0] || null, incidents: inc, entries: ent, at: Date.now() };
+        const l = { policy: pol[0] || null, incidents: inc, entries: ent, payee: payee[0] || null, payments: pays, at: Date.now() };
         store.set(LEDGER_KEY, l);
         return l;
     } catch (_a) { return ledgerCache(); }
@@ -2598,6 +2600,42 @@ async function ledgerAction(body) {
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.error || ("Error " + r.status));
     return d;
+}
+// Manual UPI: he pays the charity in his own UPI app with his PIN. Nothing is auto-debited;
+// "paid" is what he reports (with the UPI Ref No), not a bank confirmation.
+function upiLink(p) {
+    return "upi://pay?pa=" + encodeURIComponent(p.payee_vpa) + "&pn=" + encodeURIComponent(p.payee_name) + "&am=" + (p.amount_paise / 100).toFixed(2) + "&cu=INR&tn=" + encodeURIComponent("JeetOS " + (p.kind === "test" ? "test" : "penalty")) + "&tr=" + encodeURIComponent(p.id);
+}
+function PaymentBox({ T, l, act, busy }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [name, setName] = React.useState("");
+    const [vpa, setVpa] = React.useState("");
+    const [src, setSrc] = React.useState(false);
+    const [utr, setUtr] = React.useState("");
+    const payee = l && l.payee, pays = (l && l.payments) || [];
+    const pending = pays.find(x => x.status === "initiated"), last = pays.find(x => x.status === "reported_paid");
+    const inp = (v, set, ph, extra) => React.createElement("input", Object.assign({ value: v, onChange: e => set(e.target.value), placeholder: ph, style: { width: "100%", boxSizing: "border-box", background: T.card2, border: "1px solid " + T.border2, borderRadius: 10, color: T.ivory, fontSize: 16, fontFamily: font, padding: "9px 11px", marginBottom: 8, outline: "none" } }, extra || {}));
+    const b = (label, onClick, key, gold) => React.createElement("button", { onClick: onClick, disabled: !!busy, style: { padding: "8px 12px", borderRadius: 10, border: gold ? "none" : "1px solid " + T.border2, background: gold ? T.goldG : "transparent", color: gold ? "#1A1408" : T.ivoryM, fontWeight: gold ? 700 : 500, fontSize: 12.5, fontFamily: font, cursor: "pointer", marginRight: 8, opacity: busy === key ? .5 : 1 } }, busy === key ? "…" : label);
+    const box = (kids) => React.createElement("div", { style: { marginTop: 12, paddingTop: 10, borderTop: "1px solid " + T.border } }, React.createElement("div", { style: { fontSize: 12.5, color: T.ivory, fontWeight: 600, marginBottom: 6 } }, "💸 Charity payment (manual UPI)"), kids);
+    const note = t => React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, lineHeight: 1.45, marginBottom: 8 } }, t);
+    if (!payee) return box([
+        note("Charity ka naam aur UPI ID unki OFFICIAL website ke donate page se copy karo. Galat UPI ID pe gaya paisa wapas nahi aata."),
+        inp(name, setName, "Charity ka naam", { key: "n" }),
+        inp(vpa, setVpa, "UPI ID (jaise donate@bank)", { key: "v", autoCapitalize: "none", autoCorrect: "off", inputMode: "email" }),
+        React.createElement("label", { key: "c", style: { display: "flex", gap: 8, alignItems: "flex-start", fontSize: 11.5, color: T.ivoryM, marginBottom: 8 } }, React.createElement("input", { type: "checkbox", checked: src, onChange: e => setSrc(e.target.checked) }), "Maine ye UPI ID charity ki official site se liya hai"),
+        b("Save", () => act("payee", { action: "set_payee", name: name, vpa: vpa, source_confirmed: src }), "payee", true)]);
+    if (pending) return box([
+        note("1) \"UPI app kholo\" dabao → ₹" + (pending.amount_paise / 100) + " → " + pending.payee_vpa + ". PIN daalne se pehle check karo ki app mein naam charity ka hi dikh raha hai (" + pending.payee_name + ")."),
+        b("UPI app kholo", () => { window.location.href = upiLink(pending); }, "open", true),
+        b("Cancel", () => act("pcancel", { action: "pay_cancel", payment_id: pending.id }), "pcancel"),
+        React.createElement("div", { key: "g", style: { height: 10 } }),
+        note("2) Payment ke baad receipt se UPI Ref No / UTR (12 digit) yahan daalo. App block kare toh charity ka QR scan karke ₹" + (pending.amount_paise / 100) + " bhejo aur wahi UTR daalo."),
+        inp(utr, setUtr, "UTR — 12 digit", { key: "u", inputMode: "numeric" }),
+        b("Paid ✓", () => act("preport", { action: "pay_report", payment_id: pending.id, utr: utr }), "preport", true)]);
+    return box([
+        note("Payee: " + payee.name + " · " + payee.vpa),
+        last && note("✓ " + paiseText(last.amount_paise) + " " + (last.kind === "test" ? "test " : "") + "paid (tumhari report, UTR " + last.utr + ") · " + new Date(last.reported_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) + ". Bank se app ko confirmation nahi milta — ye self-reported hai."),
+        b("₹1 test pay karo", () => act("pstart", { action: "pay_test_start" }), "pstart", true)]);
 }
 function LedgerCard({ T, onChange }) {
     const font = "Inter,system-ui,sans-serif";
@@ -2653,6 +2691,7 @@ function LedgerCard({ T, onChange }) {
         }),
         React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" } }, btn("Abhi check karo", () => act("run", { action: "run" }), "run")),
         React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD, marginTop: 8, lineHeight: 1.4 } }, "Amount sirf rules engine tay karta hai. Galat lage toh coach ko bolo — dispute ka button agle update mein aa raha hai."));
+    if (open) body = React.createElement("div", null, body, React.createElement(PaymentBox, { T: T, l: l, act: act, busy: busy }));
     return React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 16px", marginBottom: 16, fontFamily: font } },
         head, body, msg && React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 8 } }, msg));
 }

@@ -4,6 +4,8 @@
 //   POST { action: "stake", commitment_id, time } → stake one of his own open promises
 //   POST { action: "unstake", commitment_id }     → undo within 10 min of staking
 //   POST { action: "run" }             (owner)    → run the engine now
+//   POST { action: "set_payee" | "pay_test_start" | "pay_report" | "pay_cancel" } → manual UPI
+//        (₹1 test to the charity; he pays in his own UPI app; status is self-reported)
 // The client can only read the ledger; every write happens here with the
 // server key, and amounts come only from api/_penalty.js.
 const { requireOwner, SUPABASE_URL } = require("./_auth");
@@ -108,6 +110,47 @@ module.exports = async function handler(req, res) {
     }
 
     if (action === "run") return res.status(200).json(await runEngine(now));
+
+    // ── Manual UPI (he pays with his own PIN in his UPI app; nothing is auto-debited) ──
+    const { name, vpa, source_confirmed, payment_id, utr } = req.body || {};
+    if (action === "set_payee") {
+      const v = String(vpa || "").trim(), n = String(name || "").trim().slice(0, 80);
+      if (!/^[A-Za-z0-9._-]{2,256}@[A-Za-z][A-Za-z0-9.]{1,63}$/.test(v)) return res.status(400).json({ error: "UPI ID sahi format mein nahi hai (jaise name@bank)" });
+      if (!n) return res.status(400).json({ error: "Charity ka naam daalo" });
+      if (source_confirmed !== true) return res.status(400).json({ error: "Confirm karo ki UPI ID charity ki official site se liya hai" });
+      const pending = await db("jeetos_payments?status=eq.initiated&select=id");
+      if (pending.length) return res.status(409).json({ error: "Pehle chal raha payment complete ya cancel karo" });
+      await db("jeetos_payees?on_conflict=id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify({ id: "charity", name: n, vpa: v, source_confirmed: true, updated_at: new Date(now).toISOString() }) });
+      await audit("payee", "charity", "set", { name: n, vpa: v }, "owner");
+      return res.status(200).json({ ok: true });
+    }
+    if (action === "pay_test_start") {
+      const [payee] = await db("jeetos_payees?id=eq.charity&select=*") || [];
+      if (!payee) return res.status(409).json({ error: "Pehle charity ka UPI ID save karo" });
+      const pending = await db("jeetos_payments?status=eq.initiated&select=*");
+      if (pending.length) return res.status(200).json({ payment: pending[0] });
+      const row = { id: "pay_" + now.toString(36) + Math.random().toString(36).slice(2, 6), kind: "test", amount_paise: 100, payee_name: payee.name, payee_vpa: payee.vpa, status: "initiated", note: "₹1 test" };
+      await db("jeetos_payments", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(row) });
+      await audit("payment", row.id, "initiated", { amount_paise: 100, payee: payee.vpa }, "owner");
+      return res.status(200).json({ payment: row });
+    }
+    if (action === "pay_report" || action === "pay_cancel") {
+      const [p] = await db(`jeetos_payments?id=eq.${encodeURIComponent(payment_id || "")}&select=*`) || [];
+      if (!p) return res.status(404).json({ error: "Payment nahi mila" });
+      if (p.status !== "initiated") return res.status(409).json({ error: "Ye payment already " + p.status + " hai" });
+      if (action === "pay_cancel") {
+        await db(`jeetos_payments?id=eq.${encodeURIComponent(p.id)}`, { method: "PATCH", body: JSON.stringify({ status: "cancelled", reported_at: new Date(now).toISOString() }) });
+        await audit("payment", p.id, "cancelled", {}, "owner");
+        return res.status(200).json({ ok: true });
+      }
+      const ref = String(utr || "").replace(/\s+/g, "");
+      if (!/^\d{12}$/.test(ref)) return res.status(400).json({ error: "UPI Ref No / UTR 12 digit ka hota hai — payment app ki receipt mein dekho" });
+      try {
+        await db(`jeetos_payments?id=eq.${encodeURIComponent(p.id)}`, { method: "PATCH", body: JSON.stringify({ status: "reported_paid", utr: ref, reported_at: new Date(now).toISOString() }) });
+      } catch (e) { if (/duplicate|unique|23505/.test(e.message)) return res.status(409).json({ error: "Ye UTR pehle hi kisi payment mein use ho chuka hai" }); throw e; }
+      await audit("payment", p.id, "reported_paid", { utr: ref, amount_paise: p.amount_paise, verification: "self-reported (no bank/provider confirmation)" }, "owner");
+      return res.status(200).json({ ok: true, status: "reported_paid" });
+    }
     return res.status(400).json({ error: "unknown action" });
   } catch (e) {
     return res.status(502).json({ error: e.message });

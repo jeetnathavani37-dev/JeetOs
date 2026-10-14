@@ -73,3 +73,32 @@ const RealNow = Date.now;
   ok("can't unstake after 10 min", r.c === 409);
   Date.now = RealNow;
 })();
+
+// ── Manual UPI ₹1 test ──
+(async () => {
+  await new Promise(r => setTimeout(r, 50));
+  DB.jeetos_payees = []; DB.jeetos_payments = [];
+  const unique = DB.jeetos_payments;
+  let r = await call({ method: 'POST', body: { action: 'pay_test_start' } });
+  ok('pay: needs login', r.c === 401);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'pay_test_start' } });
+  ok('pay: refused until a payee is saved', r.c === 409);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'set_payee', name: 'Charity', vpa: 'not a vpa', source_confirmed: true } });
+  ok('payee: bad UPI ID rejected', r.c === 400);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'set_payee', name: 'Charity', vpa: 'donate@okbank' } });
+  ok('payee: must confirm it came from the official site', r.c === 400);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'set_payee', name: 'Charity', vpa: 'donate@okbank', source_confirmed: true } });
+  ok('payee saved', r.c === 200 && DB.jeetos_payees[0].vpa === 'donate@okbank');
+  r = await call({ method: 'POST', headers: owner, body: { action: 'pay_test_start', amount_paise: 500000 } });
+  const pay = r.b.payment;
+  ok('test payment is always ₹1 (client amount ignored)', pay && pay.amount_paise === 100 && pay.status === 'initiated', pay);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'pay_test_start' } });
+  ok('second start returns the same pending payment', r.b.payment.id === pay.id && DB.jeetos_payments.length === 1);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'pay_report', payment_id: pay.id, utr: '12345' } });
+  ok('UTR must be 12 digits', r.c === 400);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'pay_report', payment_id: pay.id, utr: '4321 5678 9012' } });
+  ok('reported paid with UTR (self-reported)', r.c === 200 && DB.jeetos_payments[0].status === 'reported_paid' && DB.jeetos_payments[0].utr === '432156789012');
+  r = await call({ method: 'POST', headers: owner, body: { action: 'pay_report', payment_id: pay.id, utr: '432156789012' } });
+  ok('cannot report the same payment twice', r.c === 409);
+  ok('audit says self-reported', DB.jeetos_audit_events.some(a => a.action === 'reported_paid' && /self-reported/.test(a.detail.verification)));
+})();
