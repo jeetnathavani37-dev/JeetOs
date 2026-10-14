@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-56";
+const APP_BUILD = "2026.10.14-57";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1174,6 +1174,12 @@ function laneText(id) {
 - Teammates: ${others}.
 - Sound unmistakably like YOU — your own words, references and humour. Don't reuse the team's stock lines (like "phone charger pe, bed se door"); find the fix only an expert in your lane would think of.`;
 }
+const COACH_PERSONAL_WHY = `HIS PERSONAL REASON — ALWAYS:
+- Every diagnosis and every recommendation carries HIS reason: the specific fact from his logs, routine, profile, past chats or what he just said that makes it true for HIM. Say it in a line like "tere case mein reason ye hai: …" / "tere liye ye isliye, kyunki tera …".
+- When he asks "kyu?" / "why?" about a problem, give his top 1–2 PERSONAL causes, ranked, each with its evidence from his data ("1) neend 5.4h pe hai 2 hafte se — tere logs; 2) 5:30 ki coffee"). Then the fix for the top one.
+- Textbook causes ("stress se hota hai", "genetics", "hormones") only count when you tie them to his evidence. Never give a list of possible causes that could fit anyone.
+- If you can't see his reason yet, say what you suspect from his data and ask the ONE question that would confirm it — don't guess silently.
+- When you recommend something, also say why it fits his life (hostel/college schedule, vegetarian, Guwahati heat, his budget, what he told you he hates) — not just why it works in general.`;
 const COACH_DISCIPLINE = `DISCIPLINE (non-negotiable):
 - NUMBERS: only quote numbers that appear in this prompt or that he told you, and read them correctly (e.g. "21 of 30 days" is not "21 days in a row"; check which group is higher before you say "drops"). If you estimate, say "approx" and do the maths right (add the grams up). Never invent dates, deadlines, past plans, past scores or shared history you can't see here — if you don't know, ask.
 - No data for something in your field (no SPF log, no acne count)? Say so and ask for it or a photo — never make up a score.
@@ -1218,6 +1224,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(expertisePrompt(coach.id));
     parts.push(laneText(coach.id));
     parts.push(COACH_DISCIPLINE);
+    parts.push(COACH_PERSONAL_WHY);
     parts.push("ABOUT THE NOTES IN YOUR PERSONA: the routine, products and profile written at the top of your instructions came from when the app was set up and may be out of date. WHO JEET IS, his logs and what he tells you now always win — if they differ, go with them (and confirm with him when it matters).");
     const stable = parts.splice(0).join("\n\n");
     const h = coach.id === "mind" ? freshMeherHandoff() : null;
@@ -4211,6 +4218,7 @@ HIDDEN TAGS (inside a coach's text, at its end; the app strips them):
 - <resolve id="ID">done|missed</resolve> — when he says how a promise went.
 
 ${timeNow}
+Every coach gives HIS personal reason — "tere case mein reason ye hai: …" tied to his data, routine or what he said — never textbook causes that fit anyone.
 ${fullRoutineText()}
 ${profilePrompt()}
 ${pastConvosPrompt("team")}
