@@ -323,3 +323,18 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 --     using ((select public.jeetos_is_owner())) with check ((select public.jeetos_is_owner()));
 -- Lockdown (after the owner is registered and the server has SUPABASE_SERVICE_ROLE_KEY):
 --   drop policy "allow all for anon" on public.<table>;
+
+-- Penalty ledger v1 (build -71, SIMULATION — no money moves). Owner can only read;
+-- every write is done by api/penalty.js with the server key.
+--   jeetos_penalty_policies(version pk, mode, rules jsonb, status, effective_from, confirmed_at)
+--   jeetos_penalty_incidents(id pk, source_key unique, commitment_id, category promise|log, root_key, policy_version, status, overlap_of, title, detail)
+--   jeetos_penalty_entries(id, incident_id, kind, day_n, local_date, amount_paise bigint, calc jsonb, policy_version,
+--                          unique (incident_id, kind, local_date))  -- append-only trigger
+--   jeetos_audit_events(...)  -- append-only trigger
+--   jeetos_engine_lock(id, locked_until)  -- one engine run at a time
+--   policies "owner read" (select, jeetos_is_owner()) on the four ledger tables; no insert/update/delete policies.
+-- jeetos_commitments: + deadline_at, tz, staked, agreed_at, policy_version, done_at;
+--   trigger jeetos_commitments_guard: only the server can stake / unstake / set the deadline,
+--   staked promises can't be edited or deleted by the client, done_at/resolved_at use the server clock.
+-- jeetos_logs: + entries jsonb (phone's first-seen time per required entry), entries_seen jsonb
+--   (trigger jeetos_logs_seen stamps the server receipt time once per entry; the client can't set it).
