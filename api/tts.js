@@ -74,10 +74,13 @@ const PROVIDERS = [
   ["GEMINI_API_KEY", gemini],
 ];
 
+const { requireOwner } = require("./_auth");
+
 module.exports = async function handler(req, res) {
   const available = PROVIDERS.filter(([env]) => (process.env[env] || "").trim());
   if (req.method === "GET") return res.status(200).json({ providers: available.map(([env]) => env) });
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (!(await requireOwner(req, res))) return;
   const { coach, text } = req.body || {};
   const v = VOICES[coach];
   const clean = String(text || "").replace(/<[^>]+>/g, "").trim().slice(0, 1200);

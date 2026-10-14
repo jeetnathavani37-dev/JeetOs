@@ -4,19 +4,13 @@
 //   POST { action: "unsubscribe", endpoint }
 //   POST { action: "test" }     → sends a test notification to every device
 const { vapidKeys, sendToAll } = require("./_push");
+const { requireOwner, bearer, SUPABASE_URL, PUBLIC_KEY } = require("./_auth");
 
-const SUPABASE_URL = "https://qzripzgbstvxkfobzhyv.supabase.co";
-const PUBLIC_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
-const SUPABASE_KEYS = [...new Set([process.env.SUPABASE_SERVICE_ROLE_KEY, process.env.SUPABASE_ANON_KEY, PUBLIC_KEY].filter(Boolean).map(k => k.trim()))];
-async function supa(path, init = {}) {
-  let r;
-  for (const key of SUPABASE_KEYS) {
-    r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, Object.assign({}, init, {
-      headers: Object.assign({ apikey: key, Authorization: "Bearer " + key, "Content-Type": "application/json" }, init.headers || {}),
-    }));
-    if (r.status !== 401) return r;
-  }
-  return r;
+// Writes run as the logged-in owner (his token passes the owner-only RLS policies).
+function supaAs(token) {
+  return (path, init = {}) => fetch(`${SUPABASE_URL}/rest/v1/${path}`, Object.assign({}, init, {
+    headers: Object.assign({ apikey: PUBLIC_KEY, Authorization: "Bearer " + token, "Content-Type": "application/json" }, init.headers || {}),
+  }));
 }
 
 module.exports = async function handler(req, res) {
@@ -24,6 +18,8 @@ module.exports = async function handler(req, res) {
   if (req.method === "GET") return res.status(200).json({ publicKey: k ? k.publicKey : null, enabled: !!k });
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   if (!k) return res.status(501).json({ error: "Push not configured (no VAPID seed)" });
+  if (!(await requireOwner(req, res))) return;
+  const supa = supaAs(bearer(req));
   const { action, subscription, endpoint } = req.body || {};
   if (action === "subscribe") {
     const s = subscription || {};

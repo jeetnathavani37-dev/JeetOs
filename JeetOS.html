@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.15-69";
+const APP_BUILD = "2026.10.15-70";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -732,6 +732,71 @@ const store = { get: (k) => { try {
 // Replace with your own project URL + anon public key from Supabase Settings > API.
 const SUPABASE_URL = "https://qzripzgbstvxkfobzhyv.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
+
+// ── LOGIN (Supabase Auth) ───────────────────────────────────────────────
+// Only Jeet's account (listed in jeetos_owners) can read or write his data or
+// use the AI / voice / push endpoints. Every request to Supabase REST and to
+// our /api routes carries his session token; it's refreshed before it expires.
+const AUTH_KEY = "jos_auth";
+const _rawFetch = typeof window !== "undefined" && window.fetch ? window.fetch.bind(window) : null;
+function authSession() { const s = store.get(AUTH_KEY); return s && s.access_token ? s : null; }
+function saveAuth(d) {
+    if (!d || !d.access_token) return null;
+    const s = { access_token: d.access_token, refresh_token: d.refresh_token, expires_at: d.expires_at || Math.floor(Date.now() / 1000) + (d.expires_in || 3600),
+        user: { id: d.user && d.user.id, email: d.user && d.user.email } };
+    store.set(AUTH_KEY, s);
+    return s;
+}
+async function authCall(path, body) {
+    const r = await _rawFetch(SUPABASE_URL + "/auth/v1/" + path, { method: "POST", headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(d.error_description || d.msg || d.message || d.error || ("Error " + r.status)); e.status = r.status; throw e; }
+    return d;
+}
+async function signIn(email, password) { return saveAuth(await authCall("token?grant_type=password", { email: email, password: password })); }
+// Returns the session, or null when Supabase wants the email confirmed first.
+async function signUp(email, password) { const d = await authCall("signup", { email: email, password: password }); return d.access_token ? saveAuth(d) : null; }
+let _authRefresh = null;
+async function freshToken() {
+    const s = authSession();
+    if (!s) return null;
+    if (s.expires_at - 90 > Date.now() / 1000) return s.access_token;
+    if (!_authRefresh) _authRefresh = authCall("token?grant_type=refresh_token", { refresh_token: s.refresh_token }).then(saveAuth)
+        .catch(e => { if (e.status === 400 || e.status === 401) store.set(AUTH_KEY, null); return null; })
+        .finally(() => { _authRefresh = null; });
+    const n = await _authRefresh;
+    // Offline: keep using the old token; Supabase will just refuse it until we're back.
+    return n ? n.access_token : (authSession() ? s.access_token : null);
+}
+async function checkOwner() {
+    const t = await freshToken();
+    if (!t) return false;
+    const r = await _rawFetch(SUPABASE_URL + "/rest/v1/rpc/jeetos_is_owner", { method: "POST", headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + t }, body: "{}" });
+    if (!r.ok) throw new Error("owner check " + r.status);
+    return (await r.json()) === true;
+}
+async function signOut() {
+    const s = authSession();
+    store.set(AUTH_KEY, null);
+    try { if (s) await _rawFetch(SUPABASE_URL + "/auth/v1/logout", { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + s.access_token } }); } catch (_a) { }
+    location.reload();
+}
+if (_rawFetch) {
+    window.fetch = async function (input, init) {
+        const url = typeof input === "string" ? input : (input && input.url) || "";
+        const ours = url.indexOf(SUPABASE_URL + "/rest/") === 0 || /^\/api\//.test(url) || url.indexOf(location.origin + "/api/") === 0;
+        if (ours && authSession()) {
+            const t = await freshToken();
+            if (t) {
+                init = Object.assign({}, init);
+                const h = new Headers(init.headers || (typeof input !== "string" && input.headers) || {});
+                h.set("Authorization", "Bearer " + t);
+                init.headers = h;
+            }
+        }
+        return _rawFetch(input, init);
+    };
+}
 // ── PERMANENT TASK-LABEL SYNC (Edits tab) — same Supabase project as above ──
 async function syncLabelToSupabase(key, value) {
     if (!SUPABASE_URL || SUPABASE_URL === "YOUR_SUPABASE_URL" || !SUPABASE_ANON_KEY) return;
@@ -10047,6 +10112,7 @@ function JeetOS() {
             React.createElement("div", { style: { padding: "12px 20px" } },
                 React.createElement(GroupEntryCard, { T: T, CH: CH, onOpen: () => setScreen("group") }),
                 React.createElement(PushCard, { T: T }),
+                React.createElement(AccountCard, null),
                 React.createElement(MasterPlanCard, { T: T, onOpen: () => setPlanOpen(true) }),
                 planOpen && React.createElement(MasterPlanSheet, { T: T, onClose: () => setPlanOpen(false) }),
                 React.createElement(FocusBoardCard, { T: T, onOpen: () => setFocusOpen(true) }),
@@ -10598,8 +10664,70 @@ function JeetOS() {
         React.createElement(AppNotices, null),
         React.createElement(SmartNav, { tab: tab, setTab: setTab, T: T, unread: Object.values(unread || {}).reduce((a, b) => a + (+b || 0), 0) })));
 }
+// ── LOGIN SCREEN ────────────────────────────────────────────────────────
+function LoginScreen({ notOwner, onDone }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [mode, setMode] = React.useState("login");
+    const [email, setEmail] = React.useState((authSession() && authSession().user.email) || store.get("jos_auth_email") || "");
+    const [pw, setPw] = React.useState("");
+    const [msg, setMsg] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const hindi = m => /invalid login/i.test(m) ? "Email ya password galat hai." : /not confirmed/i.test(m) ? "Pehle email confirm karo — inbox mein link aaya hoga." : /already registered|already exists/i.test(m) ? "Ye email pehle se registered hai — Login karo." : /at least 6|password should/i.test(m) ? "Password kam se kam 6 characters ka rakho." : /fetch|network/i.test(m) ? "Internet nahi mil raha — dobara try karo." : m;
+    const go = async () => {
+        if (!email.trim() || !pw) { setMsg("Email aur password dono daalo."); return; }
+        setBusy(true); setMsg("");
+        try {
+            store.set("jos_auth_email", email.trim());
+            if (mode === "signup") {
+                const s = await signUp(email.trim(), pw);
+                if (!s) { setMode("login"); setMsg("✓ Account ban gaya. Email mein confirm link aaya hoga — confirm karke yahan Login karo."); setBusy(false); return; }
+            } else await signIn(email.trim(), pw);
+            onDone();
+        } catch (e) { setMsg("⚠️ " + hindi(String(e.message || e))); }
+        setBusy(false);
+    };
+    const input = (props) => React.createElement("input", Object.assign({ style: { width: "100%", boxSizing: "border-box", background: T.card2, border: "1px solid " + T.border2, borderRadius: 12, color: T.ivory, fontFamily: font, fontSize: 16, padding: "13px 14px", outline: "none", marginBottom: 10 } }, props));
+    const box = { minHeight: "100vh", background: T.ink, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, boxSizing: "border-box", fontFamily: font };
+    if (notOwner) return React.createElement("div", { style: box },
+        React.createElement("div", { style: { width: "100%", maxWidth: 360, background: T.card, border: "1px solid " + T.border, borderRadius: 18, padding: 22, textAlign: "center" } },
+            React.createElement("div", { style: { fontSize: 30, marginBottom: 8 } }, "🔐"),
+            React.createElement("div", { style: { fontSize: 15, color: T.ivory, fontWeight: 600, marginBottom: 8 } }, "Login ho gaya ✓"),
+            React.createElement("div", { style: { fontSize: 13, color: T.ivoryM, lineHeight: 1.5, marginBottom: 16 } }, (authSession() ? authSession().user.email : "") + " abhi JeetOS ka owner set nahi hai. Agar ye tumhara account hai, Claude ko bolo \"login ho gaya\" — wo isse owner bana dega. Phir neeche Dobara check karo."),
+            React.createElement("button", { onClick: onDone, style: { width: "100%", padding: "12px", borderRadius: 12, border: "none", background: T.goldG, color: "#1A1408", fontWeight: 700, fontSize: 14, fontFamily: font, marginBottom: 8, cursor: "pointer" } }, "Dobara check karo"),
+            React.createElement("button", { onClick: signOut, style: { width: "100%", padding: "11px", borderRadius: 12, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM, fontSize: 13, fontFamily: font, cursor: "pointer" } }, "Logout")));
+    return React.createElement("div", { style: box },
+        React.createElement("form", { onSubmit: e => { e.preventDefault(); go(); }, style: { width: "100%", maxWidth: 360, background: T.card, border: "1px solid " + T.border, borderRadius: 18, padding: 22 } },
+            React.createElement("div", { style: { fontFamily: "Fraunces,Georgia,serif", fontSize: 28, color: T.gold, textAlign: "center", marginBottom: 4 } }, "JeetOS"),
+            React.createElement("div", { style: { fontSize: 13, color: T.ivoryM, textAlign: "center", marginBottom: 18 } }, mode === "signup" ? "Apna account banao — sirf tum hi apna data dekh paoge" : "Login karo — tumhara data sirf tumhare liye"),
+            input({ type: "email", value: email, onChange: e => setEmail(e.target.value), placeholder: "Email", autoComplete: "username", autoCapitalize: "none", inputMode: "email", "aria-label": "Email" }),
+            input({ type: "password", value: pw, onChange: e => setPw(e.target.value), placeholder: "Password", autoComplete: mode === "signup" ? "new-password" : "current-password", "aria-label": "Password" }),
+            msg && React.createElement("div", { style: { fontSize: 12.5, color: /^✓/.test(msg) ? T.green : T.red, marginBottom: 10, lineHeight: 1.4 } }, msg),
+            React.createElement("button", { type: "submit", disabled: busy, style: { width: "100%", padding: "13px", borderRadius: 12, border: "none", background: T.goldG, color: "#1A1408", fontWeight: 700, fontSize: 15, fontFamily: font, cursor: "pointer", opacity: busy ? .6 : 1 } }, busy ? "…" : mode === "signup" ? "Account banao" : "Login"),
+            React.createElement("button", { type: "button", onClick: () => { setMode(mode === "signup" ? "login" : "signup"); setMsg(""); }, style: { width: "100%", marginTop: 10, padding: "10px", borderRadius: 12, border: "none", background: "transparent", color: T.ivoryM, fontSize: 13, fontFamily: font, cursor: "pointer" } }, mode === "signup" ? "Pehle se account hai? Login karo" : "Pehli baar? Account banao")));
+}
+function AccountCard() {
+    const s = authSession();
+    const [srv, setSrv] = React.useState(null);
+    React.useEffect(() => { fetch("/api/ai?check=db").then(r => r.ok ? r.json() : null).then(d => setSrv(d && d.serverKey)).catch(() => { }); }, []);
+    if (!s) return null;
+    const srvText = { ok: "✓ cron coaches connected", missing: "⚠️ cron coaches: server key missing", invalid: "⚠️ cron coaches: server key not working", unreachable: "⚠️ cron coaches: server can't reach DB" }[srv];
+    return React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "10px 16px", marginBottom: 16, fontFamily: "Inter,system-ui,sans-serif" } },
+        React.createElement("div", { style: { fontSize: 12, color: T.ivoryM } }, "🔐 " + (s.user.email || "Logged in"), srvText && React.createElement("div", { style: { fontSize: 10.5, marginTop: 3, color: srv === "ok" ? T.green : T.gold } }, srvText)),
+        React.createElement("button", { onClick: () => { if (confirm("Logout karna hai? Data phone pe safe rahega.")) signOut(); }, style: { padding: "6px 12px", borderRadius: 10, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Logout"));
+}
+// Shows the app only to the logged-in owner. Offline with a saved session → the app still opens.
+function AuthGate() {
+    const [st, setSt] = React.useState(authSession() ? "checking" : "out");
+    React.useEffect(() => {
+        if (st !== "checking") return;
+        checkOwner().then(ok => setSt(ok ? "in" : authSession() ? "notowner" : "out")).catch(() => setSt(authSession() ? "in" : "out"));
+    }, [st]);
+    if (st === "in") return React.createElement(JeetOS, null);
+    if (st === "checking") return React.createElement("div", { style: { minHeight: "100vh", background: T.ink, display: "flex", alignItems: "center", justifyContent: "center", color: T.gold, fontFamily: "Fraunces,Georgia,serif", fontSize: 26 } }, "JeetOS");
+    return React.createElement(LoginScreen, { notOwner: st === "notowner", onDone: () => setSt("checking") });
+}
 try{
-  ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(JeetOS,null));
+  ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AuthGate,null));
 }catch(e){
   document.getElementById("root").innerHTML='<div style="background:#000;color:#fff;padding:20px;font-family:monospace"><h2 style="color:red">RENDER ERROR</h2><pre style="color:#f88;font-size:10px">'+e.message+'</pre></div>';
 }

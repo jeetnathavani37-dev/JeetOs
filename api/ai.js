@@ -147,11 +147,18 @@ function redact(msg) {
   return String(msg || "").replace(/(sk-|gsk_|AIza)[\w-]{6,}/g, "$1***");
 }
 
+const { isOwner, requireOwner, serverKeyStatus } = require("./_auth");
+
 module.exports = async function handler(req, res) {
   // GET /api/ai is a setup check you can open in a browser: it reports which
   // provider keys this deployment can see (never the keys themselves) and
   // whether a one-word Claude call actually succeeds.
   if (req.method === "GET") {
+    // ?check=db (owner only): can the crons reach his data? Cheap, no AI calls.
+    if (req.query && req.query.check === "db") {
+      if (!(await requireOwner(req, res))) return;
+      return res.status(200).json({ serverKey: await serverKeyStatus() });
+    }
     const status = {
       claudeKey: !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY),
       groqKey: !!process.env.GROQ_API_KEY,
@@ -160,7 +167,8 @@ module.exports = async function handler(req, res) {
       chatModel: SMART_MODEL,
       fastModel: FAST_MODEL,
     };
-    if (status.claudeKey) {
+    // Live test calls cost money — only for the logged-in owner.
+    if (status.claudeKey && await isOwner(req)) {
       try {
         await callClaude("Reply with one word.", [{ role: "user", content: "ping" }], 50);
         status.claude = "ok";
@@ -175,6 +183,7 @@ module.exports = async function handler(req, res) {
     return res.status(200).json(status);
   }
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (!(await requireOwner(req, res))) return;
 
   const { system, max, provider, tier, effort } = req.body || {};
   let { messages } = req.body || {};
