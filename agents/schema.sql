@@ -271,3 +271,10 @@ create table if not exists public.jeetos_experiments (
 );
 alter table public.jeetos_experiments enable row level security;
 create policy "allow all for anon" on public.jeetos_experiments for all to public using (true) with check (true);
+
+-- Streak protection: minimum-win / recovery marks per day and habit.
+create table if not exists public.jeetos_streak_marks (
+  id text primary key, date date not null, habit text not null, kind text not null, reason text, created_at timestamptz not null default now()
+);
+alter table public.jeetos_streak_marks enable row level security;
+create policy "allow all for anon" on public.jeetos_streak_marks for all to public using (true) with check (true);

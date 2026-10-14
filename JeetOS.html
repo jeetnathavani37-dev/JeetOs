@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-61";
+const APP_BUILD = "2026.10.14-62";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1258,6 +1258,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(departmentPrompt(coach.id));
     parts.push(masterPlanPrompt(coach.id));
     parts.push(bottleneckPrompt(coach.id));
+    parts.push(streakPrompt(W));
     parts.push(bondPrompt(coach.id, CH[coach.id]));
     parts.push(coachNotesPrompt(coach.id));
     const intake = intakePrompt(coach.id, CH[coach.id]);
@@ -1937,6 +1938,142 @@ function ScorecardBlock({ T }) {
         blk.length > 0 && React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 10 } }, "Promise kyun toote: " + blk.map(k => k + " ×" + st.blockers[k]).join(", ")),
         bns.map(b => React.createElement("div", { key: b.id, style: { fontSize: 12, color: T.ivory, marginTop: 6 } }, "🔎 " + b.hypothesis, React.createElement("span", { style: { color: T.ivoryD, fontSize: 11 } }, " · " + b.category.replace(/_/g, " ") + " · " + b.confidence + " · " + b.instances + "×"))));
 }
+// ── STREAK PROTECTION ENGINE ─────────────────────────────────────────────
+// A streak day = every core habit hit at least its MINIMUM (or a genuine
+// recovery day). Full win / minimum win / recovery are defined up front.
+// The engine warns before a habit is missed (prevent), offers the minimum
+// late in the day (rescue), has the right coach step in (personal), and only
+// counts what is actually logged or explicitly marked (verify).
+const STREAK_HABITS = [
+    { id: "move", icon: "🏋️", name: "Workout / movement", full: "Full gym session", min: "20 min home workout or a brisk 30 min walk", due: 20, coach: "fitness" },
+    { id: "food", icon: "🥗", name: "Nutrition", full: "140g+ protein", min: "100g+ protein", due: 21, coach: "nutrition" },
+    { id: "sleep", icon: "🌙", name: "Sleep routine", full: "7h+ sleep last night", min: "6h+ sleep", due: 11, coach: "sleep" },
+    { id: "checkin", icon: "✅", name: "Daily check-in", full: "5+ tasks ticked + mood logged", min: "at least 1 task ticked", due: 22, coach: "ronaldo" },
+];
+const MARKS_KEY = "jos_streak_marks";
+function loadMarks() { const m = store.get(MARKS_KEY); return m && typeof m === "object" ? m : {}; }
+function dayMarks(dateStr) { return loadMarks()[dateStr] || {}; }
+async function setMark(dateStr, habit, kind, reason) {
+    const all = loadMarks();
+    all[dateStr] = Object.assign({}, all[dateStr] || {}, { [habit]: kind ? { kind: kind, reason: reason || "" } : undefined });
+    if (!kind) delete all[dateStr][habit];
+    const keys = Object.keys(all).sort((a, b) => new Date(a) - new Date(b)); while (keys.length > 120) delete all[keys.shift()];
+    store.set(MARKS_KEY, all);
+    if (!supabaseReady()) return;
+    const iso = localIsoDate(new Date(dateStr));
+    try {
+        if (kind) await fetch(SUPABASE_URL + "/rest/v1/jeetos_streak_marks?on_conflict=id", { method: "POST", headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }), body: JSON.stringify({ id: iso + ":" + habit, date: iso, habit: habit, kind: kind, reason: reason || null }) });
+        else await fetch(SUPABASE_URL + "/rest/v1/jeetos_streak_marks?id=eq." + encodeURIComponent(iso + ":" + habit), { method: "DELETE", headers: SUPA_HEADERS() });
+    } catch (_a) { }
+}
+// One day's raw inputs: the saved history entry and that day's checklist.
+function streakDay(dateStr, W, todayL, todayChecks) {
+    const isToday = dateStr === new Date().toDateString();
+    const w = (W || []).find(d => d.date && new Date(d.date).toDateString() === dateStr);
+    const checks = isToday ? (todayChecks || {}) : (store.get("jos_checks_" + dateStr) || (w && w.checks) || {});
+    const log = isToday ? (todayL || {}) : (w || {});
+    return { dateStr: dateStr, isToday: isToday, has: isToday || !!w || Object.keys(checks).length > 0, checks: checks, log: log, marks: dayMarks(dateStr), weekday: new Date(dateStr).toLocaleDateString("en-US", { weekday: "long" }) };
+}
+// "full" | "min" | "recovery" | "miss" | "pending" | "risk"
+function habitStatus(h, d) {
+    const m = d.marks[h.id];
+    if (m && m.kind === "recovery") return "recovery";
+    const c = d.checks || {}, L = d.log || {};
+    let st = "miss";
+    if (h.id === "move") {
+        if (L.gymDone || (c.ex_0 && c.ex_1)) st = "full";
+        else if (m && m.kind === "min") st = "min";
+        else if (GYM_SPLIT[d.weekday] === "Rest") st = "recovery";
+    } else if (h.id === "food") {
+        const p = +L.totalProtein || 0;
+        st = p >= 140 ? "full" : (p >= 100 || (m && m.kind === "min")) ? "min" : "miss";
+    } else if (h.id === "sleep") {
+        const sl = +L.sleepHours || 0;
+        st = sl >= 7 ? "full" : sl >= 6 ? "min" : "miss";
+    } else if (h.id === "checkin") {
+        const n = Object.keys(c).filter(k => c[k] === true).length;
+        st = n >= 5 && L.mood ? "full" : n >= 1 ? "min" : "miss";
+    }
+    if (st === "miss" && d.isToday) return new Date().getHours() >= h.due - 2 ? "risk" : "pending";
+    return st;
+}
+const KEPT = { full: 1, min: 1, recovery: 1 };
+function streakState(W, L, checks) {
+    const today = streakDay(new Date().toDateString(), W, L, checks);
+    const todayStatus = STREAK_HABITS.map(h => ({ h: h, st: habitStatus(h, today) }));
+    const todayDone = todayStatus.every(x => KEPT[x.st]);
+    let count = 0, paused = 0;
+    for (let i = 1; i <= 180; i++) {
+        const ds = new Date(Date.now() - i * 864e5).toDateString();
+        const d = streakDay(ds, W, null, null);
+        const sts = STREAK_HABITS.map(h => habitStatus(h, d));
+        if (!d.has && !Object.keys(d.marks).length) break;
+        if (!sts.every(x => KEPT[x])) break;
+        if (sts.every(x => x === "recovery")) paused++; else count++;
+    }
+    const current = count + (todayDone ? 1 : 0);
+    const best = Math.max(current, +(store.get("jos_streak_best") || 0));
+    if (best > (+(store.get("jos_streak_best") || 0))) store.set("jos_streak_best", best);
+    const risk = todayStatus.filter(x => x.st === "risk").map(x => x.h);
+    const hour = new Date().getHours();
+    return { current: current, best: best, paused: paused, today: todayStatus, todayDone: todayDone, risk: risk, stage: todayDone ? "safe" : risk.length ? (hour >= 21 ? "rescue" : "prevent") : "ok" };
+}
+function streakPrompt(W) {
+    const s = streakState(W, store.get("jos_log") || {}, store.get("jos_checks_" + new Date().toDateString()) || {});
+    const lab = { full: "✅ full", min: "🟡 minimum", recovery: "💤 recovery", pending: "⏳ not yet", risk: "⚠️ AT RISK", miss: "✗ missed" };
+    return `STREAK (consistency, not perfection): 🔥 ${s.current} day${s.current === 1 ? "" : "s"} (best ${s.best})${s.paused ? ", " + s.paused + " recovery day(s) paused it without breaking" : ""}. Today: ${s.today.map(x => x.h.name + " " + lab[x.st]).join(" · ")}.
+A streak day = every habit at least at its pre-agreed MINIMUM: ${STREAK_HABITS.map(h => h.name + " → full: " + h.full + ", minimum: " + h.min).join("; ")}. Illness, injury or real recovery need → a recovery day, which pauses the streak instead of breaking it.
+- If a habit in your field is at risk late in the day, don't lecture — offer the minimum version as the way to keep the streak, make it easy to do right now, and ask him to mark it done in the app.
+- NEVER push exercise through pain, illness or injury to save a streak — tell him to mark a recovery day instead. The goal is real consistency, not keeping a number alive.
+- Only count what's logged or marked. Don't congratulate a streak day he hasn't actually completed.`;
+}
+// Stage 3: once a day, when something is at risk in the evening, the right coach steps in.
+async function runStreakRescue(CH, W) {
+    const today = new Date().toDateString();
+    const s = streakState(W, store.get("jos_log") || {}, store.get("jos_checks_" + today) || {});
+    if (!s.risk.length || new Date().getHours() < 20 || store.get("jos_streak_rescue") === today) return null;
+    store.set("jos_streak_rescue", today);
+    const h = s.risk[0], coach = COACHES.find(c => c.id === h.coach) || COACHES[0];
+    const sys = buildCoachSystem(coach, CH, statusReport(coach.id, W, store.get("jos_log")), W) + `
+
+YOU'RE TEXTING HIM FIRST to protect his streak (🔥 ${s.current} days). It's evening and "${h.name}" isn't done yet today. Use what you know about what usually blocks him (bottlenecks, blockers). Offer the minimum version — ${h.min} — as the way to keep the streak tonight, make it feel doable right now, and ask him to mark it in the app when done. If he might be sick, injured or in pain, tell him to mark a recovery day instead. 1-2 short texts, warm but firm, no guilt.`;
+    try {
+        const raw = await ai(sys, [{ role: "user", content: "(Jeet hasn't done it yet today — text him now.)" }], 600, { tier: "smart", effort: "low" });
+        const r = processCoachReply(raw, coach.id);
+        return { coach: coach.id, parts: r.parts };
+    } catch (_a) { store.set("jos_streak_rescue", null); return null; }
+}
+function StreakCard({ T, W, L, checks, onChange }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [ask, setAsk] = React.useState(null);
+    const s = streakState(W, L, checks);
+    const today = new Date().toDateString();
+    const col = { full: "#3DD68C", min: "#E0A23B", recovery: "#7FA7FF", pending: "rgba(255,255,255,.4)", risk: "#E5484D", miss: "#E5484D" };
+    const lab = { full: "Full ✓", min: "Minimum ✓", recovery: "Recovery", pending: "Baaki", risk: "Risk ⚠️", miss: "Missed" };
+    const mark = async (hid, kind, reason) => { await setMark(today, hid, kind, reason); setAsk(null); onChange && onChange(); };
+    const banner = s.stage === "rescue" ? "🚨 Streak bachao: aaj ka minimum abhi bhi ho sakta hai" : s.stage === "prevent" ? "⏰ Aaj ka kaam baaki hai — streak risk pe" : s.todayDone ? "✅ Aaj ka streak safe" : null;
+    return React.createElement("div", { style: { margin: "0 20px 14px", padding: 14, borderRadius: 16, background: "linear-gradient(135deg,rgba(255,120,40,.12),rgba(255,255,255,.03))", border: "1px solid rgba(255,140,60,.25)", fontFamily: font } },
+        React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8 } },
+            React.createElement("span", { style: { fontSize: 22, fontWeight: 800, color: T.ivory } }, "🔥 " + s.current + " day" + (s.current === 1 ? "" : "s")),
+            React.createElement("span", { style: { fontSize: 11.5, color: T.ivoryD } }, "best " + s.best + (s.paused ? " · " + s.paused + " recovery" : "")),
+            React.createElement("span", { style: { marginLeft: "auto", fontSize: 10.5, color: T.ivoryD } }, "Consistency > perfection")),
+        banner && React.createElement("div", { style: { fontSize: 12, marginTop: 6, color: s.todayDone ? "#3DD68C" : s.stage === "rescue" ? "#FF8A8A" : "#F0C060", fontWeight: 600 } }, banner),
+        s.today.map(x => React.createElement("div", { key: x.h.id, style: { marginTop: 10 } },
+            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                React.createElement("span", { style: { fontSize: 15 } }, x.h.icon),
+                React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+                    React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontWeight: 600 } }, x.h.name),
+                    React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD } }, "Full: " + x.h.full + " · Min: " + x.h.min)),
+                React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: col[x.st] } }, lab[x.st])),
+            (x.st === "risk" || x.st === "pending") && (x.h.id === "move" || x.h.id === "food") && React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 6, marginLeft: 23 } },
+                React.createElement("button", { onClick: () => mark(x.h.id, "min"), style: { flex: 1, padding: "6px 8px", borderRadius: 9, border: "1px solid rgba(224,162,59,.5)", background: "transparent", color: "#E0A23B", fontSize: 11.5, cursor: "pointer" } }, "Minimum kiya ✓"),
+                React.createElement("button", { onClick: () => setAsk(x.h.id), style: { flex: 1, padding: "6px 8px", borderRadius: 9, border: "1px solid rgba(127,167,255,.4)", background: "transparent", color: "#7FA7FF", fontSize: 11.5, cursor: "pointer" } }, "Recovery day")),
+            x.st === "min" && dayMarks(today)[x.h.id] && React.createElement("button", { onClick: () => mark(x.h.id, null), style: { marginLeft: 23, marginTop: 4, border: "none", background: "transparent", color: T.ivoryD, fontSize: 10.5, cursor: "pointer", padding: 0 } }, "undo"),
+            ask === x.h.id && React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6, marginLeft: 23 } },
+                ["Planned rest", "Bimaar hoon", "Chot / dard"].map(r => React.createElement("button", { key: r, onClick: () => mark(x.h.id, "recovery", r), style: { padding: "5px 9px", borderRadius: 9, border: "1px solid rgba(255,255,255,.15)", background: "rgba(255,255,255,.05)", color: T.ivory, fontSize: 11.5, cursor: "pointer" } }, r)),
+                React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD, width: "100%" } }, "Recovery day streak ko todta nahi, sirf pause karta hai. Bimaar ya dard mein exercise mat karna.")))));
+}
+
 // ── FOCUS BOARD: every department flags his issues and drives ONE major focus ──
 // Coaches flag issues with <flag severity="high|med|low" evidence="…">…</flag>,
 // close them with <unflag id="…">fixed</unflag>, and keep one goal per department
@@ -8048,6 +8185,7 @@ function JeetOS() {
     const [screen, setScreen] = React.useState("home");
     const [unread, setUnread] = React.useState(store.get("jos_unread") || {});
     const [huddleOpen, setHuddleOpen] = React.useState(false);
+    const [streakTick, setStreakTick] = React.useState(0);
     const [focusOpen, setFocusOpen] = React.useState(false);
     const [planOpen, setPlanOpen] = React.useState(false);
     const [tab, setTab] = React.useState("today");
@@ -8161,6 +8299,15 @@ function JeetOS() {
         BN.sync();
         EXP.sync();
         syncMoments();
+        // Streak rescue: the right coach steps in if a habit is at risk in the evening.
+        const tryRescue = () => runStreakRescue(store.get("jos_ch") || {}, store.get("jos_history") || []).then(r => {
+            if (!r) return;
+            const ts = Date.now();
+            setCH(prev => { const up = Object.assign({}, prev, { [r.coach]: [...(prev[r.coach] || []), ...r.parts.map((t, i) => ({ role: "assistant", content: t, ts: ts + i, inbox: true }))] }); store.set("jos_ch", slimChatImages(up)); return up; });
+            setUnread(prev => { const up = Object.assign({}, prev, { [r.coach]: (prev[r.coach] || 0) + 1 }); store.set("jos_unread", up); return up; });
+        });
+        setTimeout(tryRescue, 8000);
+        setInterval(tryRescue, 15 * 60000);
         // The team's private morning huddle (once a day).
         syncNotes().then(() => setTimeout(() => runTeamHuddle(keptCH), 4000));
         // Long-term memory: pull the profile/summaries, then learn from anything new.
@@ -8961,6 +9108,7 @@ function JeetOS() {
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, background: "rgba(91,141,239,.08)", border: "1px solid rgba(91,141,239,.22)", borderRadius: 12, padding: "10px 12px" } },
                     React.createElement("span", { style: { fontSize: 14 } }, "📷"),
                     React.createElement("span", { style: { fontSize: 10, color: "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, lineHeight: 1.5 } }, "Every task needs one photo as proof — finish the steps, then add a photo inside the card to mark it complete."))),
+            React.createElement(StreakCard, { T: T, W: W, L: L, checks: checks, onChange: () => setStreakTick(t => t + 1) }),
             disciplineCard && React.createElement("div", { style: { padding: "0 20px", marginBottom: 14 } },
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, background: disciplineCard.type === "red" ? "linear-gradient(135deg,#2A0E0E,#1A0808)" : "linear-gradient(135deg,#2A2410,#1A1608)", border: "1px solid " + (disciplineCard.type === "red" ? "rgba(220,50,50,.4)" : "rgba(220,180,50,.35)"), borderRadius: 14, padding: "14px 16px" } },
                     React.createElement("div", { style: { width: 30, height: 40, borderRadius: 4, flexShrink: 0, background: disciplineCard.type === "red" ? "linear-gradient(160deg,#E23B3B,#A82424)" : "linear-gradient(160deg,#F0D04A,#C8A420)", boxShadow: "0 2px 8px " + (disciplineCard.type === "red" ? "rgba(226,59,59,.4)" : "rgba(240,208,74,.4)") } }),
