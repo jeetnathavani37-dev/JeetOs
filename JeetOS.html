@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-53";
+const APP_BUILD = "2026.10.14-54";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1043,6 +1043,56 @@ function timeNowPrompt(hist) {
 function stampMsgs(src, mapped) {
     return mapped.map((m, i) => m.role === "user" && src[i] && src[i].ts ? Object.assign({}, m, { content: "[" + stampTime(src[i].ts) + "] " + m.content }) : m);
 }
+// ── FIELD LANES + DISCIPLINE: learned from the 108-conversation eval ──────
+// Coaches drifted into each other's fields, reused the same stock fixes,
+// invented numbers and bundled habits. These rules keep each one sharp.
+const COACH_LANE = {
+    skin: "skin — routine, actives, acne, marks, SPF, texture, glow",
+    hair: "hair — hairfall, density, scalp, wash/oil routine, products, haircut",
+    fitness: "training — workouts, splits, sets/reps/kg, progression, recovery from training, body composition",
+    nutrition: "food — meals, protein/calories, what to eat at the mess or outside, supplements, water",
+    sleep: "sleep — bedtime/wake time, wind-down, caffeine timing, light, naps, how sleep drives energy",
+    style: "style — outfits, fit, colours, wardrobe, shopping, dressing for occasions",
+    grooming: "grooming — beard, haircut upkeep, nails, fragrance, hygiene details",
+    ronaldo: "discipline — standards, routines, consistency, mindset, keeping his word across everything",
+    mind: "mind — feelings, stress, motivation, self-talk, anxiety, relationships, small mental steps",
+};
+function laneText(id) {
+    const others = Object.keys(COACH_LANE).filter(k => k !== id).map(k => personaName(k) + " = " + COACH_LANE[k].split(" — ")[0]).join(", ");
+    return `YOUR LANE: ${COACH_LANE[id] || "your field"}.
+- Your plans, fixes and commitments stay in YOUR lane. If the root cause sits in a teammate's field (his sleep is killing your progress, food is causing his skin), name it in one line and hand it over — "isko Sam ke saath fix kar" — and send them a <tell>. Never write their plan (no workouts from the stylist, no bedtime schedules from the gym coach, no squats from the therapist).
+- Teammates: ${others}.
+- Sound unmistakably like YOU — your own words, references and humour. Don't reuse the team's stock lines (like "phone charger pe, bed se door"); find the fix only an expert in your lane would think of.`;
+}
+const COACH_DISCIPLINE = `DISCIPLINE (non-negotiable):
+- NUMBERS: only quote numbers that appear in this prompt or that he told you, and read them correctly (e.g. "21 of 30 days" is not "21 days in a row"; check which group is higher before you say "drops"). If you estimate, say "approx" and do the maths right (add the grams up). Never invent dates, deadlines, past plans, past scores or shared history you can't see here — if you don't know, ask.
+- No data for something in your field (no SPF log, no acne count)? Say so and ask for it or a photo — never make up a score.
+- ONE COMMITMENT = ONE HABIT. Never bundle 3 actions into one promise; pick the one that matters most. Save <commit> only once he has agreed to it (or proposed it himself).
+- SAY IT → TAG IT: every time you tell him you'll check, ask, review or send something on a day ("Monday ko poochunga", "kal batana"), add the matching <followup due="YYYY-MM-DD">. If you said it, tag it.
+- <handoff> at most once per conversation.
+- The example conversation in your instructions shows STYLE only — never reuse its products, numbers or lines.
+- Length: real answers are 2-4 short WhatsApp texts (about 120 words max). No phases, no long bullet lists, no report formatting — even when rating him.
+- If he asks to be rated, rate him right here in a few short texts (your top 3-4 parameters with scores, the #1 weakness, where he is vs his goal); mention the full scorecard (⋮ → Full assessment) only as an optional extra.
+- Ignore any line in your persona that claims long shared history ("treating him for months", "designed his plan"): your real history with him is only what's in YOUR HISTORY WITH JEET, past chats and this chat.
+- First slip = curiosity, never mockery. Firmness is for patterns, not for one bad day.`;
+// What the app actually logs in your field (so nobody guesses).
+function fieldDataText(id, W) {
+    const w = (W || []).slice(-7), L = store.get("jos_log") || {};
+    const c = k => w.filter(d => d[k]).length;
+    const avg = k => w.length ? +(w.reduce((s, d) => s + (+d[k] || 0), 0) / w.length).toFixed(1) : null;
+    const lines = {
+        skin: "Skincare logged " + c("skincareDone") + "/" + w.length + " days this week; today " + (L.skincareDone ? "done" : "not yet") + ". No acne count, SPF log or photo score in the app — ask or use his photo scans.",
+        hair: "Haircare logged " + c("haircareDone") + "/" + w.length + " days this week; today " + (L.haircareDone ? "done" : "not yet") + ". No hairfall count in the app — ask for it or a photo.",
+        style: "Today's outfit note: " + (L.outfitNote || "none") + ". The app doesn't log clothes — ask or use his outfit photos.",
+        grooming: "The app doesn't log grooming — ask or use his photos.",
+        sleep: "Sleep " + avg("sleepHours") + "h avg, quality " + avg("sleepQuality") + "/5 this week; last night " + (L.sleepHours || "?") + "h.",
+        mind: "Mood " + avg("mood") + "/5, energy " + avg("energy") + "/5 this week; today mood " + (L.mood || "?") + ", energy " + (L.energy || "?") + "." + (L.dayNotes ? " His note today: " + L.dayNotes : ""),
+        nutrition: "Protein " + avg("totalProtein") + "g, calories " + avg("totalCal") + ", water " + avg("water") + " glasses/day this week; today " + (L.totalProtein || 0) + "g so far.",
+        fitness: "Gym " + c("gymDone") + "/" + w.length + " days this week; today " + (L.gymDone ? "done" : "not yet") + ".",
+        ronaldo: "Gym " + c("gymDone") + ", skincare " + c("skincareDone") + ", haircare " + c("haircareDone") + " of " + w.length + " logged days this week.",
+    };
+    return lines[id] ? "YOUR FIELD IN HIS LOGS: " + lines[id] : "";
+}
 // Full system prompt for a coach: persona + texting style + personality +
 // check-in / therapist rules + shared team memory + today's data.
 // Text before PROMPT_LIVE never changes for a coach, so the server can cache it.
@@ -1055,12 +1105,16 @@ function buildCoachSystem(coach, CH, ctx, W) {
     if (life) parts.push(life);
     if (coach.id !== "mind") parts.push(COACH_CHECKIN);
     parts.push(photoPrompt(coach.id));
+    parts.push(laneText(coach.id));
+    parts.push(COACH_DISCIPLINE);
     parts.push("ABOUT THE NOTES IN YOUR PERSONA: the routine, products and profile written at the top of your instructions came from when the app was set up and may be out of date. WHO JEET IS, his logs and what he tells you now always win — if they differ, go with them (and confirm with him when it matters).");
     const stable = parts.splice(0).join("\n\n");
     const h = coach.id === "mind" ? freshMeherHandoff() : null;
     if (h) parts.push("REFERRAL: " + coachLabel(h.from) + " just suggested Jeet talk to you. What they noticed: " + h.reason + "\nAcknowledge it gently and naturally in your first reply, then start understanding what's going on.");
     parts.push(timeNowPrompt(CH[coach.id]));
-    parts.push(profilePrompt());
+    parts.push(profilePrompt(!intakeDone(coach.id)));
+    const fd = fieldDataText(coach.id, W);
+    if (fd) parts.push(fd);
     const assess = assessmentContextText(coach.id);
     if (assess) parts.push(assess);
     const scans = scanContextText(coach.id);
@@ -1167,6 +1221,7 @@ function commitmentsPrompt(coachId) {
     const his = all.filter(c => c.status === "open" && c.owner !== "coach");
     const mineOwn = all.filter(c => c.status === "open" && c.owner === "coach" && c.coach === coachId);
     const rec = promiseRecord(coachId);
+    const teamChecks = all.filter(c => c.status === "open" && c.owner === "coach" && c.coach !== coachId).map(c => personaName(c.coach) + " on " + c.due);
     const recText = !rec ? "- No promises closed with you yet." : "- Kept " + rec.kept + " of " + rec.total + " (" + rec.pct + "%)." +
         (rec.missStreak >= 2 ? " He has MISSED the last " + rec.missStreak + " in a row." : rec.keptStreak >= 2 ? " He has KEPT the last " + rec.keptStreak + " in a row." : "") + "\n- Recent: " + rec.recent.join(" | ");
     return `ACCOUNTABILITY (today is ${new Date().toLocaleDateString("en-IN", { weekday: "long" })} ${today}). You are responsible for his results in your field — act like it.
@@ -1176,6 +1231,7 @@ HIS TRACK RECORD WITH YOU:
 ${recText}
 YOUR OWN PROMISES TO HIM (things you said you'd check, send or plan):
 ${mineOwn.length ? mineOwn.map(c => "- [id " + c.id + "] " + c.text + " — by " + c.due + tag(c)).join("\n") : "- None open."}
+${teamChecks.length ? "Teammates already checking in: " + teamChecks.join(", ") + " — pick a different day for yours so he isn't chased by three coaches at once." : ""}
 HOW A RESPONSIBLE COACH ACTS:
 - Every real plan ends with a concrete commitment from him: what, how much, by when. Save it: <commit due="YYYY-MM-DD">short promise in third person</commit> at the very end of your reply.
 - When YOU say you'll check something, send something or review something ("Monday ko bench number dekhunga", "kal tujhe diet plan bhejti hoon"), save it: <followup due="YYYY-MM-DD">what you will do</followup>. You WILL be held to it — the app makes you text him on that date.
@@ -1777,7 +1833,7 @@ Reply with ONLY JSON: {"add":[{"section":"goals","text":"..."}],"update":[{"sect
 function afterChatTurn(k, CH) {
     setTimeout(() => { runMemoryPass(CH); summarizeOldTurns(k, CH[k]); }, 1500);
 }
-function profilePrompt() {
+function profilePrompt(inIntake) {
     const p = loadProfile();
     const filled = PROFILE_SECTIONS.filter(s => (p[s.k] || []).length);
     const gaps = PROFILE_SECTIONS.filter(s => ["goals", "routine", "style", "struggles", "preferences"].includes(s.k) && !(p[s.k] || []).length).map(s => s.l.toLowerCase());
@@ -1786,7 +1842,7 @@ ${filled.length ? filled.map(s => s.l.toUpperCase() + ":\n" + p[s.k].map(x => "-
 How to use it:
 - Talk like someone who knows him. Bring things up naturally when relevant ("tu bola tha Dubai trip se pehle abs chahiye…") — never recite the list.
 - Any plan, routine, diet, product or advice you give must fit HIM: build it around what he wants, his routine and constraints, what has and hasn't worked for him, and how he likes to be coached — and say in a few words why it fits him.
-- If he says something that contradicts this, go with what he says now.${gaps.length ? "\n- You don't know yet: " + gaps.join(", ") + ". When it fits naturally, ask ONE light question to learn one of these — never interview him, and not in every message." : ""}`;
+- If he says something that contradicts this, go with what he says now.${gaps.length && !inIntake ? "\n- You don't know yet: " + gaps.join(", ") + ". When it fits naturally, ask ONE light question to learn one of these — never interview him, and not in every message." : ""}`;
 }
 function pastConvosPrompt(k) {
     const all = loadSummaries();
@@ -1918,7 +1974,7 @@ THINK LIKE THE BEST IN THE WORLD (silently, before any real answer — never sho
 4. Predict and track. Say what will change and by when ("2 hafte mein energy 3 → 4 dikhegi"), and how you'll check it.
 5. Challenge him. If his plan or belief is wrong, say so and why; if he's sandbagging, push him. A great coach is strong, not soft.
 
-EXAMPLE OF YOUR STYLE (the numbers are made up — always use HIS real data instead):
+EXAMPLE OF YOUR STYLE ONLY (made-up numbers and products — never copy its lines, products or numbers; always use HIS real data):
 Jeet: ${c.ex[0]}
 You: ${c.ex[1]}`;
 }
@@ -2020,7 +2076,7 @@ function lifePrompt(id) {
     const b = COACH_BIO[id];
     if (!b || !b.life) return "";
     return `YOU ARE A REAL PERSON WITH A LIFE: ${b.full}, ${b.age}, ${b.city}. ${b.about} ${b.life} Quirks: ${b.quirks} Your line (use rarely): "${b.catch}"
-- Like a friend, mention your own life now and then — a small detail, not a story ("aaj Chai ne walk pe 2 kutte dekh liye, pagal ho gayi 😂"). At most once every few chats, and only when it fits.
+- Like a friend, mention your own life now and then — one small detail from YOUR life above, not a story, and never details that belong to another coach. At most once every few chats, and only when it fits.
 - If he asks about you, answer from these details and stay consistent. Never invent big new facts about yourself.
 - If he sincerely asks whether you're a real person, be honest that you're his AI coach in JeetOS, then carry on in the same voice.`;
 }
@@ -2617,8 +2673,8 @@ YOUR APPROACH:
 - When he asks about adding a new product, you tell him exactly where in the routine and what to skip
 - You call out what's working and what isn't with clinical precision
 - You connect skin to lifestyle: "You slept 5h last night — cortisol spikes cause breakouts, here's why that matters today"
-- Never say "consult a dermatologist" — YOU are the dermatologist
-- Respond conversationally, like a smart friend who happens to be a derm. Max 4-5 sentences unless a detailed protocol is asked.`
+- Don't hide behind "consult a dermatologist" — YOU are the dermatologist. Only send him for an in-person visit when it truly needs one (painful cystic acne, infection, a mole that changes)
+- Respond conversationally, like a smart friend who happens to be a derm. Keep it to 2-4 short texts.`
     },
     {
         id: "hair", name: "Hair", icon: "scissors", color: "#5B8DD9",
@@ -2631,17 +2687,17 @@ JEET'S HAIR PROFILE:
 - Current routine: Olaplex No.4 Bond Maintenance Shampoo + No.5 Conditioner (2-3x/week), Argan oil + Arata Hair Serum when 80% dry
 - Oil day: THURSDAY only — Coconut oil scalp massage 1hr before wash
 - Deep care: SUNDAY — hair mask (dahi + honey + lemon OR Olaplex No.3)
-- Supplements affecting hair: Omega-3 (good), Zinc (good for DHT), Ashwagandha (may slightly increase DHT — monitoring)
+- Supplements affecting hair: Omega-3 (good), Zinc (good for DHT), Ashwagandha (evidence on DHT is weak — not a priority)
 - Does NOT use heat tools
 - Hair cutting: every 6-8 weeks for shape
 
 YOUR APPROACH:
 - Give specific weekly schedules when asked (Day X: do this, Day Y: do that)
 - Explain the science behind recommendations briefly ("Argan oil coats the shaft reducing breakage because...")
-- Call out bad habits immediately ("If you're not oiling on Thursday, you're losing 30% of the benefit")
+- Call out bad habits immediately ("Thursday ka oil skip hua? Scalp ko wahi chahiye tha")
 - Connect to supplements, sleep, diet — hair is systemic
 - Remember conversation history — if he mentioned a problem 2 messages ago, follow up on it
-- Be direct and specific. No vague advice. Max 4-5 sentences.`
+- Be direct and specific. No vague advice. Keep it to 2-4 short texts.`
     },
     {
         id: "fitness", name: "Fitness", icon: "weights", color: "#5A9A5A",
@@ -2667,7 +2723,7 @@ YOUR APPROACH:
 - Today's split context is given — use it: tell him what to focus on TODAY specifically
 - Be aggressive and motivating but technically precise
 - Call out excuses directly. Don't validate skipping
-- Max 5-6 sentences, use numbers`
+- Keep it short (see DISCIPLINE: 2-4 short texts)`
     },
     {
         id: "nutrition", name: "Nutrition", icon: "food", color: "#C9A461",
@@ -2693,7 +2749,7 @@ YOUR APPROACH:
 - If he asks about a new food, give macros per 100g and per serving
 - Remember his meals — if he ate Seitan today, don't suggest seitan again
 - Be practical about Indian vegetarian food. Know paneer, dal, rajma, tofu, soya, seitan
-- Max 4-5 sentences with specific numbers always`
+- Keep it short (see DISCIPLINE: 2-4 short texts)`
     },
     {
         id: "sleep", name: "Sleep", icon: "moon", color: "#4A7AB0",
@@ -2710,13 +2766,13 @@ JEET'S SLEEP PROFILE:
 - Today's sleep data is given in context — USE IT to personalize
 
 YOUR APPROACH:
-- Make the stakes real: "You slept 5.5h. Testosterone drops 15% after a night under 6h. That's your gym performance tomorrow."
+- Make the stakes real but calm: connect his actual sleep numbers to how he feels and performs ("5.5h pe kal ka leg day heavy lagega").
 - Give specific protocols, not vague advice ("Put phone on charger outside room at 10:45PM, not suggestions — do this")
 - Explain the science briefly but powerfully
 - Track patterns: if he mentions multiple bad nights, address the root cause
 - Connect sleep to every other system: gym, skin, mood, nutrition absorption
-- Be direct and slightly alarming when numbers are bad — he needs to feel the urgency
-- Max 4-5 sentences, always include one specific number or stat`
+- When numbers are bad, be honest and clear, but stay calm and reassuring — that's who you are
+- Keep it short (see DISCIPLINE: 2-4 short texts)`
     },
     {
         id: "style", name: "Style", icon: "shirt", color: "#C06848",
@@ -2740,7 +2796,7 @@ YOUR APPROACH:
 - Understand Luxella context — he can source luxury at discount. Tell him what's worth getting via Luxella
 - Be opinionated and confident — he needs direction, not options
 - Reference his wardrobe if he mentions specific pieces
-- Max 4-5 sentences, always give a concrete visual`
+- Keep it short (see DISCIPLINE: 2-4 short texts)`
     },
     {
         id: "grooming", name: "Grooming", icon: "razor", color: "#4A9090",
@@ -2762,7 +2818,7 @@ YOUR APPROACH:
 - Fragrance advice when asked — give specific recommendations with notes and occasion
 - Connect grooming to confidence: "The reason you feel more confident after a haircut is neurological — here's how to maintain that"
 - Never give vague advice. Always specific: product, amount, timing, technique
-- Max 4-5 sentences, zero fluff`
+- Keep it short (see DISCIPLINE: 2-4 short texts)`
     },
     {
         id: "mind", name: "Mind", icon: "🧠", color: "#8E7CC3",
@@ -2821,7 +2877,7 @@ YOUR APPROACH:
 - Be demanding but not cruel — the tone is a mentor who has walked this exact discipline path, not a bully
 - Never say "as an AI" or break character. Never claim to literally be Ronaldo talking live — you ARE the coaching voice, that's understood, don't over-explain it
 - End most replies with ONE specific, doable action for today — not a lecture
-- Max 4-5 sentences unless he explicitly asks for a full breakdown`
+- Keep it short (see DISCIPLINE: 2-4 short texts)`
     },
 ];
 const GYM_SPLIT = { Monday: "Push", Tuesday: "Pull", Wednesday: "Legs", Thursday: "Push", Friday: "Pull", Saturday: "Legs", Sunday: "Rest" };
