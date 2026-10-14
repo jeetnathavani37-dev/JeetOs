@@ -306,3 +306,20 @@ alter table public.jeetos_logs add column if not exists day date;
 alter table public.jeetos_logs add column if not exists haircare_done boolean;
 update public.jeetos_logs set day = to_date(substr(date, 5), 'Mon DD YYYY') where day is null;
 create index if not exists jeetos_logs_day_idx on public.jeetos_logs (day);
+
+-- Login (build -70): only users listed in jeetos_owners can touch jeetos_* data.
+create table if not exists public.jeetos_owners (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+alter table public.jeetos_owners enable row level security;  -- no policies: service role only
+create or replace function public.jeetos_is_owner() returns boolean
+language sql stable security definer set search_path = ''
+as $$ select exists (select 1 from public.jeetos_owners where user_id = auth.uid()) $$;
+revoke all on function public.jeetos_is_owner() from public;
+grant execute on function public.jeetos_is_owner() to anon, authenticated;
+-- On every jeetos_* table:
+--   create policy "owner full access" on public.<table> for all to authenticated
+--     using ((select public.jeetos_is_owner())) with check ((select public.jeetos_is_owner()));
+-- Lockdown (after the owner is registered and the server has SUPABASE_SERVICE_ROLE_KEY):
+--   drop policy "allow all for anon" on public.<table>;

@@ -27,7 +27,7 @@ module.exports = async function handler(req, res) {
   if (text === "/today" || text === "/status") {
     const dateStr = new Date().toDateString();
     const SUPABASE_URL = process.env.SUPABASE_URL;
-    const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+    const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_ANON_KEY;
 
     if (!SUPABASE_URL || !SUPABASE_KEY) {
       await reply("Supabase isn't configured on the server yet — add SUPABASE_URL and SUPABASE_ANON_KEY as Vercel env vars.");

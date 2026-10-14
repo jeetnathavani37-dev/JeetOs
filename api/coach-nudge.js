@@ -15,7 +15,7 @@ const { sendToAll } = require("./_push");
 // first, but an old/rotated one answers 401 — then fall back to the public key.
 const SUPABASE_URL = "https://qzripzgbstvxkfobzhyv.supabase.co";
 const PUBLIC_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
-const SUPABASE_KEYS = [...new Set([process.env.SUPABASE_SERVICE_ROLE_KEY, process.env.SUPABASE_ANON_KEY, PUBLIC_KEY].filter(Boolean).map(k => k.trim()))];
+const SUPABASE_KEYS = [...new Set([process.env.SUPABASE_SERVICE_ROLE_KEY, process.env.SUPABASE_SECRET_KEY, process.env.SUPABASE_ANON_KEY, PUBLIC_KEY].filter(Boolean).map(k => k.trim()))];
 async function supa(path, init = {}) {
   let r;
   for (const key of SUPABASE_KEYS) {
