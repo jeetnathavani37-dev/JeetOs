@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-65";
+const APP_BUILD = "2026.10.14-66";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1248,6 +1248,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(COACH_PLAIN_TALK);
     parts.push(CONTEXT_COACHING);
     parts.push(BEHAVIOUR_PROTOCOL);
+    parts.push(TRUTH_RULES);
     parts.push("ABOUT THE NOTES IN YOUR PERSONA: the routine, products and profile written at the top of your instructions came from when the app was set up and may be out of date. WHO JEET IS, his logs and what he tells you now always win — if they differ, go with them (and confirm with him when it matters).");
     const stable = parts.splice(0).join("\n\n");
     const h = coach.id === "mind" ? freshMeherHandoff() : null;
@@ -1711,7 +1712,7 @@ function processCoachReply(raw, coachId) {
     const mem = extractTeamMemory(raw);
     addTeamMemoryFacts(mem.facts, coachId);
     const ho = extractHandoff(mem.clean || raw);
-    const gl = applyGoalTags(applyBottleneckTags(applyDecisionTags(applyFlagTags(applyCommitTags(applyTellTags(ho.clean || mem.clean || raw, coachId), coachId), coachId), coachId), coachId), coachId);
+    const gl = applyGoalTags(applyTruthTags(applyBottleneckTags(applyDecisionTags(applyFlagTags(applyCommitTags(applyTellTags(ho.clean || mem.clean || raw, coachId), coachId), coachId), coachId), coachId), coachId), coachId);
     const clean = applyMomentTags(gl.clean, coachId) || String(raw).replace(/<[^>]+>/g, "").trim();
     let parts = clean.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
     if (parts.length > 3) parts = parts.slice(0, 2).concat([parts.slice(2).join("\n\n")]);
@@ -1964,9 +1965,108 @@ function ScorecardBlock({ T }) {
             cell(st.followThrough != null ? st.followThrough + "%" : null, "follow-through"),
             cell(st.coachKept != null ? st.coachKept + "%" : null, "coaches ne nibhaya"),
             cell(st.worked + "/" + (st.worked + st.failed), "experiments worked")),
+        (() => { const ts = truthStats(); return React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 10 } }, "🤝 Truth (7 din): " + ts.claims + " claims check hue — " + ts.verified + " verified, " + ts.selfReported + " self-reported · " + ts.honest + " honest reports · logs " + ts.completeness + "% complete" + (ts.open.length ? " · " + ts.open.length + " open discrepancies" : "")); })(),
         blk.length > 0 && React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 10 } }, "Promise kyun toote: " + blk.map(k => k + " ×" + st.blockers[k]).join(", ")),
         bns.map(b => React.createElement("div", { key: b.id, style: { fontSize: 12, color: T.ivory, marginTop: 6 } }, "🔎 " + b.hypothesis, React.createElement("span", { style: { color: T.ivoryD, fontSize: 11 } }, " · " + b.category.replace(/_/g, " ") + " · " + b.confidence + " · " + b.instances + "×"))));
 }
+// ── TRUTH ENGINE: what he says vs what the records show ─────────────────
+// The APP (not the model) checks claims against his logs deterministically:
+// verified / self_reported / inconsistent / incomplete / unknown / corrected /
+// honest_miss. Missing evidence is never treated as a lie; honest misses and
+// corrections are counted as positives (honesty is tracked separately from
+// performance). Pilot scope: workouts, food (kcal/protein) and sleep.
+const CLAIMS = syncedList("jos_claims", "jeetos_claims", 200,
+    c => ({ id: c.id, coach: c.coach || null, type: c.type, claimed: c.claimed, value: c.value, unit: c.unit || null, day: c.day, status: c.status, evidence: c.evidence || null, correction: c.correction || null, created_at: new Date(c.at).toISOString(), updated_at: new Date().toISOString() }),
+    x => ({ id: x.id, coach: x.coach, type: x.type, claimed: x.claimed, value: x.value, unit: x.unit, day: x.day, status: x.status, evidence: x.evidence, correction: x.correction, at: Date.parse(x.created_at) || Date.now() }));
+// Today's (or a given day's) records, computed — never guessed.
+function dayRecords(dateStr) {
+    const isToday = dateStr === new Date().toDateString();
+    const wd = new Date(dateStr).toLocaleDateString("en-US", { weekday: "long" }), split = GYM_SPLIT[wd];
+    const sets = store.get("jos_sets_" + dateStr) || {};
+    const exList = (EXERCISES[split] || []);
+    const exDone = Object.keys(sets).filter(k => (sets[k] || []).some(x => x && x.reps && x.wt)).length;
+    const checks = store.get("jos_checks_" + dateStr) || {};
+    const L = isToday ? (store.get("jos_log") || {}) : ((store.get("jos_history") || []).find(d => d.date && new Date(d.date).toDateString() === dateStr) || {});
+    const meals = store.get("jos_meals_" + dateStr) || [];
+    const mealCal = Math.round(meals.reduce((a, m) => a + (+(m.macros && m.macros.cal) || 0), 0));
+    const mealP = Math.round(meals.reduce((a, m) => a + (+(m.macros && m.macros.p) || 0), 0));
+    return { split: split, exTotal: exList.length, exDone: exDone, gymTicked: !!(L.gymDone || checks.ex_0), meals: meals.length,
+        cal: Math.max(mealCal, +L.totalCal || 0), protein: Math.max(mealP, +L.totalProtein || 0), sleep: +L.sleepHours || 0, mealsTicked: ["breakfast_0", "lunch_0", "dinner_0"].filter(k => checks[k]).length };
+}
+function verifyClaim(c) {
+    const r = dayRecords(c.day || new Date().toDateString());
+    if (c.type === "workout") {
+        if (c.claimed_status === "missed") return { status: "honest_miss", evidence: "he reported the miss himself" };
+        if (r.split === "Rest") return { status: "self_reported", evidence: "today is a rest day on his split — extra session, not in the plan" };
+        if (r.exTotal && r.exDone >= Math.ceil(r.exTotal * 0.6)) return { status: "verified", evidence: r.exDone + "/" + r.exTotal + " exercises logged with sets" };
+        if (r.exDone > 0) return { status: "inconsistent", evidence: "says done, but only " + r.exDone + "/" + r.exTotal + " exercises have sets logged — partial session or unlogged sets?" };
+        return { status: "self_reported", evidence: r.gymTicked ? "ticked 'gym done' but no sets logged" : "no workout record yet" };
+    }
+    if (c.type === "food") {
+        const logged = c.unit === "g" ? r.protein : r.cal, u = c.unit === "g" ? "g protein" : " kcal";
+        if (!logged) return { status: "unknown", evidence: "no food logged today" };
+        if (c.value == null) return { status: "self_reported", evidence: r.meals + " foods logged, " + r.cal + " kcal / " + r.protein + "g protein so far" };
+        const diff = (logged - c.value) / c.value;
+        if (Math.abs(diff) <= 0.1) return { status: "verified", evidence: "logs show " + logged + u };
+        if (diff > 0.1) return { status: "inconsistent", evidence: "says " + c.value + u + " but the logs show " + logged + u };
+        return { status: "incomplete", evidence: "logs only cover " + logged + u + " of the " + c.value + " he says — some food not logged yet?" };
+    }
+    if (c.type === "sleep") {
+        if (!r.sleep) return { status: "self_reported", evidence: "sleep not logged in the app" };
+        return Math.abs(r.sleep - c.value) <= 0.5 ? { status: "verified", evidence: "logged " + r.sleep + "h" } : { status: "inconsistent", evidence: "says " + c.value + "h, app has " + r.sleep + "h" };
+    }
+    return { status: "self_reported", evidence: "" };
+}
+// Spot factual claims in his message (deterministic patterns, no model).
+function detectClaims(msg) {
+    const t = String(msg || ""), out = [];
+    if (/(gym|workout|leg day|legs|push|pull|session|chest|back)\b[^.?!]{0,25}\b(kar liya|kiya|kar li|done|ho gaya|ho gya|complete|khatam)|\b(kar liya|done)\b[^.?!]{0,15}\b(gym|workout)/i.test(t) && !/nahi|nai|nhi|miss|skip|not/i.test(t)) out.push({ type: "workout", claimed_status: "completed" });
+    else if (/(gym|workout|session)[^.?!]{0,25}(miss|skip|nahi gaya|nai gaya|nhi gaya|nahi kiya|nai kiya|nhi kiya|chhoot|chhut)/i.test(t)) out.push({ type: "workout", claimed_status: "missed" });
+    const kc = t.match(/(\d{3,4})\s*(kcal|calories|calorie|cal)\b/i); if (kc) out.push({ type: "food", value: +kc[1], unit: "kcal" });
+    const pr = t.match(/(\d{2,3})\s*g(?:m|ram)?\s*protein|protein\s*(?:bas\s*|sirf\s*|only\s*)?(\d{2,3})\s*g?/i); if (pr) out.push({ type: "food", value: +(pr[1] || pr[2]), unit: "g" });
+    const sl = t.match(/(\d{1,2}(?:\.\d)?)\s*(ghante|ghanta|hours|hrs|hr|h)\b[^.?!]{0,20}(so|soya|neend|sleep)|(so|soya|neend|sleep)[^.?!]{0,20}?(\d{1,2}(?:\.\d)?)\s*(ghante|ghanta|hours|hrs|hr|h)\b/i);
+    if (sl) out.push({ type: "sleep", value: +(sl[1] || sl[5]) });
+    return out;
+}
+function recordClaims(msg, coachId) {
+    return detectClaims(msg).map(c => {
+        const v = verifyClaim(Object.assign({ day: new Date().toDateString() }, c));
+        const item = { id: "cl" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), coach: coachId, type: c.type, claimed: String(msg).slice(0, 160), value: c.value != null ? c.value : null, unit: c.unit || (c.type === "sleep" ? "h" : null), day: new Date().toDateString(), status: v.status, evidence: v.evidence, at: Date.now(), synced: false };
+        const l = CLAIMS.load(); l.push(item); CLAIMS.save(l); CLAIMS.push(item);
+        return item;
+    });
+}
+// <correction field="…" from="…" to="…">reason</correction>, <honest>what he admitted</honest>, <claim_resolved id="…">corrected|confirmed</claim_resolved>
+function applyTruthTags(text, coachId) {
+    const add = (type, claimed, status, extra) => { const l = CLAIMS.load(); const it = Object.assign({ id: "cl" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), coach: coachId, type: type, claimed: String(claimed).slice(0, 160), value: null, unit: null, day: new Date().toDateString(), status: status, at: Date.now(), synced: false }, extra || {}); l.push(it); CLAIMS.save(l); CLAIMS.push(it); };
+    let clean = String(text).replace(/<correction\b([^>]*)>([\s\S]*?)<\/correction>/gi, (_, at, body) => { const a = attrs(at); add("correction", (a.field || "entry") + ": " + (a.from || "?") + " → " + (a.to || "?"), "corrected", { correction: { field: a.field, from: a.from, to: a.to, reason: body.trim().slice(0, 160) }, evidence: "he corrected it himself" }); return ""; });
+    clean = clean.replace(/<honest>([\s\S]*?)<\/honest>/gi, (_, body) => { add("disclosure", body.trim(), "honest_miss", { evidence: "admitted it himself" }); return ""; });
+    clean = clean.replace(/<claim_resolved\s+id="([^"]+)"\s*>\s*(corrected|confirmed)\s*<\/claim_resolved>/gi, (_, id, st) => { const l = CLAIMS.load(), c = l.find(x => x.id === id); if (c) { c.status = st === "corrected" ? "corrected" : "verified"; c.evidence = (c.evidence || "") + " — resolved: " + st; c.synced = false; CLAIMS.save(l); CLAIMS.push(c); } return ""; });
+    return clean.replace(/<\/?(correction|honest|claim_resolved)\b[^>]*>/gi, "").trim();
+}
+function truthStats() {
+    const since = Date.now() - 7 * 864e5, l = CLAIMS.load().filter(c => c.at >= since);
+    const days = Array.from({ length: 7 }, (_, i) => new Date(Date.now() - (i + 1) * 864e5).toDateString());
+    const complete = days.filter(d => { const r = dayRecords(d); return r.meals > 0 && (r.split === "Rest" || r.exDone > 0 || !r.gymTicked); }).length;
+    const honest = l.filter(c => c.status === "honest_miss" || c.status === "corrected").length;
+    const resolvedMisses = loadCommitments().filter(c => c.status === "missed" && c.due >= localIsoDate(new Date(since))).length;
+    return { claims: l.length, verified: l.filter(c => c.status === "verified").length, selfReported: l.filter(c => c.status === "self_reported").length,
+        open: CLAIMS.load().filter(c => c.status === "inconsistent" || c.status === "incomplete"), honest: honest + resolvedMisses, completeness: Math.round(complete / 7 * 100) };
+}
+const TRUTH_RULES = `TRUTH RULES (no hiding from reality, no shame for telling the truth):
+- The app checks his claims against his records for you (see TRUTH LEDGER / CLAIM CHECK) — trust those numbers, don't redo the maths.
+- Missing evidence is NOT a false claim. An inaccurate entry is NOT a lie. Self-reported = accepted as reported. Never call him a liar or imply it.
+- When records conflict (inconsistent / incomplete), show the specific numbers neutrally and ask ONE question to clear it up ("logs mein 1,450 hai, tu 1,800 bol raha — koi drink ya snack log karna reh gaya?"). Once he clarifies, close it with <claim_resolved id="ID">corrected|confirmed</claim_resolved>.
+- When he corrects his own entry, appreciate it and record it: <correction field="what" from="old" to="new">why</correction>. When he admits a miss or off-plan eating he could have hidden, value the honesty and record it: <honest>what he admitted</honest>. Honesty is its own win — it never breaks a streak.
+- If unlogged food or unlogged sets keep repeating, treat it as a pattern to understand (forgetting? guilt? logging too slow?), not a character flaw — test one fix.
+- Never claim to see things you can't (no camera, no wearable, no live tracking) and never invent records.`;
+function truthPrompt(msg) {
+    const r = dayRecords(new Date().toDateString()), st = truthStats();
+    const check = detectClaims(msg).map(c => { const v = verifyClaim(Object.assign({ day: new Date().toDateString() }, c)); return "- He says " + (c.type === "workout" ? "workout " + c.claimed_status : c.type + " " + c.value + (c.unit || "h")) + " → " + v.status.toUpperCase().replace("_", " ") + " (" + v.evidence + ")"; });
+    return `TRUTH LEDGER (computed by the app from his records today): workout — ${r.split}${r.split !== "Rest" ? ", " + r.exDone + "/" + r.exTotal + " exercises with sets logged" + (r.gymTicked ? ", 'gym done' ticked" : "") : ""}; food — ${r.meals} items logged, ${r.cal} kcal / ${r.protein}g protein recorded, meals ticked ${r.mealsTicked}/3; sleep — ${r.sleep ? r.sleep + "h logged" : "not logged"}.
+Last 7 days: ${st.claims} claims checked (${st.verified} verified, ${st.selfReported} self-reported), ${st.honest} honest reports/corrections, record completeness ${st.completeness}%.${st.open.length ? " OPEN discrepancies to clear up gently: " + st.open.slice(-3).map(c => "[id " + c.id + "] " + c.evidence).join("; ") : ""}${check.length ? "\nCLAIM CHECK for his latest message:\n" + check.join("\n") : ""}`;
+}
+
 // ── GOAL EXECUTION ENGINE: one primary goal at a time ───────────────────
 // One goal is PRIMARY: every department plans around it, the Head Coach sets
 // one daily priority for it, misses go through the accountability loop, and it
@@ -2227,6 +2327,7 @@ function StreakCard({ T, W, L, checks, onChange }) {
             React.createElement("span", { style: { fontSize: 22, fontWeight: 800, color: T.ivory } }, "🔥 " + s.current + " day" + (s.current === 1 ? "" : "s")),
             React.createElement("span", { style: { fontSize: 11.5, color: T.ivoryD } }, "best " + s.best + (s.paused ? " · " + s.paused + " recovery" : "")),
             React.createElement("span", { style: { marginLeft: "auto", fontSize: 10.5, color: T.ivoryD } }, "Consistency > perfection")),
+            (() => { const ts = truthStats(); return React.createElement("div", { style: { fontSize: 11.5, color: "#9FD8B5", marginTop: 4 } }, "🤝 Honesty (7 din): " + ts.honest + " sach wali reports · logs " + ts.completeness + "% complete" + (ts.open.length ? " · " + ts.open.length + " cheez clear karni hai" : "") + " — sach bolna streak kabhi nahi todta"); })(),
         banner && React.createElement("div", { style: { fontSize: 12, marginTop: 6, color: s.todayDone ? "#3DD68C" : s.stage === "rescue" ? "#FF8A8A" : "#F0C060", fontWeight: 600 } }, banner),
         s.today.map(x => React.createElement("div", { key: x.h.id, style: { marginTop: 10 } },
             React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
@@ -7823,8 +7924,9 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const avgProt7 = w7.length ? Math.round(w7.reduce((s, d) => s + (d.totalProtein || 0), 0) / w7.length) : 0;
         const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nLast 7 days: " + (w7.length ? gymDays7 + "/7 gym days | avg sleep " + avgSl + "h | avg protein " + avgProt7 + "g" : "not logged yet") + (L.dayNotes ? "\nHis note today: " + L.dayNotes : "") + "\nLIFTS HE LOGGED (recent sessions):\n" + recentLiftsText(21) + "\nMEALS LOGGED TODAY:\n" + todaysMealsText() + "\nUse these when they matter for what he asked — they're what makes your answer his, not generic.\n\n" + statusReport(id, W, L);
         const safety = safetyCheck(msg);
+        recordClaims(msg, id);
         if (safety) logSafetyEvent(id, safety);
-        const fullSys = buildCoachSystem(coach, CH, ctx, W) + (voice ? VOICE_CALL_NOTE : "") + (safety ? safetyModePrompt(safety) : "");
+        const fullSys = buildCoachSystem(coach, CH, ctx, W) + "\n\n" + truthPrompt(msg) + (voice ? VOICE_CALL_NOTE : "") + (safety ? safetyModePrompt(safety) : "");
         try {
             // Only the photo just sent travels to the model; older ones become a note.
             const src = newHistUser.filter(m => !m.error).slice(-20);
@@ -8471,6 +8573,7 @@ function JeetOS() {
         syncFlags();
         syncDecisions();
         BN.sync();
+        CLAIMS.sync();
         syncPrimary().then(() => setStreakTick(t => t + 1));
         EXP.sync();
         syncMoments();
