@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.15-70";
+const APP_BUILD = "2026.10.15-71";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1317,6 +1317,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     if (pat) parts.push(pat);
     parts.push(teamMemoryPrompt(CH, coach.id));
     parts.push(commitmentsPrompt(coach.id));
+    parts.push(ledgerPrompt());
     parts.push(goalsPrompt(coach.id));
     parts.push(departmentPrompt(coach.id));
     parts.push(masterPlanPrompt(coach.id));
@@ -1358,10 +1359,11 @@ async function pushCommitment(c) {
 async function syncCommitments() {
     if (!supabaseReady()) return loadCommitments();
     try {
-        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_commitments?select=id,coach,text,due,status,owner,blocker&order=created_at.asc&limit=80", { headers: SUPA_HEADERS() });
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_commitments?select=id,coach,text,due,status,owner,blocker,staked,deadline_at,done_at&order=created_at.desc&limit=80", { headers: SUPA_HEADERS() });
         const rows = await r.json();
         if (!r.ok || !Array.isArray(rows)) return loadCommitments();
-        const merged = rows.map(x => Object.assign({}, x, { synced: true }));
+        // Newest 80 from the server (oldest first locally), so new promises never fall off the page.
+        const merged = rows.slice().reverse().map(x => Object.assign({}, x, { synced: true }));
         const have = new Set(merged.map(x => x.id));
         const pending = loadCommitments().filter(x => !x.synced && !have.has(x.id));
         saveCommitments(merged.concat(pending));
@@ -2073,6 +2075,16 @@ function dailyRecord(dateStr, W) {
         notes: log.dayNotes || "", outfitNote: log.outfitNote || "", tasks: Object.keys(checks).filter(k => checks[k] === true).length,
     };
     r.any = r.gym || r.skincare || r.haircare || r.supplements || r.food || r.tasks > 0 || [r.sleep, r.mood, r.energy].some(v => v != null) || !!r.water;
+    // Required log entries (penalty ledger): a ticked meal, or a food/junk entry added in that meal's window.
+    const foodAt = custom.concat(junk).map(m => +m.id).filter(t => t > 1e12);
+    const inWin = (a, b) => foodAt.filter(t => { const h = new Date(t).getHours(); return h >= a && h < b; });
+    const firstOf = l => l.length ? Math.min.apply(null, l) : null;
+    r.logEntries = {
+        breakfast: ticked("bf_") + ticked("breakfast_") > 0 || inWin(4, 12).length > 0 ? { at: firstOf(inWin(4, 12)) } : null,
+        lunch: ticked("lunch_") > 0 || inWin(11, 17).length > 0 ? { at: firstOf(inWin(11, 17)) } : null,
+        dinner: ticked("dinner_") > 0 || inWin(17, 24).concat(inWin(0, 4)).length > 0 ? { at: firstOf(inWin(17, 24)) } : null,
+        sleep: r.sleep != null ? { at: null } : null,
+    };
     return r;
 }
 // The same day in the field names the rest of the app already uses.
@@ -2124,8 +2136,17 @@ function isoOf(dateStr) { return localIsoDate(new Date(dateStr)); }
 function logRow(dateStr, W) {
     const r = dailyRecord(dateStr, W);
     if (!r.any) return null;
+    const seenAll = store.get("jos_entry_seen") || {}, seen = Object.assign({}, seenAll[dateStr] || {});
+    const entries = {};
+    Object.keys(r.logEntries).forEach(k => {
+        const e = r.logEntries[k];
+        if (!e) return;
+        if (!seen[k]) { seen[k] = new Date(e.at && e.at < Date.now() ? e.at : Date.now()).toISOString(); }
+        entries[k] = seen[k];
+    });
+    if (Object.keys(seen).length) { seenAll[dateStr] = seen; Object.keys(seenAll).forEach(d => { if (Date.now() - new Date(d).getTime() > 40 * 864e5) delete seenAll[d]; }); store.set("jos_entry_seen", seenAll); }
     return { date: dateStr, day: isoOf(dateStr), gym_done: r.gym, skincare_done: r.skincare, haircare_done: r.haircare, supplements_done: r.supplements,
-        total_protein: r.protein, total_cal: r.cal, sleep_hours: r.sleep, water: r.water, mood: r.mood, energy: r.energy };
+        total_protein: r.protein, total_cal: r.cal, sleep_hours: r.sleep, water: r.water, mood: r.mood, energy: r.energy, entries: entries };
 }
 const _daySync = {};
 function syncDays(dates) {
@@ -2534,6 +2555,106 @@ YOU'RE TEXTING HIM FIRST to protect his streak (🔥 ${s.current} days). It's ev
         const r = processCoachReply(raw, coach.id);
         return { coach: coach.id, parts: r.parts };
     } catch (_a) { store.set("jos_streak_rescue", null); return null; }
+}
+// ── ACCOUNTABILITY LEDGER (simulation) ─────────────────────────────────
+// Amounts are decided only by the server rules engine (api/_penalty.js).
+// The app and the coaches can read the ledger; nobody here can write it.
+const LEDGER_KEY = "jos_ledger";
+function ledgerCache() { return store.get(LEDGER_KEY) || null; }
+async function loadLedger() {
+    if (!supabaseReady() || !authSession()) return ledgerCache();
+    try {
+        const month = localIsoDate().slice(0, 7) + "-01";
+        const q = p => fetch(SUPABASE_URL + "/rest/v1/" + p, { headers: SUPA_HEADERS() }).then(r => r.ok ? r.json() : Promise.reject(r.status));
+        const [pol, inc, ent] = await Promise.all([
+            q("jeetos_penalty_policies?status=eq.active&order=version.desc&limit=1&select=version,mode,rules,confirmed_at"),
+            q("jeetos_penalty_incidents?select=id,category,title,status,detail,opened_at,updated_at&order=updated_at.desc&limit=30"),
+            q("jeetos_penalty_entries?local_date=gte." + month + "&select=id,incident_id,kind,day_n,local_date,amount_paise,calc&order=id.desc&limit=200"),
+        ]);
+        const l = { policy: pol[0] || null, incidents: inc, entries: ent, at: Date.now() };
+        store.set(LEDGER_KEY, l);
+        return l;
+    } catch (_a) { return ledgerCache(); }
+}
+const paiseText = p => "₹" + Math.round((+p || 0) / 100).toLocaleString("en-IN");
+function ledgerTotals(l) {
+    const ent = (l && l.entries) || [], today = localIsoDate();
+    const sum = f => ent.filter(f).reduce((a, e) => a + (+e.amount_paise || 0), 0);
+    return { month: sum(() => true), today: sum(e => String(e.local_date) === today) };
+}
+function ledgerPrompt() {
+    const l = ledgerCache();
+    if (!l || !l.policy) return "";
+    const t = ledgerTotals(l);
+    const open = (l.incidents || []).filter(i => ["escalating", "review", "capped"].includes(i.status)).slice(0, 5);
+    const staked = loadCommitments().filter(c => c.staked && c.status === "open");
+    return "ACCOUNTABILITY LEDGER (" + (l.policy.mode === "live" ? "LIVE" : "SIMULATION — no real money moves") + "): this month " + paiseText(t.month) + ", today " + paiseText(t.today) + "."
+        + (staked.length ? " Staked promises: " + staked.map(c => "\"" + c.text + "\" (by " + new Date(c.deadline_at).toLocaleString("en-IN", { weekday: "short", hour: "numeric", minute: "2-digit" }) + ")").join("; ") + "." : "")
+        + (open.length ? " Open: " + open.map(i => i.title + " [" + i.status + "]").join("; ") + "." : "")
+        + "\nLedger rules: the app's rules engine alone decides amounts. Never state, threaten or invent a fine or amount the ledger doesn't show, never stake a promise for him (only he can, in the app), and never push unsafe compensation (starving, extra cardio, skipping sleep) to avoid a fine. If something looks unfair or he had a real reason, tell him to dispute it in the ledger.";
+}
+async function ledgerAction(body) {
+    const r = await fetch("/api/penalty", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ("Error " + r.status));
+    return d;
+}
+function LedgerCard({ T, onChange }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [l, setL] = React.useState(ledgerCache());
+    const [open, setOpen] = React.useState(false);
+    const [busy, setBusy] = React.useState("");
+    const [msg, setMsg] = React.useState("");
+    const [tick, setTick] = React.useState(0);
+    React.useEffect(() => { loadLedger().then(setL); syncCommitments().then(() => setTick(x => x + 1)); }, []);
+    const act = async (key, body, after) => {
+        setBusy(key); setMsg("");
+        try { const d = await ledgerAction(body); if (after) after(d); await syncCommitments(); setL(await loadLedger()); setTick(x => x + 1); if (onChange) onChange(); }
+        catch (e) { setMsg("⚠️ " + e.message); }
+        setBusy("");
+    };
+    // Closing a promise goes through the normal commitment sync; the server stamps the time.
+    const closePromise = async (c, status) => {
+        setBusy((status === "done" ? "done:" : "miss:") + c.id); setMsg("");
+        const fresh = loadCommitments(), f = fresh.find(x => x.id === c.id);
+        if (f) { f.status = status; f.synced = false; saveCommitments(fresh); await pushCommitment(f); }
+        await syncCommitments(); setL(await loadLedger()); setTick(x => x + 1); setBusy("");
+    };
+    const today = localIsoDate();
+    const list = loadCommitments();
+    const stakeable = list.filter(c => c.owner !== "coach" && c.status === "open" && !c.staked && c.due >= today).slice(-5);
+    const staked = list.filter(c => c.staked && c.status === "open");
+    const t = ledgerTotals(l);
+    const P = l && l.policy && l.policy.rules;
+    const btn = (label, onClick, key, gold) => React.createElement("button", { key: key || label, onClick: onClick, disabled: !!busy, style: { padding: "6px 11px", borderRadius: 10, border: gold ? "none" : "1px solid " + T.border2, background: gold ? T.goldG : "transparent", color: gold ? "#1A1408" : T.ivoryM, fontWeight: gold ? 700 : 500, fontSize: 12, fontFamily: font, cursor: "pointer", opacity: busy && busy === key ? .5 : 1 } }, busy && busy === key ? "…" : label);
+    const row = (left, right, key, sub) => React.createElement("div", { key: key, style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "7px 0", borderTop: "1px solid " + T.border } },
+        React.createElement("div", { style: { fontSize: 12.5, color: T.ivory, minWidth: 0 } }, left, sub && React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, marginTop: 2 } }, sub)), right);
+    const badge = React.createElement("span", { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: .4, color: T.gold, border: "1px solid rgba(212,175,55,.4)", borderRadius: 6, padding: "2px 6px", marginLeft: 8 } }, l && l.policy && l.policy.mode === "live" ? "LIVE" : "SIMULATION");
+    const head = React.createElement("div", { onClick: () => setOpen(!open), style: { display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" } },
+        React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontWeight: 600 } }, "⚖️ Accountability ledger", badge),
+        React.createElement("div", { style: { fontSize: 12, color: t.month ? T.gold : T.ivoryD } }, l && l.policy ? paiseText(t.month) + " is mahine " + (open ? "▴" : "▾") : (open ? "▴" : "▾")));
+    let body = null;
+    if (open && !(l && l.policy)) body = React.createElement("div", { style: { marginTop: 10 } },
+        React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, lineHeight: 1.55, marginBottom: 10 } },
+            "Rules v1 (simulation — koi paisa nahi katega, sirf ledger banega):", React.createElement("br"),
+            "• Staked promise miss: ₹250 → ₹500 → ₹1,000 (har din double, max 3 din, phir review). Khud \"miss ho gaya\" bol do toh doubling ruk jaati hai.", React.createElement("br"),
+            "• Log miss (deadline + 2h grace): ₹100 each — breakfast 11 AM, lunch 4 PM, dinner 10 PM, neend ka log 12 PM.", React.createElement("br"),
+            "• Caps: ₹1,750 per promise · ₹1,000 per din · ₹5,000 per mahina.", React.createElement("br"),
+            "• Sirf wahi promise jo tum khud Stake karo. Coaches kuch stake nahi kar sakte."),
+        btn("Rules confirm karo", () => act("confirm", { action: "confirm_policy" }), "confirm", true));
+    else if (open) body = React.createElement("div", { style: { marginTop: 8 } },
+        React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD, marginBottom: 4 } }, "Aaj " + paiseText(t.today) + " · Is mahine " + paiseText(t.month) + " / " + paiseText(P && P.caps && P.caps.month_paise)),
+        staked.map(c => row("🔒 " + c.text, React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0 } }, btn("Ho gaya ✓", () => closePromise(c, "done"), "done:" + c.id, true), btn("Miss hua", () => { if (confirm("Sach bolne ke liye shukriya. Miss maan lein? Doubling yahin ruk jaayegi.")) closePromise(c, "missed"); }, "miss:" + c.id)), "s" + c.id, "Deadline " + new Date(c.deadline_at).toLocaleString("en-IN", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }))),
+        stakeable.map(c => row(c.text, btn("Stake ₹250", () => { if (confirm("\"" + c.text + "\" ko stake karna hai?\nDeadline: " + c.due + " raat 11 baje. Miss hua toh ₹250 (simulation).")) act("stake:" + c.id, { action: "stake", commitment_id: c.id, time: "23:00" }); }, "stake:" + c.id), "p" + c.id, "Check " + c.due)),
+        ((l && l.incidents) || []).slice(0, 8).map(i => {
+            const sum = ((l && l.entries) || []).filter(e => e.incident_id === i.id).reduce((a, e) => a + (+e.amount_paise || 0), 0);
+            const last = ((l && l.entries) || []).find(e => e.incident_id === i.id);
+            return row(i.title || i.id, React.createElement("span", { style: { fontSize: 12, color: sum ? T.gold : T.ivoryD } }, sum ? paiseText(sum) : i.status === "review" ? "review" : i.status === "overlap_suppressed" ? "₹0 (dup)" : "₹0"), "i" + i.id, (last && last.calc && last.calc.why) || (i.detail && i.detail.why) || i.status);
+        }),
+        React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" } }, btn("Abhi check karo", () => act("run", { action: "run" }), "run")),
+        React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD, marginTop: 8, lineHeight: 1.4 } }, "Amount sirf rules engine tay karta hai. Galat lage toh coach ko bolo — dispute ka button agle update mein aa raha hai."));
+    return React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 16px", marginBottom: 16, fontFamily: font } },
+        head, body, msg && React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 8 } }, msg));
 }
 function StreakCard({ T, W, L, checks, onChange }) {
     const font = "Inter,system-ui,sans-serif";
@@ -9640,6 +9761,7 @@ function JeetOS() {
                     React.createElement("span", { style: { fontSize: 10, color: "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, lineHeight: 1.5 } }, "Every task needs one photo as proof — finish the steps, then add a photo inside the card to mark it complete."))),
             React.createElement(PrimaryGoalCard, { T: T, onChange: () => setStreakTick(t => t + 1) }),
             React.createElement(StreakCard, { T: T, W: W, L: L, checks: checks, onChange: () => setStreakTick(t => t + 1) }),
+            React.createElement(LedgerCard, { T: T }),
             disciplineCard && React.createElement("div", { style: { padding: "0 20px", marginBottom: 14 } },
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, background: disciplineCard.type === "red" ? "linear-gradient(135deg,#2A0E0E,#1A0808)" : "linear-gradient(135deg,#2A2410,#1A1608)", border: "1px solid " + (disciplineCard.type === "red" ? "rgba(220,50,50,.4)" : "rgba(220,180,50,.35)"), borderRadius: 14, padding: "14px 16px" } },
                     React.createElement("div", { style: { width: 30, height: 40, borderRadius: 4, flexShrink: 0, background: disciplineCard.type === "red" ? "linear-gradient(160deg,#E23B3B,#A82424)" : "linear-gradient(160deg,#F0D04A,#C8A420)", boxShadow: "0 2px 8px " + (disciplineCard.type === "red" ? "rgba(226,59,59,.4)" : "rgba(240,208,74,.4)") } }),

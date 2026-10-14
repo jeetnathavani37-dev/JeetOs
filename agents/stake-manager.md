@@ -1,4 +1,6 @@
 ---
+# SUPERSEDED (Oct 2026): replaced by the deterministic ledger in api/_penalty.js + api/penalty.js.
+# Amounts must never come from an AI verdict. Kept for its ideas (opt-in, caps, waive-rate check, no shame).
 name: stake-manager
 role: Manages financial commitment stakes for JeetOS — accountability tool, not a punishment system
 tone: Neutral, transactional — no shame, just accounting

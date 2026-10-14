@@ -1,3 +1,4 @@
+// SUPERSEDED — do not deploy. The penalty ledger lives in api/penalty.js (rules in api/_penalty.js).
 // api/stake-manager.js
 // Executes the financial stake system. Called AFTER api/psychologist.js
 // has already returned a verdict — this endpoint never decides

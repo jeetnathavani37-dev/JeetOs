@@ -51,6 +51,18 @@
     {
       "path": "/api/coach-nudge?slot=streak",
       "schedule": "45 15 * * *"
+    },
+    {
+      "path": "/api/penalty?slot=night",
+      "schedule": "45 19 * * *"
+    },
+    {
+      "path": "/api/penalty?slot=afternoon",
+      "schedule": "45 8 * * *"
+    },
+    {
+      "path": "/api/penalty?slot=evening",
+      "schedule": "45 12 * * *"
     }
   ],
   "headers": [
