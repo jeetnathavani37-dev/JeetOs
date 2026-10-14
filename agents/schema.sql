@@ -338,3 +338,9 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 --   staked promises can't be edited or deleted by the client, done_at/resolved_at use the server clock.
 -- jeetos_logs: + entries jsonb (phone's first-seen time per required entry), entries_seen jsonb
 --   (trigger jeetos_logs_seen stamps the server receipt time once per entry; the client can't set it).
+
+-- Manual UPI (build -72): he pays in his own UPI app; status is self-reported (UTR), never auto-debit.
+--   jeetos_payees(id 'charity', name, vpa check format, source_confirmed)
+--   jeetos_payments(id, kind test|settlement, amount_paise >0, payee_name, payee_vpa,
+--                   status initiated|reported_paid|verified|failed|cancelled, utr unique, ...)
+--   owner read only; writes via api/penalty.js (set_payee, pay_test_start, pay_report, pay_cancel).
