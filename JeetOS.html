@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-55";
+const APP_BUILD = "2026.10.14-56";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1055,87 +1055,84 @@ const COACH_CREDS = {
     mind: { degrees: "MA Psychology · MPhil Clinical Psychology (RCI-licensed) · Certified in CBT and ACT", exp: "works with students and young founders on stress, motivation and self-worth" },
     ronaldo: { degrees: "No degrees — 5 Ballon d'Ors, 20+ years at the very top through obsessive discipline", exp: "two decades of twice-a-day training, recovery and standards" },
 };
-const COACH_KNOWLEDGE = {
-    skin: [
-        "Judge any routine only after 8–12 weeks; retinoid purging lasts 4–8 weeks.",
-        "Tretinoin 0.025%: start 2–3 nights/week, pea size for whole face on dry skin, moisturiser after (or sandwich) if dry; never with benzoyl peroxide or strong acids the same night.",
-        "PIH on Indian skin fades in 3–6 months — daily SPF 50 PA++++ (2-finger rule, reapply every 2–3 h outdoors) matters more than any brightening serum.",
-        "Best for marks: azelaic acid 10–20%, niacinamide 4–5% (10% can irritate), vitamin C (L-AA 10–20%, low pH, AM), tretinoin. Hydroquinone only short-term under supervision.",
-        "Acne triggers worth checking: whey/milk and high-GI food in some people, pillowcases, phone screen, sweat left on skin after gym, comedogenic hair oils on the forehead.",
-        "Barrier first: if stinging or flaking, stop actives 3–5 days and use cleanser, ceramide moisturiser and SPF only.",
-        "Refer in person (oral antibiotics or isotretinoin need a dermatologist's prescription): nodules/cysts, scarring, sudden severe flare, infection, a changing mole.",
-    ],
-    hair: [
-        "50–100 hairs/day is normal shedding. Telogen effluvium starts 2–3 months after stress, illness, crash dieting or poor sleep and settles in 3–6 months.",
-        "Androgenetic pattern = temples and crown thinning with miniaturised hairs; track with same-light photos every 4 weeks.",
-        "Evidence ranking: minoxidil 5% (works, needs 4–6 months, initial shed), finasteride (only through a doctor), ketoconazole 2% shampoo 2–3×/week (adjunct), microneedling 1–1.5 mm weekly with minoxidil.",
-        "Oiling does not grow hair but coconut oil reduces protein loss and breakage; heavy oil left on the scalp can worsen dandruff and forehead acne.",
-        "Diffuse shedding → ask for ferritin, vitamin D, B12, thyroid and haemoglobin; low protein (<1.2 g/kg) and fast weight loss show up as shedding.",
-        "Scalp: wash 2–4×/week in humid heat; dandruff = Malassezia → ketoconazole or zinc pyrithione, contact time 3–5 min.",
-    ],
-    fitness: [
-        "Hypertrophy: 10–20 hard sets per muscle per week, each muscle 2×/week, 6–30 reps taken to 0–3 reps in reserve.",
-        "Double progression: hit the top of the rep range on all sets, then add 2.5 kg (upper) or 5 kg (lower). Stalled 3 weeks → check sleep, protein, technique, then change the rep range or exercise.",
-        "Rest 2–3 min on compounds, 1–2 min on isolation. Deload every 6–8 weeks or when joints ache and lifts drop.",
-        "Recomp/lean-gain rate for an intermediate: about 0.25–0.5 kg/month of muscle; fat loss 0.5–1% bodyweight/week.",
-        "Under 6 h sleep cuts strength and muscle gain noticeably; creatine 3–5 g daily (timing doesn't matter); protein 1.6–2.2 g/kg.",
-        "Form red flags: sharp or joint pain, numbness, pain that changes movement → stop the lift and get it checked.",
-    ],
-    nutrition: [
-        "Protein 1.6–2.2 g/kg/day, split into 3–5 meals of 25–40 g.",
-        "Veg protein facts: soya chunks 52 g/100 g dry, seitan ~75 g/100 g dry gluten, paneer 18 g/100 g, tofu 8–15 g/100 g, hung curd ~10 g/100 g, curd ~3.5 g/100 g, cooked dal ~7 g/100 g (1 katori ≈ 8–10 g), cooked rajma/chole ~8 g/100 g, whey ~24 g/scoop, milk 3.3 g/100 ml.",
-        "Fat loss: 300–500 kcal deficit → 0.25–0.5 kg/week without losing muscle; keep protein high, fibre 25–35 g.",
-        "Vegetarian watch-list: B12, vitamin D, iron/ferritin, omega-3, zinc — test before mega-dosing.",
-        "Water ~35 ml/kg/day plus sweat losses in Guwahati heat; electrolytes on long sweaty sessions.",
-        "Always add the grams up out loud when you build a day's plan — never round up to hit a target.",
-    ],
-    sleep: [
-        "Adults need 7–9 h. The single strongest lever is a FIXED WAKE TIME (±30 min, weekends too); bedtime follows.",
-        "Morning daylight 10–30 min within an hour of waking anchors the body clock; dim lights and screens down the last hour.",
-        "Caffeine half-life ~5 h: last coffee 8–10 h before bed (a 5:30 PM coffee is still half there at 11 PM).",
-        "Room cool (fan/AC, 20–24 °C), dark and quiet; heat is a major sleep breaker in Guwahati.",
-        "CBT-I tools: bed only for sleep, get up after ~20 min awake and do something dull in dim light, no clock-watching, short worry-dump before bed.",
-        "Naps under 30 min and before 3 PM. Magnesium and ashwagandha have only modest evidence — habits come first.",
-        "Refer in person: loud snoring/gasping (apnea), insomnia 3+ nights a week for 3+ months, sleepiness while driving.",
-    ],
-    style: [
-        "Fit first: shoulder seam on the shoulder bone, sleeve ends at the wrist bone, shirt hem mid-fly, trousers with little or no break. Alterations in India cost ₹150–500 and transform cheap pieces.",
-        "Colours for warm/olive Indian skin: navy, olive, cream, white, camel, rust, burgundy, charcoal; avoid colours that match his skin tone near the face.",
-        "Humid heat: linen, cotton, seersucker, open weaves, lighter colours; avoid polyester and heavy denim in summer.",
-        "Quiet luxury = no big logos, texture over pattern, neutral palette, excellent fit, clean shoes and one good watch.",
-        "Capsule thinking: 10–12 pieces that all mix; build outfits as formulas (top + bottom + shoe + one accent).",
-        "Proportions: slim-not-skinny bottoms with a fitted top for a gym build; tuck when the waist is good; V-necks/open collars lengthen the neck.",
-    ],
-    grooming: [
-        "Beard: neckline 1–2 fingers above the Adam's apple, cheek line natural or slightly lowered, trim every 5–7 days; patchy beards look fuller at 4–6 weeks of growth with a lower cheek line.",
-        "Fades need a touch-up every 2–3 weeks, longer cuts every 5–8 weeks; ask the barber for guard numbers and keep them.",
-        "Fragrance: 2–4 sprays on pulse points; fresh/citrus/aquatic for humid days, woody/amber/vanilla for nights; EDP lasts longer than EDT.",
-        "Nails weekly, eyebrows only tidy the unibrow and stray hairs, ears/nose trimmed every 2 weeks.",
-        "Oral: brush 2 min twice, floss daily, tongue scraper; bad breath often = tongue coating or dehydration.",
-        "Body: antiperspirant at night on dry skin works better than in the morning.",
-    ],
-    mind: [
-        "Listen first, reflect his words back, then ONE tool. Tools: CBT thought record (situation → thought → feeling → evidence → balanced thought), behavioural activation (tiny valued actions), ACT defusion ('I'm having the thought that…'), self-compassion, box breathing, 5-4-3-2-1 grounding, worry time.",
-        "Common distortions in students/founders: comparison, all-or-nothing, catastrophising, mind-reading, 'should' statements.",
-        "Procrastination is mostly emotion avoidance — shrink the start (2-minute rule), make it visible, pair with a reward.",
-        "Implementation intentions ('If it's 6 PM, then I put on my shoes') double follow-through compared with motivation.",
-        "Sleep, movement and daylight move mood measurably — work with the other coaches through <tell>.",
-        "Low mood or anxiety most days for 2+ weeks, panic attacks, not eating/sleeping → keep supporting AND suggest a real therapist once. Any self-harm talk → safety first, Tele-MANAS 14416.",
-    ],
-    ronaldo: [
-        "Standards beat goals: decide the non-negotiable minimum (e.g. 20 min gym on bad days) and never go below it.",
-        "Never miss twice: one miss is an accident, two is the start of a new habit.",
-        "Identity: every rep is a vote for who he is becoming; talk about who he is, not what he wants.",
-        "Environment over willpower: bag packed, phone out of reach, plan written the night before.",
-        "Track it daily and review weekly — what gets measured gets done; celebrate streaks, then raise the bar.",
-    ],
+// Each coach's training, written like the handbook they'd have built over a
+// real degree and practice: how they assess, the science, the protocols with
+// evidence strength, an expert review of HIS current routine, and red flags.
+const COACH_HANDBOOK = {
+    skin: {
+        assess: "Lesion type (comedones / papules / pustules / nodules), where (forehead → hair oil, sweat, caps; jawline → friction, hormones; back/chest → sweat, whey), how long each spot lasts, marks brown (PIH) or red (PIE), current actives and how often, stinging/flaking, triggers in the last 2–3 weeks, photos in the same light.",
+        science: "Acne = androgen-driven sebum + follicular hyperkeratinisation + C. acnes + inflammation. Retinoids normalise shedding inside the pore and prevent NEW lesions, so they go on the whole acne-prone area, not just on spots. Benzoyl peroxide kills C. acnes with no resistance; topical antibiotics (clindamycin) alone breed resistance, so they're always paired with BPO. Azelaic acid is antibacterial + tyrosinase-inhibiting (great for PIH on brown skin). UVA and visible light deepen pigmentation in Fitzpatrick IV — iron-oxide tinted sunscreen protects against visible light.",
+        protocols: "Comedonal acne: retinoid (adapalene 0.1% or tretinoin 0.025%) whole face 3 nights/week → nightly as tolerated (strong evidence). Inflammatory: add BPO 2.5% wash or leave-on AM (strong). PIH: azelaic 15–20% + daily tinted SPF 50, judge at 12 weeks (moderate-strong). PIE: time, niacinamide, azelaic (moderate). Barrier repair: stop actives 3–5 days, ceramides (strong). Judge every change at 8–12 weeks.",
+        review: "Strong base: gentle cleanser, vitamin C AM, ceramide moisturiser, SPF 50. Gap: Deriva CMS = adapalene 0.1% + clindamycin 1% — dotting it only on active spots wastes the adapalene (prevention) and using clindamycin without BPO risks resistance → whole acne-prone area at night, with BPO in the AM if inflamed. Niacinamide most nights is fine at 4–5%. Don't stack the Wednesday Foxtale exfoliating mask with a retinoid the same night. Oral glutathione for skin lightening has weak evidence; astaxanthin modest. Whey and milk can drive acne in some people — check if flares track with whey. Neem/daruharidra in the night drink: no good acne evidence, harmless.",
+        refer: "Nodules or cysts, scarring, a sudden severe flare, signs of infection, a mole that changes — needs an in-person dermatologist (oral antibiotics, isotretinoin, procedures).",
+    },
+    hair: {
+        assess: "How long, shedding (hairs on pillow/shower) vs thinning (wider part, see-through crown, receding temples), Norwood pattern, family history on both sides, triggers 2–3 months before (illness, stress, exams, crash diet, fast weight loss), scalp itch/flakes/redness, wash and styling habits, 50-hair pull test, recent bloods.",
+        science: "Anagen lasts 2–7 years, telogen ~3 months, so shedding shows up 2–3 months after the trigger (telogen effluvium) and settles in 3–6 months. In genetically sensitive follicles DHT shortens anagen and miniaturises hairs (androgenetic alopecia) — that doesn't reverse on its own. Dandruff is Malassezia yeast + scalp inflammation; scratching and inflammation worsen shedding.",
+        protocols: "Androgenetic: minoxidil 5% foam daily (strong; initial shed weeks 2–8, judge at 6 months), finasteride/dutasteride only via a doctor (strong), microneedling 1–1.5 mm weekly with minoxidil (moderate), ketoconazole 2% 2–3×/week (moderate, also treats dandruff), LLLT/PRP (moderate). Weak: rosemary oil (one small trial), onion juice, biotin unless deficient. Telogen effluvium: fix the trigger, protein ≥1.6 g/kg, check ferritin (aim >40), vitamin D, B12, thyroid.",
+        review: "Olaplex No.4/5 is a bond-builder made for bleached/chemically damaged hair — on untreated hair it's just a gentle, pricey shampoo; fine to keep. Thursday coconut oil pre-wash is evidence-based for reducing protein loss and breakage, but oil doesn't grow hair and heavy oil left on can feed dandruff/forehead acne. The dahi + honey + lemon mask is low-evidence; lemon is acidic and can irritate the scalp. Argan on ends is fine. Nothing in his stack (ashwagandha, shilajit, ginseng) has real hair-growth evidence. The real gap: if he has pattern thinning, nothing in his routine treats it — that's where minoxidil/keto come in.",
+        refer: "Patchy bald spots (alopecia areata), scarring/red painful scalp, sudden diffuse loss with other symptoms, or wanting finasteride/oral minoxidil → dermatologist.",
+    },
+    fitness: {
+        assess: "Training age, current working weights and rep PRs on key lifts, hard sets per muscle per week, how close to failure he trains, recovery (sleep, soreness, performance trend over 3 weeks), bodyweight 7-day average and waist trend, technique videos, pain anywhere.",
+        science: "Mechanical tension is the main driver of hypertrophy; volume shows a dose-response up to ~20 hard sets/muscle/week; sets count when taken within ~0–3 reps of failure; MPS stays elevated 24–48 h so 2×/week frequency beats 1×; progressive overload is the signal, fatigue management (sleep, deloads) is what lets it express. Intermediates gain ~0.25–0.5 kg muscle/month at best; recomposition works but slows with leanness.",
+        protocols: "Compounds 5–10 reps, isolation 10–20, 2–3 min rest on compounds, double progression, deload every 6–8 weeks (strong). 7–10k steps and 2–3 short cardio sessions don't hurt hypertrophy (moderate). Protein 1.6–2.2 g/kg, creatine 3–5 g/day any time (strong). Sleep <6 h measurably lowers strength and muscle gain (moderate-strong).",
+        review: "PPL ×2 hits every muscle twice a week — good structure. Chest gets a lot (bench, dips, low cable fly, pec deck) — fine. Gap: no hip-hinge (Romanian deadlift) — hamstrings only get seated leg curls; add RDLs on one leg day. Triceps on leg days is unusual but works since push days are separate. 30 min incline walk after lifting is fine. Coffee pre-gym + 5:30 PM coffee can hurt his sleep, which hurts recovery. 1800 kcal is a real deficit for a 20-year-old training 6 days (maintenance roughly 2400–2700) — great for fat loss, too low for meaningful muscle gain; decide the phase from the 2-week weight trend.",
+        refer: "Sharp joint pain, pain that changes how he moves, numbness/tingling, chest pain or fainting during exercise → stop and see a doctor/physio.",
+    },
+    nutrition: {
+        assess: "24-hour recall meal by meal, protein per meal, calories vs the 7-day weight trend, hunger/energy/cravings, digestion, what he can actually get (home, mess, outside), budget, deficiency signs (fatigue, hair fall, pale), bloods if relevant.",
+        science: "Energy balance decides weight; protein + training decide whether it's muscle or fat. Muscle protein synthesis needs ~2.5–3 g leucine per meal — plant proteins have less leucine, so veg meals need a bit more protein (or whey). Wheat gluten (seitan) is low in lysine; dal/soy/dairy are lysine-rich, so pairing them fixes the amino-acid profile. Fibre and protein drive fullness in a deficit.",
+        protocols: "Protein 1.6–2.2 g/kg in 3–5 meals of 25–40 g (strong). Deficit 300–500 kcal for 0.25–0.5 kg/week (strong). Fibre 25–35 g, water ~35 ml/kg plus sweat. Vegetarians: check B12, vitamin D, ferritin; supplement B12 and D3 by default (strong). Creatine 3–5 g/day (strong).",
+        review: "Plan: seitan 38 g, paneer paratha 42 g, soya 32 g, plus bar ~24 g and whey ~24 g ≈ 160 g — close to 170 g only if every item happens. Check the paratha number: 300 ml skim milk + 32 g skim milk powder gives ~20 g protein of paneer; the rest must come from the HP flour, so verify the label. Seitan is low-lysine — pairing it with dal/curd/soya the same day fixes it. The glow juice is ~270 kcal, mostly fruit/beet sugar — fine post-workout, but count it. His supplement list is long: D3+K2, B12, omega-3 and creatine are evidence-based; ALA, NAC, glutathione, safed musli, ginseng and ginkgo have weak or mixed evidence for his goals — a real dietitian would simplify, not add more.",
+        refer: "Disordered eating signs (bingeing, purging, fear of food), very low energy despite eating, or abnormal bloods → doctor.",
+    },
+    sleep: {
+        assess: "A 7-day sleep diary: lights-out, time to fall asleep, night wakings, final wake, out of bed, naps, caffeine times, screens, room temperature, how rested on waking (1–10), daytime sleepiness, snoring/gasping (ask a roommate), weekend shift.",
+        science: "Two-process model: sleep pressure (adenosine builds through the day) + the circadian clock (set mainly by morning light). Caffeine blocks adenosine receptors with a ~5 h half-life (3–7 h). Deep sleep concentrates early in the night and REM late, so cutting the morning end cuts REM (mood, learning). Late light and a variable schedule push the clock later (social jet lag). A cool core temperature helps sleep onset.",
+        protocols: "Fixed wake time ±30 min 7 days a week (strong). Morning outdoor light 10–30 min (moderate-strong). Caffeine cutoff 8–10 h before bed (strong). Cool, dark room 20–24 °C (moderate). CBT-I for insomnia — stimulus control, sleep restriction, cognitive work — is first-line, stronger than any pill (strong). Naps <30 min, before 3 PM. Magnesium, ashwagandha: modest evidence; melatonin 0.5–1 mg helps shift timing, not a sedative.",
+        review: "Target 11:30 PM → 7 AM (7.5 h) is right; reality is often 1–2 AM. The 5:30 PM coffee means ~50% of that caffeine is still active at 11 PM — biggest easy fix. Ginseng post-lunch and rhodiola can be stimulating in some people (keep them early). The 11 PM night drink (isabgol, ACV, multiple powders in water) adds fluid right before bed — fine, but if he wakes to pee, move it earlier. Magnesium glycinate + ashwagandha + shankhpushpi at 11 PM: harmless, modest effect — habits (wake time, light, phone out, cool room) do far more. Guwahati heat: fan/AC and a cool shower matter.",
+        refer: "Loud snoring, gasping or breathing pauses (sleep apnea), insomnia 3+ nights/week for 3+ months, falling asleep in class or while driving → doctor/sleep clinic.",
+    },
+    style: {
+        assess: "Height, build, shoulder-to-waist ratio, skin undertone (warm/olive/cool) and contrast level (hair/skin/eyes), lifestyle split (college, work/Luxella meetings, dates, events, travel), current wardrobe audit, budget, climate, what he wants people to think when he walks in.",
+        science: "Fit and proportion are 80% of looking good. Match outfit contrast to his personal contrast. Colour harmony: warm/olive undertones carry earthy and deep colours. Fabric weight (GSM) and weave decide comfort in humidity. The eye reads silhouette first, then colour, then detail.",
+        protocols: "Fit rules: shoulder seam on the shoulder bone, sleeve to the wrist bone, shirt hem mid-fly, chinos with a slight taper and no break; tailor everything (₹150–500). Capsule of 10–12 interchangeable pieces in 3–4 core colours. Summer fabrics: linen, cotton poplin, seersucker, open-weave knits. Outfit formula = top + bottom + shoe + one accent (watch, belt, sunglasses).",
+        review: "His direction (quiet luxury, minimal, monochrome, Dubai-ready) fits his build and goals. Watch-out: Luxella gives him Coach/MK/Versace at outlet prices, but logo-heavy pieces fight quiet luxury — pick logo-free leather goods, plain knits and a clean watch. Guwahati humidity means linen and cotton over polyester. His gym build suits fitted (not tight) knits and tapered trousers. Colours that will work on him: navy, olive, cream, white, camel, rust, charcoal.",
+        refer: "Nothing medical — but if body image is weighing on him, loop in Dr. Meher.",
+    },
+    grooming: {
+        assess: "Face shape (oval, round, square, oblong, heart), beard density and growth pattern, current haircut and how fast it loses shape, skin under the beard (bumps, flakes), tools he owns, routine frequency, fragrance he wears and when, oral hygiene.",
+        science: "Beard lines change perceived jaw and face length: a lower cheek line slims a round face, fuller sides widen a long one. Ingrown hairs/razor bumps come from curly hairs re-entering skin — closer shaves make it worse. Fragrance concentration: EDP 15–20%, EDT 5–15%; heat and humidity project scent more but reduce longevity.",
+        protocols: "Clipper guards: #1 = 3 mm, #2 = 6 mm, #3 = 10 mm. Neckline 1–2 fingers above the Adam's apple; trim every 5–7 days. Shave with the grain, single blade, no skin stretching if bumps. Fades: touch up every 2–3 weeks. Fragrance: 2–4 sprays on pulse points, fresh/citrus/aquatic for day heat, woody/amber at night. Oral: brush 2 min twice, floss, tongue scrape.",
+        review: "His beard is short-medium and he wants definition — clean neckline and cheek line are the biggest visual upgrade. Hair care is Kai's; you own the cut, shape and maintenance schedule. Humid Guwahati: lighter, fresher fragrances by day. Hands, nails and brows are where 'groomed' vs 'not' is decided at close range.",
+        refer: "Painful bumps, infected ingrowns or patches of beard loss → Dr. Aria / a dermatologist.",
+    },
+    mind: {
+        assess: "What happened, how long it's been going on, mood and energy pattern (his logs), sleep and appetite changes, what thoughts loop, what he's avoiding, what still gives him energy, support around him, and a gentle risk check if he sounds hopeless.",
+        science: "CBT: situations trigger automatic thoughts that drive feelings and behaviour; changing thoughts and actions shifts mood. Behavioural activation: action comes before motivation in low mood. ACT: thoughts are not orders — defusion and values-based action. Procrastination is mainly short-term mood repair (avoiding a bad feeling). Habits take ~2 months on average (Lally 2010) and missing one day doesn't break them. Sleep, exercise and daylight have measurable effects on mood and anxiety.",
+        protocols: "Reflect first (motivational interviewing: open questions, affirmations, reflections, summaries). One tool per session: thought record, behavioural activation (tiny valued action today), defusion, self-compassion break, box breathing 4-4-4-4, 5-4-3-2-1 grounding, scheduled worry time, implementation intentions. Measure with his mood logs and one 1–10 rating before/after.",
+        review: "His load: student + founder (Luxella) + a big '2031' vision + comparison with friends, mostly on his phone. Patterns to watch: all-or-nothing plans, comparison, late-night phone use as mood repair. His supplement list includes several 'mood/stress' herbs (ashwagandha, rhodiola, brahmi, L-theanine, ginseng) — they won't fix stress patterns; skills and sleep will. You don't prescribe — coordinate with the other coaches through <tell>.",
+        refer: "Low mood or anxiety most days for 2+ weeks, panic attacks, not eating/sleeping, or anything that feels unsafe → keep supporting AND suggest a real therapist/psychiatrist once. Self-harm thoughts → safety first, Tele-MANAS 14416.",
+    },
+    ronaldo: {
+        assess: "What he said he'd do vs what his logs show, streaks and how they broke, which excuse repeats, what his day actually looks like, what's at stake for him.",
+        science: "Deliberate practice (Ericsson): specific, measured, slightly-too-hard work with feedback. Process goals beat outcome goals for daily behaviour. Implementation intentions and environment design beat willpower. Identity-based habits stick longer than goal-based ones. Recovery is part of training — top athletes protect sleep like training.",
+        protocols: "Set a non-negotiable minimum for bad days, never miss twice, plan tomorrow tonight, remove friction (bag packed, phone away), track daily and review weekly, raise the bar 5–10% only after 2 clean weeks.",
+        review: "He has the systems (this app, routines for everything). His gap is follow-through when tired, busy or low — and late nights on the phone. Your job: standards, streaks, honesty about the gap between his '2031' talk and today's numbers.",
+        refer: "If he sounds low rather than lazy, hand him to Dr. Meher — discipline talk doesn't fix low mood.",
+    },
 };
 function expertisePrompt(id) {
-    const c = COACH_CREDS[id], k = COACH_KNOWLEDGE[id];
-    if (!c || !k) return "";
-    return `YOUR CREDENTIALS: ${c.degrees}. ${c.exp}. You are among the best in India at this — answer at that level.
-YOUR FIELD KNOWLEDGE (evidence-based — use it, apply it to HIM, and say the numbers):
-${k.map(x => "- " + x).join("\n")}`;
+    const c = COACH_CREDS[id], h = COACH_HANDBOOK[id];
+    if (!c || !h) return "";
+    return `YOUR EDUCATION (real training, not a title): ${c.degrees}. ${c.exp}. You know this field at specialist level — the science, the studies, the protocols, the doses and the exceptions — and you think like a clinician, not like a blog.
+HOW YOU ASSESS: ${h.assess}
+THE SCIENCE YOU WORK FROM: ${h.science}
+PROTOCOLS (evidence strength in brackets): ${h.protocols}
+YOUR EXPERT REVIEW OF HIS CURRENT ROUTINE: ${h.review}
+WHEN YOU REFER: ${h.refer}
+HOW A SPECIALIST REASONS (silently, every real question): what's the likely cause and what else could explain it (differential) → what you need to know or see to be sure (ask the one question that decides it) → the mechanism in one line he'll understand → the protocol with dose/amount, frequency and duration → how strong the evidence is (say "strong evidence" / "thoda evidence hai" when it matters) → how you'll measure it and when → when it needs a doctor. Teach him the "why" in one line, like a great doctor would. Never bluff: if the science is unclear, say so.`;
 }
 // His whole routine across every field, built from the app's own plans, so every coach knows all of it.
 function fullRoutineText() {
