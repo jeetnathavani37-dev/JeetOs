@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-63";
+const APP_BUILD = "2026.10.14-64";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1259,6 +1259,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(departmentPrompt(coach.id));
     parts.push(masterPlanPrompt(coach.id));
     parts.push(bottleneckPrompt(coach.id));
+    parts.push(primaryPrompt(coach.id));
     parts.push(streakPrompt(W));
     const quiet = silencePrompt(CH, W);
     if (quiet) parts.push(quiet);
@@ -1610,9 +1611,10 @@ ${chats || "- no chats this week"}
 NOTES ALREADY SENT THIS WEEK (don't repeat): ${loadNotes().filter(n => n.at > Date.now() - 7 * 864e5).map(n => n.from + "→" + n.to + ": " + n.text).join(" | ") || "none"}
 
 ${masterPlanPrompt(null).split("\n- To change")[0]}
+${primaryPrompt(null).split("\n- ")[0]}
 As Head Coach you also: (1) spot CONFLICTS — two coaches pushing him in opposite directions (e.g. more calories vs deficit, late gym vs early bedtime) — and resolve each one for the team; (2) propose at most 2 plan DECISIONS, only with solid evidence from his data, reversible, one variable each — they go to Jeet for approval.
 Reply with ONLY JSON (no markdown):
-{"focus":"one line: the team's #1 priority for Jeet today and why (with a number)","conflicts":[{"between":["fitness","nutrition"],"issue":"plain words","resolution":"what the team will do"}],"decisions":[{"coach":"nutrition","area":"nutrition","change":"the exact change","reason":"plain words","evidence":"his data"}],"notes":[{"from":"fitness","to":"sleep","text":"internal message in that coach's own voice (Hinglish ok): the evidence with numbers + exactly what you want them to do in their next chat with him"}]}
+{"focus":"one line: the team's #1 priority for Jeet today and why (with a number)","today_priority":{"coach":"fitness","action":"the ONE concrete action today that moves his PRIMARY GOAL (empty if none is set)"},"conflicts":[{"between":["fitness","nutrition"],"issue":"plain words","resolution":"what the team will do"}],"decisions":[{"coach":"nutrition","area":"nutrition","change":"the exact change","reason":"plain words","evidence":"his data"}],"notes":[{"from":"fitness","to":"sleep","text":"internal message in that coach's own voice (Hinglish ok): the evidence with numbers + exactly what you want them to do in their next chat with him"}]}
 2-6 notes. Every note must lead to an action. Write notes and the focus in plain words (Jeet can read them) — no jargon. Use coach ids exactly: skin, hair, fitness, nutrition, sleep, style, grooming, ronaldo, mind (to may also be "team").`;
     try {
         const raw = await ai(sys, [{ role: "user", content: "Run today's huddle." }], 1800, { tier: "smart", effort: "medium" });
@@ -1622,6 +1624,7 @@ Reply with ONLY JSON (no markdown):
         const conflicts = (Array.isArray(j.conflicts) ? j.conflicts : []).filter(c => c && c.issue && Array.isArray(c.between)).slice(0, 4)
             .map(c => ({ between: c.between.filter(x => COACHES.some(k => k.id === x)).slice(0, 3), issue: String(c.issue).slice(0, 240), resolution: String(c.resolution || "").slice(0, 240) })).filter(c => c.between.length);
         (Array.isArray(j.decisions) ? j.decisions : []).slice(0, 2).forEach(d => addDecision(d, "huddle"));
+        if (j.today_priority && j.today_priority.action) setTodayPriority(j.today_priority.action, j.today_priority.coach);
         store.set(HUDDLE_KEY, { date: today, focus: String(j.focus || "").slice(0, 300), count: added.length, conflicts: conflicts });
         return { focus: j.focus, notes: added };
     } catch (_a) { store.set(HUDDLE_KEY, h || null); return null; }
@@ -1950,6 +1953,135 @@ function ScorecardBlock({ T }) {
         blk.length > 0 && React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 10 } }, "Promise kyun toote: " + blk.map(k => k + " ×" + st.blockers[k]).join(", ")),
         bns.map(b => React.createElement("div", { key: b.id, style: { fontSize: 12, color: T.ivory, marginTop: 6 } }, "🔎 " + b.hypothesis, React.createElement("span", { style: { color: T.ivoryD, fontSize: 11 } }, " · " + b.category.replace(/_/g, " ") + " · " + b.confidence + " · " + b.instances + "×"))));
 }
+// ── GOAL EXECUTION ENGINE: one primary goal at a time ───────────────────
+// One goal is PRIMARY: every department plans around it, the Head Coach sets
+// one daily priority for it, misses go through the accountability loop, and it
+// only counts as complete with evidence. Other department goals wait in a
+// queue; the next one activates when the primary is completed or consciously
+// revised. Maintenance (sleep, health, basics) always continues.
+const PRIMARY_KEY = "jos_primary";
+function loadPrimary() { const p = store.get(PRIMARY_KEY); return p && typeof p === "object" ? p : { goalId: null, status: "none", queue: [], history: [], updated: 0 }; }
+function savePrimary(p) {
+    p.updated = Date.now(); store.set(PRIMARY_KEY, p);
+    if (supabaseReady()) fetch(SUPABASE_URL + "/rest/v1/jeetos_goal_state?on_conflict=id", { method: "POST", headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }), body: JSON.stringify({ id: "jeet", data: p, updated_at: new Date().toISOString() }) }).catch(() => { });
+}
+async function syncPrimary() {
+    if (!supabaseReady()) return loadPrimary();
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_goal_state?id=eq.jeet&select=data", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        const remote = r.ok && rows && rows[0] && rows[0].data;
+        if (remote && (remote.updated || 0) > (loadPrimary().updated || 0)) store.set(PRIMARY_KEY, remote);
+        else if (!remote && loadPrimary().updated) savePrimary(loadPrimary());
+    } catch (_a) { }
+    return loadPrimary();
+}
+function primaryGoal() { const p = loadPrimary(); return p.goalId ? loadGoals().find(g => g.id === p.goalId) || null : null; }
+// Queue = his chosen order, then any other active department focus goals.
+function primaryQueue() {
+    const p = loadPrimary(), act = loadGoals().filter(g => g.status === "active" && g.id !== p.goalId);
+    const ordered = (p.queue || []).map(id => act.find(g => g.id === id)).filter(Boolean);
+    return ordered.concat(act.filter(g => g.focus && !ordered.includes(g)));
+}
+function setPrimary(goalId, why) {
+    const p = loadPrimary(), g = loadGoals().find(x => x.id === goalId);
+    if (!g) return;
+    if (p.goalId && p.goalId !== goalId) p.history = (p.history || []).concat([{ goalId: p.goalId, text: (primaryGoal() || {}).text, status: "revised", reason: why || "switched", date: localIsoDate() }]).slice(-20);
+    p.goalId = goalId; p.status = "active"; p.since = localIsoDate(); p.today = null; p.evidence = null;
+    p.queue = (p.queue || []).filter(x => x !== goalId);
+    savePrimary(p);
+    addNotes([{ from: "head", to: "team", text: "New PRIMARY GOAL: " + g.text + " (" + personaName(g.coach) + "'s department). Every plan now supports this first; maintenance continues." }], "headcoach");
+}
+function revisePrimary(reason) {
+    const p = loadPrimary(), g = primaryGoal();
+    if (!g) return;
+    p.history = (p.history || []).concat([{ goalId: g.id, text: g.text, status: "revised", reason: reason, date: localIsoDate() }]).slice(-20);
+    p.goalId = null; p.status = "none"; p.today = null; savePrimary(p);
+    addNotes([{ from: "head", to: "team", text: "Primary goal '" + g.text + "' was consciously revised (" + reason + "). Waiting for Jeet to pick the next one." }], "headcoach");
+}
+function completePrimary(evidence) {
+    const p = loadPrimary(), g = primaryGoal();
+    if (!g || !String(evidence || "").trim()) return null;
+    const goals = loadGoals(), x = goals.find(y => y.id === g.id);
+    if (x) { x.status = "achieved"; x.synced = false; saveGoals(goals); pushGoal(x); }
+    p.history = (p.history || []).concat([{ goalId: g.id, text: g.text, status: "completed", evidence: String(evidence).slice(0, 300), date: localIsoDate() }]).slice(-20);
+    const next = primaryQueue()[0];
+    p.goalId = null; p.status = "none"; p.today = null; savePrimary(p);
+    addNotes([{ from: "head", to: "team", text: "PRIMARY GOAL COMPLETED ✅ " + g.text + " — evidence: " + evidence + "." + (next ? " Next up: " + next.text : "") }], "headcoach");
+    if (next) setPrimary(next.id, "previous goal completed");
+    return next || null;
+}
+function setTodayPriority(text, coach) {
+    const p = loadPrimary(); if (!p.goalId || !text) return;
+    if (p.today && p.today.date === localIsoDate()) return;
+    if (p.today && !p.today.done) p.missed = (p.missed || []).concat([{ date: p.today.date, text: p.today.text }]).slice(-14);
+    p.today = { date: localIsoDate(), text: String(text).slice(0, 200), coach: coach || "head", done: false }; savePrimary(p);
+}
+function markTodayPriority(done) { const p = loadPrimary(); if (p.today && p.today.date === localIsoDate()) { p.today.done = done; savePrimary(p); } }
+function primaryPrompt(coachId) {
+    const p = loadPrimary(), g = primaryGoal(), q = primaryQueue();
+    if (!g) return `PRIMARY GOAL: none chosen yet.${q.length ? " Candidates (department focus goals): " + q.slice(0, 5).map(x => x.text + " (" + personaName(x.coach) + ")").join("; ") + "." : ""} When it fits, help him pick ONE primary goal — the one that matters most to him right now — in the app (Today → ⭐ Primary goal). Don't pile up parallel plans meanwhile.`;
+    const pace = focusPace(g), pct = goalPct(g), mine = g.coach === coachId;
+    const t = p.today && p.today.date === localIsoDate() ? p.today : null;
+    const missed = (p.missed || []).filter(m => m.date >= localIsoDate(new Date(Date.now() - 7 * 864e5)));
+    return `⭐ PRIMARY GOAL (one goal at a time — the whole team's #1 job): ${focusLine(g)}${pct != null ? " — " + pct + "% done" : ""}. Owner: ${personaName(g.coach)}${mine ? " (YOU)" : ""}. Active since ${p.since || "?"}.
+Today's ONE priority for it: ${t ? t.text + (t.done ? " — ✅ DONE" : " — not done yet") : "not set yet"}.${missed.length ? " Missed priorities this week: " + missed.map(m => m.date + " " + m.text).join("; ") + " — take these through the accountability loop." : ""}
+Queue (waits until this one is completed or consciously revised): ${q.slice(0, 4).map(x => x.text).join(" → ") || "empty"}.
+- ${mine ? "You own this goal: drive it, judge it against the timeline every chat, and when the numbers say it's reached, ask for the evidence (a measurement, a photo, a log) — he marks it complete in the app." : "Your advice in your field must SUPPORT this primary goal (or at least not compete with it). Keep his maintenance basics going, but don't start a big new project in your field now."}
+- If he wants to jump to a new plan, product, split or goal mid-way: first check what's actually blocking the current one. Switching strategy for a real reason is fine; switching to escape the hard part is not — say so kindly and keep him on track. A conscious revision (unrealistic, circumstances changed, health) is allowed: he does it in the app.
+- Never call the goal complete without evidence that meets its target.`;
+}
+function PrimaryGoalCard({ T, onChange }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [sheet, setSheet] = React.useState(null);
+    const [ev, setEv] = React.useState("");
+    const p = loadPrimary(), g = primaryGoal(), q = primaryQueue();
+    const refresh = () => { setSheet(null); setEv(""); onChange && onChange(); };
+    const t = p.today && p.today.date === localIsoDate() ? p.today : null;
+    const pace = g ? focusPace(g) : null, pct = g ? goalPct(g) : null, u = g && g.unit ? " " + g.unit : "";
+    const btn = (label, onClick, primary) => React.createElement("button", { onClick: onClick, style: { flex: 1, padding: "8px 10px", borderRadius: 10, border: primary ? "none" : "1px solid rgba(255,255,255,.14)", background: primary ? T.gold : "transparent", color: primary ? "#16120A" : T.ivory, fontWeight: primary ? 700 : 500, fontSize: 12.5, cursor: "pointer" } }, label);
+    const candidates = loadGoals().filter(x => x.status === "active" && x.id !== p.goalId);
+    return React.createElement("div", { style: { margin: "0 20px 14px", padding: 14, borderRadius: 16, background: "linear-gradient(135deg,rgba(201,168,76,.14),rgba(255,255,255,.03))", border: "1px solid rgba(201,168,76,.35)", fontFamily: font } },
+        React.createElement("div", { style: { fontSize: 10.5, fontWeight: 800, color: T.gold, letterSpacing: ".08em", textTransform: "uppercase" } }, "⭐ Primary goal · one at a time"),
+        !g ? React.createElement("div", null,
+            React.createElement("div", { style: { fontSize: 13.5, color: T.ivory, marginTop: 6, lineHeight: 1.45 } }, candidates.length ? "Ek goal choose karo — saare coaches usi ko complete karwane mein lagenge." : "Abhi koi goal nahi. Coaches → 🎯 Focus board → scan karwao, phir yahan ek primary choose karo."),
+            candidates.length > 0 && React.createElement("div", { style: { display: "flex", marginTop: 10 } }, btn("⭐ Primary goal choose karo", () => setSheet("pick"), true)))
+        : React.createElement("div", null,
+            React.createElement("div", { style: { fontSize: 15, color: T.ivory, fontWeight: 700, marginTop: 6, lineHeight: 1.35 } }, g.text),
+            React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD, marginTop: 3 } }, personaName(g.coach) + (g.target != null ? " · " + g.start_value + " → " + g.current_value + " → " + g.target + u : "") + (g.deadline ? " · by " + g.deadline : "")),
+            pct != null && React.createElement("div", { style: { height: 5, background: "rgba(255,255,255,.08)", borderRadius: 3, overflow: "hidden", marginTop: 8 } }, React.createElement("div", { style: { height: "100%", width: pct + "%", background: T.gold } })),
+            pace && pace.status && React.createElement("div", { style: { fontSize: 11, marginTop: 5, color: pace.status === "behind" ? "#E5484D" : "#3DD68C" } }, "Week " + pace.week + "/" + pace.weeks + " · " + (pace.status === "behind" ? "⚠️ behind (should be ~" + pace.expected + u + ")" : "✓ on track")),
+            React.createElement("div", { style: { marginTop: 10, padding: "9px 10px", borderRadius: 11, background: "rgba(0,0,0,.25)", display: "flex", alignItems: "center", gap: 8 } },
+                React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+                    React.createElement("div", { style: { fontSize: 10, color: T.gold, fontWeight: 700, letterSpacing: ".06em" } }, "AAJ KI EK PRIORITY"),
+                    React.createElement("div", { style: { fontSize: 13, color: T.ivory, marginTop: 2, textDecoration: t && t.done ? "line-through" : "none" } }, t ? t.text : "Head Coach subah set karega — ya coach se poocho")),
+                t && React.createElement("button", { onClick: () => { markTodayPriority(!t.done); refresh(); }, style: { padding: "6px 10px", borderRadius: 9, border: "none", background: t.done ? "#3DD68C" : "rgba(255,255,255,.1)", color: t.done ? "#062615" : T.ivory, fontSize: 12, fontWeight: 700, cursor: "pointer" } }, t.done ? "✓ Done" : "Done?")),
+            React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 10 } },
+                btn("✅ Complete", () => setSheet("complete"), pct != null && pct >= 100),
+                btn("Queue (" + q.length + ")", () => setSheet("queue")),
+                btn("Revise", () => setSheet("revise")))),
+        sheet && React.createElement(ChatSheet, { T: T, title: sheet === "pick" ? "⭐ Primary goal choose karo" : sheet === "complete" ? "✅ Goal complete?" : sheet === "revise" ? "Goal revise karna hai?" : "Next goals queue", onClose: () => setSheet(null) },
+            React.createElement("div", { style: { fontFamily: font } },
+                sheet === "pick" && React.createElement("div", null,
+                    React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, marginBottom: 10 } }, "Jo abhi tumhare liye sabse zyada matter karta hai. Baaki queue mein rahenge, aur maintenance (neend, basics) chalta rahega."),
+                    candidates.map(x => React.createElement("div", { key: x.id, onClick: () => { setPrimary(x.id, "chosen"); refresh(); }, style: { padding: 11, borderRadius: 12, border: "1px solid rgba(255,255,255,.1)", marginBottom: 8, cursor: "pointer" } },
+                        React.createElement("div", { style: { fontSize: 13.5, color: T.ivory, fontWeight: 600 } }, x.text),
+                        React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD, marginTop: 2 } }, personaName(x.coach) + (x.deadline ? " · by " + x.deadline : "") + (x.focus ? " · department focus" : ""))))),
+                sheet === "complete" && React.createElement("div", null,
+                    React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, marginBottom: 8 } }, "Goal tabhi complete jab target ka saboot ho." + (g && g.target != null ? " Target: " + g.target + u + " · abhi: " + g.current_value + u : "")),
+                    React.createElement("input", { value: ev, onChange: e => setEv(e.target.value), placeholder: "Saboot: e.g. aaj waist 76 cm naapa, photo bheji", style: { width: "100%", boxSizing: "border-box", background: T.card2, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 10, padding: 10, fontSize: 13, outline: "none" } }),
+                    React.createElement("div", { style: { display: "flex", marginTop: 10 } }, btn("Complete karo → agla goal", () => { if (ev.trim()) { completePrimary(ev); refresh(); } }, true))),
+                sheet === "revise" && React.createElement("div", null,
+                    React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, marginBottom: 10 } }, "Revise karna allowed hai — bas soch samajh ke. Kyun?"),
+                    ["Unrealistic tha", "Circumstances badle", "Health / injury", "Priority badal gayi"].map(r => React.createElement("button", { key: r, onClick: () => { revisePrimary(r); setSheet("pick"); }, style: { display: "block", width: "100%", textAlign: "left", padding: 11, borderRadius: 11, border: "1px solid rgba(255,255,255,.12)", background: "transparent", color: T.ivory, fontSize: 13, marginBottom: 7, cursor: "pointer" } }, r))),
+                sheet === "queue" && React.createElement("div", null,
+                    !q.length && React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryD } }, "Queue khaali hai."),
+                    q.map((x, i) => React.createElement("div", { key: x.id, style: { display: "flex", gap: 8, alignItems: "center", padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,.06)" } },
+                        React.createElement("span", { style: { fontSize: 12, color: T.gold, fontWeight: 700, width: 18 } }, i + 1),
+                        React.createElement("div", { style: { flex: 1, fontSize: 13, color: T.ivory } }, x.text, React.createElement("span", { style: { fontSize: 11, color: T.ivoryD } }, " · " + personaName(x.coach))),
+                        i > 0 && React.createElement("button", { onClick: () => { const pp = loadPrimary(); const ids = q.map(y => y.id); ids.splice(i, 1); ids.splice(i - 1, 0, x.id); pp.queue = ids; savePrimary(pp); onChange && onChange(); setSheet("queue"); }, style: { border: "1px solid rgba(255,255,255,.14)", background: "transparent", color: T.ivory, borderRadius: 8, fontSize: 11, padding: "2px 7px", cursor: "pointer" } }, "↑")))))));
+}
+
 // ── STREAK PROTECTION ENGINE ─────────────────────────────────────────────
 // A streak day = every core habit hit at least its MINIMUM (or a genuine
 // recovery day). Full win / minimum win / recovery are defined up front.
@@ -5221,7 +5353,11 @@ function ChatMenu({ T, items, onClose }) {
                 React.createElement("span", { style: { width: 20, textAlign: "center" } }, it.icon), it.label))));
 }
 function ChatSheet({ T, title, onClose, children }) {
-    return React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "flex-end", justifyContent: "center" } },
+    // Portal to <body> so the sheet always sits above the bottom nav, wherever it's opened from.
+    return ReactDOM.createPortal(ChatSheetBody({ T: T, title: title, onClose: onClose, children: children }), document.body);
+}
+function ChatSheetBody({ T, title, onClose, children }) {
+    return React.createElement("div", { onClick: onClose, style: { position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "flex-end", justifyContent: "center" } },
         React.createElement("div", { onClick: e => e.stopPropagation(), style: { width: "100%", maxWidth: 430, maxHeight: "75vh", overflowY: "auto", background: "#16171C", borderRadius: "20px 20px 0 0", padding: "10px 18px calc(20px + env(safe-area-inset-bottom))", animation: "josSheetIn .25s ease-out" } },
             React.createElement("div", { style: { width: 38, height: 4, borderRadius: 2, background: "rgba(255,255,255,.18)", margin: "0 auto 12px" } }),
             React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 } },
@@ -8319,6 +8455,7 @@ function JeetOS() {
         syncFlags();
         syncDecisions();
         BN.sync();
+        syncPrimary().then(() => setStreakTick(t => t + 1));
         EXP.sync();
         syncMoments();
         // Streak rescue: the right coach steps in if a habit is at risk in the evening.
@@ -8331,7 +8468,7 @@ function JeetOS() {
         setTimeout(tryRescue, 8000);
         setInterval(tryRescue, 15 * 60000);
         // The team's private morning huddle (once a day).
-        syncNotes().then(() => setTimeout(() => runTeamHuddle(keptCH), 4000));
+        syncNotes().then(() => setTimeout(() => runTeamHuddle(keptCH).then(() => setStreakTick(t => t + 1)), 4000));
         // Long-term memory: pull the profile/summaries, then learn from anything new.
         Promise.all([syncProfile(), syncSummaries()]).then(() => runMemoryPass(keptCH));
         syncAssessments();
@@ -9130,6 +9267,7 @@ function JeetOS() {
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, background: "rgba(91,141,239,.08)", border: "1px solid rgba(91,141,239,.22)", borderRadius: 12, padding: "10px 12px" } },
                     React.createElement("span", { style: { fontSize: 14 } }, "📷"),
                     React.createElement("span", { style: { fontSize: 10, color: "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, lineHeight: 1.5 } }, "Every task needs one photo as proof — finish the steps, then add a photo inside the card to mark it complete."))),
+            React.createElement(PrimaryGoalCard, { T: T, onChange: () => setStreakTick(t => t + 1) }),
             React.createElement(StreakCard, { T: T, W: W, L: L, checks: checks, onChange: () => setStreakTick(t => t + 1) }),
             disciplineCard && React.createElement("div", { style: { padding: "0 20px", marginBottom: 14 } },
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, background: disciplineCard.type === "red" ? "linear-gradient(135deg,#2A0E0E,#1A0808)" : "linear-gradient(135deg,#2A2410,#1A1608)", border: "1px solid " + (disciplineCard.type === "red" ? "rgba(220,50,50,.4)" : "rgba(220,180,50,.35)"), borderRadius: 14, padding: "14px 16px" } },
