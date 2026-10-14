@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-52";
+const APP_BUILD = "2026.10.14-53";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1013,6 +1013,36 @@ function extractHandoff(reply) {
     }).replace(/<\/?handoff>/gi, "").trim();
     return { clean: clean, handoff: handoff };
 }
+// ── TIME AWARENESS: coaches know what time it is and when he said things ──
+function stampTime(ts) {
+    const d = new Date(ts), now = new Date();
+    const t = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    if (d.toDateString() === now.toDateString()) return "today " + t;
+    if (d.toDateString() === new Date(now.getTime() - 864e5).toDateString()) return "yesterday " + t;
+    return d.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short" }) + " " + t;
+}
+function partOfDay(h) { return h < 5 ? "late night" : h < 12 ? "morning" : h < 17 ? "afternoon" : h < 21 ? "evening" : "night"; }
+function gapText(ms) {
+    const m = Math.round(ms / 60000);
+    if (m < 60) return m + " min";
+    const h = Math.round(m / 60);
+    if (h < 36) return h + " hour" + (h === 1 ? "" : "s");
+    return Math.round(h / 24) + " days";
+}
+function timeNowPrompt(hist) {
+    const now = new Date();
+    const last = [...(hist || [])].reverse().find(m => m && m.ts && !m.error);
+    const gap = last ? now.getTime() - last.ts : null;
+    let prev = "";
+    if (last && gap > 45 * 60000) prev = `\nThe previous message in this chat was ${stampTime(last.ts)} — ${gapText(gap)} ago. That moment is over: don't continue as if it's still then. If what was going on matters, ask how it turned out (e.g. he couldn't sleep last night → "raat ko neend aayi finally?").`;
+    else if (last) prev = "\nYou're mid-conversation (last message " + gapText(Math.max(gap, 60000)) + " ago).";
+    return `TIME RIGHT NOW: ${now.toLocaleDateString("en-US", { weekday: "long", day: "numeric", month: "short" })}, ${now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} — ${partOfDay(now.getHours())} for Jeet (India).${prev}
+- His messages are stamped like [today 2:54 PM] so you know when he said what. Never write these stamps yourself.
+- Talk for the real time of day: morning = the day ahead, afternoon/evening = how the day's going, night = wind down. Never say good night in the afternoon or push a workout at 1 AM. After 11:30 PM keep it short and help him get to sleep.`;
+}
+function stampMsgs(src, mapped) {
+    return mapped.map((m, i) => m.role === "user" && src[i] && src[i].ts ? Object.assign({}, m, { content: "[" + stampTime(src[i].ts) + "] " + m.content }) : m);
+}
 // Full system prompt for a coach: persona + texting style + personality +
 // check-in / therapist rules + shared team memory + today's data.
 // Text before PROMPT_LIVE never changes for a coach, so the server can cache it.
@@ -1025,9 +1055,11 @@ function buildCoachSystem(coach, CH, ctx, W) {
     if (life) parts.push(life);
     if (coach.id !== "mind") parts.push(COACH_CHECKIN);
     parts.push(photoPrompt(coach.id));
+    parts.push("ABOUT THE NOTES IN YOUR PERSONA: the routine, products and profile written at the top of your instructions came from when the app was set up and may be out of date. WHO JEET IS, his logs and what he tells you now always win — if they differ, go with them (and confirm with him when it matters).");
     const stable = parts.splice(0).join("\n\n");
     const h = coach.id === "mind" ? freshMeherHandoff() : null;
     if (h) parts.push("REFERRAL: " + coachLabel(h.from) + " just suggested Jeet talk to you. What they noticed: " + h.reason + "\nAcknowledge it gently and naturally in your first reply, then start understanding what's going on.");
+    parts.push(timeNowPrompt(CH[coach.id]));
     parts.push(profilePrompt());
     const assess = assessmentContextText(coach.id);
     if (assess) parts.push(assess);
@@ -1149,6 +1181,7 @@ HOW A RESPONSIBLE COACH ACTS:
 - When YOU say you'll check something, send something or review something ("Monday ko bench number dekhunga", "kal tujhe diet plan bhejti hoon"), save it: <followup due="YYYY-MM-DD">what you will do</followup>. You WILL be held to it — the app makes you text him on that date.
 - If one of HIS promises to you is due or overdue and you haven't asked yet in this chat, ask straight — "6 baje uthe aaj? sach bata 😄". Never let a promise silently disappear.
 - When he tells you how it went, close it: <resolve id="ID">done</resolve> or <resolve id="ID">missed</resolve>.
+- When you've delivered one of YOUR own promises (checked it, sent the plan), close it the same way: <resolve id="ID">done</resolve>.
 - Kept: celebrate for real and raise the bar a little. Missed once: ask why without judgement and fix the obstacle. Missed 2+ in a row: get firm — name the pattern, no sugar-coating, then shrink the commitment to something he can't fail and hold him to it.
 - Own your side too: if your plan didn't work, say "mera plan galat tha" and change it. Don't blame him for a bad plan.
 - Never mention the tags.`;
@@ -1299,7 +1332,7 @@ async function runCoachFollowups(CH) {
 YOU'RE TEXTING HIM FIRST, because you promised to: ${items.map(c => "\"" + c.text + "\" (promised for " + c.due + ")").join("; ")}.
 Do exactly what you promised — check the thing, send the plan, give the review — using his real data above. If you need a number or photo from him to do it, ask for that one thing. Short WhatsApp texts in your voice; don't say "as promised" or mention reminders.`;
         try {
-            const raw = await ai(sys, (CH[coachId] || []).filter(m => !m.error).slice(-12).map(m => ({ role: m.role, content: String(m.content || "") })).concat([{ role: "user", content: "(Jeet hasn't messaged — it's the day you said you'd follow up. Text him now.)" }]), 1200, { tier: "pro", effort: "medium" });
+            const raw = await ai(sys, (() => { const src = (CH[coachId] || []).filter(m => !m.error).slice(-12); return stampMsgs(src, src.map(m => ({ role: m.role, content: String(m.content || "") }))); })().concat([{ role: "user", content: "(Jeet hasn't messaged — it's the day you said you'd follow up. Text him now.)" }]), 1200, { tier: "pro", effort: "medium" });
             const reply = processCoachReply(raw, coachId);
             const fresh = loadCommitments();
             items.forEach(c => { const f = fresh.find(x => x.id === c.id); if (f) { f.status = "done"; f.synced = false; } });
@@ -1314,6 +1347,7 @@ Do exactly what you promised — check the thing, send the plan, give the review
 // Strips every hidden tag from a coach reply, applies them, and splits the
 // reply into the separate texts the coach "sent".
 function processCoachReply(raw, coachId) {
+    raw = String(raw).replace(/^\s*\[(?:today|yesterday|[A-Z][a-z]{2},? [^\]]{3,20}) \d{1,2}:\d{2} ?[AP]M\]\s*/gim, "");
     if (/<intake_done\s*\/?>/i.test(raw)) { markIntakeDone(coachId); raw = String(raw).replace(/<\/?intake_done\s*\/?>/gi, ""); }
     const mem = extractTeamMemory(raw);
     addTeamMemoryFacts(mem.facts, coachId);
@@ -3983,8 +4017,9 @@ function groupLiveData(L, W, viewDay) {
     return "JEET'S LIVE DATA: " + viewDay + " | gym " + (L.gymDone ? "done" : "not yet") + " | skincare " + (L.skincareDone ? "done" : "not yet") + " | sleep " + (L.sleepHours || 0) + "h | water " + (L.water || 0)
         + " glasses | protein " + (L.totalProtein || 0) + "g | mood " + (L.mood || 0) + "/5 | energy " + (L.energy || 0) + "/5. Last 7 days: gym " + w7.filter(d => d.gymDone).length + " days, sleep avg " + avg("sleepHours") + "h, protein avg " + Math.round(avg("totalProtein")) + "g.";
 }
-function buildGroupSystem(L, W, viewDay, voice) {
+function buildGroupSystem(L, W, viewDay, voice, prevHist) {
     const today = localIsoDate();
+    const timeNow = timeNowPrompt(prevHist);
     const members = GROUP_ORDER.map(id => "- " + id + ": " + (COACH_VOICES[id] || coachLabel(id))).join("\n");
     const promises = loadCommitments().filter(c => c.status === "open").map(c => "- [id " + c.id + "] \"" + c.text + "\" — to " + c.coach + ", check " + c.due + (c.due <= today ? " (DUE)" : "")).join("\n");
     const goals = loadGoals().filter(g => g.status === "active").map(g => "- " + g.coach + ": " + goalLine(g)).join("\n");
@@ -4005,6 +4040,7 @@ HIDDEN TAGS (inside a coach's text, at its end; the app strips them):
 - <commit due="YYYY-MM-DD">promise he just made</commit> — on the coach he promised.
 - <resolve id="ID">done|missed</resolve> — when he says how a promise went.
 
+${timeNow}
 ${profilePrompt()}
 ${pastConvosPrompt("team")}
 ${statusReport(null, W, L)}
@@ -4021,11 +4057,12 @@ Reply with ONLY JSON: {"replies":[{"coach":"coach id","text":"message"}]}`;
 }
 // Sends Jeet's message to the group; returns the coaches' replies [{coach, text}].
 async function groupTurn(hist, L, W, viewDay, voice, image) {
-    const msgs = hist.slice(-24).map(m => m.role === "user"
+    const src = hist.slice(-24);
+    const msgs = stampMsgs(src, src.map(m => m.role === "user"
         ? { role: "user", content: ((m.image || m.imageKey) ? "[sent a photo] " : "") + (m.content === "📷" ? "" : m.content) }
-        : { role: "assistant", content: personaName(m.coach) + ": " + m.content });
+        : { role: "assistant", content: personaName(m.coach) + ": " + m.content }));
     if (image && msgs.length) msgs[msgs.length - 1] = Object.assign({}, msgs[msgs.length - 1], { image: image });
-    const raw = await ai(buildGroupSystem(L, W, viewDay, voice), msgs, 1500, { tier: "smart", effort: "medium" });
+    const raw = await ai(buildGroupSystem(L, W, viewDay, voice, hist.slice(0, -1)), msgs, 1500, { tier: "smart", effort: "medium" });
     const j = parseJsonLoose(raw);
     let list = j && Array.isArray(j.replies) ? j.replies : [{ coach: "ronaldo", text: String(raw).replace(/[{}"]/g, "") }];
     list = list.filter(r => r && r.text && GROUP_ORDER.includes(r.coach)).slice(0, voice ? 2 : 3);
@@ -6808,8 +6845,9 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const fullSys = buildCoachSystem(coach, CH, ctx, W) + (voice ? VOICE_CALL_NOTE : "");
         try {
             // Only the photo just sent travels to the model; older ones become a note.
-            const aiMsgs = newHistUser.filter(m => !m.error).slice(-20).map(m => (m.image || m.imageKey) ? { role: m.role, content: m.content === "📷" ? "[sent a photo]" : "[sent a photo] " + m.content } : m);
-            if (pic) aiMsgs[aiMsgs.length - 1] = { role: "user", content: msg.trim() || "(sent a photo)", image: pic.full };
+            const src = newHistUser.filter(m => !m.error).slice(-20);
+            const aiMsgs = stampMsgs(src, src.map(m => (m.image || m.imageKey) ? { role: m.role, content: m.content === "📷" ? "[sent a photo]" : "[sent a photo] " + m.content } : { role: m.role, content: m.content }));
+            if (pic) aiMsgs[aiMsgs.length - 1] = { role: "user", content: "[" + stampTime(userMsg.ts) + "] " + (msg.trim() || "(sent a photo)"), image: pic.full };
             const raw = await ai(fullSys, aiMsgs, 1500, coachBrain(msg, !!pic));
             const reply = processCoachReply(raw, id);
             if (reply.milestone) { setMilestone(reply.milestone); setTimeout(() => setMilestone(null), 3200); }
