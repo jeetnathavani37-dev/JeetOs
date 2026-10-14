@@ -111,8 +111,10 @@ function profileText(p) {
   if (!p) return "";
   return Object.keys(PROFILE_LABELS).filter(k => Array.isArray(p[k]) && p[k].length).map(k => PROFILE_LABELS[k] + ": " + p[k].map(x => x.t).join("; ")).join(" | ");
 }
+// null = he didn't enter it (not the same as 0 / skipped).
+const shown = (v, u) => (v == null ? "not logged" : v + u);
 function logLine(log) {
-  return `gym ${log.gym_done ? "done" : "not done"}, skincare ${log.skincare_done ? "done" : "not done"}, sleep ${log.sleep_hours}h, protein ${log.total_protein}g, water ${log.water} glasses, mood ${log.mood}/5, energy ${log.energy}/5`;
+  return `gym ${log.gym_done ? "done" : "not logged"}, skincare ${log.skincare_done ? "done" : "not ticked"}, sleep ${shown(log.sleep_hours, "h")}, protein ${shown(log.total_protein, "g")}, calories ${shown(log.total_cal, " kcal")}, water ${shown(log.water, " glasses")}, mood ${shown(log.mood, "/5")}, energy ${shown(log.energy, "/5")} ("not logged" means he hasn't entered it yet — never assume he skipped it)`;
 }
 
 async function sendTelegram(coachId, text) {
