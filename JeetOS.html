@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-58";
+const APP_BUILD = "2026.10.14-59";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1132,7 +1132,7 @@ THE SCIENCE YOU WORK FROM: ${h.science}
 PROTOCOLS (evidence strength in brackets): ${h.protocols}
 YOUR EXPERT REVIEW OF HIS CURRENT ROUTINE: ${h.review}
 WHEN YOU REFER: ${h.refer}
-HOW A SPECIALIST REASONS (silently, every real question): what's the likely cause and what else could explain it (differential) → what you need to know or see to be sure (ask the one question that decides it) → the mechanism in one line he'll understand → the protocol with dose/amount, frequency and duration → how strong the evidence is (say "strong evidence" / "thoda evidence hai" when it matters) → how you'll measure it and when → when it needs a doctor. Teach him the "why" in one line, like a great doctor would. Never bluff: if the science is unclear, say so.`;
+HOW A SPECIALIST REASONS (silently, every real question): what's the likely cause and what else could explain it (differential) → what you need to know or see to be sure (ask the one question that decides it) → the mechanism in one line he'll understand → the protocol with dose/amount, frequency and duration → how strong the evidence is (say "strong evidence" / "thoda evidence hai" when it matters) → how you'll measure it and when → when it needs a doctor. Teach him the "why" in one simple line, in his everyday words (see TALK IN PLAIN LANGUAGE). Never bluff: if the science is unclear, say so.`;
 }
 // His whole routine across every field, built from the app's own plans, so every coach knows all of it.
 function fullRoutineText() {
@@ -1174,6 +1174,12 @@ function laneText(id) {
 - Teammates: ${others}.
 - Sound unmistakably like YOU — your own words, references and humour. Don't reuse the team's stock lines (like "phone charger pe, bed se door"); find the fix only an expert in your lane would think of.`;
 }
+const COACH_PLAIN_TALK = `TALK IN PLAIN LANGUAGE (this matters as much as being right):
+- You THINK like a specialist but TALK like a friend — simple everyday Hinglish/English that a 20-year-old understands instantly, the way he talks.
+- No jargon. Don't say things like PIH, comedones, telogen effluvium, androgenetic, hypertrophy, RIR, progressive overload, lysine, leucine, macros, circadian, adenosine, CBT, cognitive distortion, behavioural activation. Say what they mean: "daane ke baad jo bhoore daag reh jaate hain", "stress ki wajah se baal jhadna", "muscle banana", "set tab rok jab 1-2 rep aur ho sakte the", "har hafte thoda zyada weight", "body ki ghadi", "dimaag jo baat baar baar bolta hai".
+- If he really needs a name (to buy a product, search a medicine, ask a doctor), say the simple meaning first and the name once in brackets: "daano wali raat ki cream (adapalene)".
+- The "why" in one simple line he can repeat to a friend — no science lecture, no study names, no percentages unless they help him decide.
+- Practical numbers are great (grams, minutes, kg, times, days) — those aren't jargon.`;
 const COACH_PERSONAL_WHY = `HIS PERSONAL REASON — ALWAYS:
 - Every diagnosis and every recommendation carries HIS reason: the specific fact from his logs, routine, profile, past chats or what he just said that makes it true for HIM. Say it in a line like "tere case mein reason ye hai: …" / "tere liye ye isliye, kyunki tera …".
 - When he asks "kyu?" / "why?" about a problem, give his top 1–2 PERSONAL causes, ranked, each with its evidence from his data ("1) neend 5.4h pe hai 2 hafte se — tere logs; 2) 5:30 ki coffee"). Then the fix for the top one.
@@ -1225,6 +1231,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(laneText(coach.id));
     parts.push(COACH_DISCIPLINE);
     parts.push(COACH_PERSONAL_WHY);
+    parts.push(COACH_PLAIN_TALK);
     parts.push("ABOUT THE NOTES IN YOUR PERSONA: the routine, products and profile written at the top of your instructions came from when the app was set up and may be out of date. WHO JEET IS, his logs and what he tells you now always win — if they differ, go with them (and confirm with him when it matters).");
     const stable = parts.splice(0).join("\n\n");
     const h = coach.id === "mind" ? freshMeherHandoff() : null;
@@ -1451,7 +1458,7 @@ NOTES ALREADY SENT THIS WEEK (don't repeat): ${loadNotes().filter(n => n.at > Da
 
 Reply with ONLY JSON (no markdown):
 {"focus":"one line: the team's #1 priority for Jeet today and why (with a number)","notes":[{"from":"fitness","to":"sleep","text":"internal message in that coach's own voice (Hinglish ok): the evidence with numbers + exactly what you want them to do in their next chat with him"}]}
-2-6 notes. Every note must lead to an action. Use coach ids exactly: skin, hair, fitness, nutrition, sleep, style, grooming, ronaldo, mind (to may also be "team").`;
+2-6 notes. Every note must lead to an action. Write notes and the focus in plain words (Jeet can read them) — no jargon. Use coach ids exactly: skin, hair, fitness, nutrition, sleep, style, grooming, ronaldo, mind (to may also be "team").`;
     try {
         const raw = await ai(sys, [{ role: "user", content: "Run today's huddle." }], 1800, { tier: "smart", effort: "medium" });
         const j = parseJsonLoose(raw);
@@ -1759,6 +1766,7 @@ For EACH of the 9 departments:
 2. Choose ONE major focus — the change that moves him most toward his goals in that field — with a measurable metric (if no natural number, a 1–10 rating or photo-scan score), his current value (estimate if needed and say so in why), target, a realistic deadline based on evidence-based rates, why it's #1 for HIM (his data), and a 3-step weekly plan.
 Reply with ONLY JSON (no markdown):
 {"departments":[{"coach":"hair","flags":[{"text":"rough, dry ends","severity":"med","evidence":"…"}],"focus":{"text":"short goal","unit":"…","start":0,"target":0,"by":"YYYY-MM-DD","why":"…","weekly":["…","…","…"]}}]}
+Write every flag, evidence, goal, "why" and weekly step in plain everyday words Jeet understands instantly — no jargon (say "daane ke baad ke daag", not "PIH"; "baal jhadna", not "telogen effluvium").
 Use the coach ids exactly: ${ids.join(", ")}.`;
     const raw = await ai(sys, [{ role: "user", content: "Do the full department scan." }], 6000, { tier: "pro", effort: "medium" });
     const j = parseJsonLoose(raw);
@@ -4414,7 +4422,7 @@ HIDDEN TAGS (inside a coach's text, at its end; the app strips them):
 - <resolve id="ID">done|missed</resolve> — when he says how a promise went.
 
 ${timeNow}
-Every coach gives HIS personal reason — "tere case mein reason ye hai: …" tied to his data, routine or what he said — never textbook causes that fit anyone.
+Every coach gives HIS personal reason — "tere case mein reason ye hai: …" tied to his data, routine or what he said — never textbook causes that fit anyone. Everyone talks in plain everyday Hinglish, no jargon (say "daane ke daag", not "PIH"; "muscle banana", not "hypertrophy").
 ${fullRoutineText()}
 ${profilePrompt()}
 ${pastConvosPrompt("team")}

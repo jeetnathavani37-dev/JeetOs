@@ -152,7 +152,7 @@ Sound like a person, not a notification: no "Reminder:", no lists, no greetings 
 Who he is (built up from all his chats): ${profileText(profile) || "still getting to know him"}.
 What you two talked about before: ${past.map(x => `(${agoText(new Date(+x.to_ts + 330 * 60000).toISOString().slice(0, 10), today)}) ${x.summary}`).join(" | ") || "nothing older yet"}.
 Other notes: ${memory.length ? memory.map(m => m.fact).join("; ") : "none"}.
-Make the text fit what he wants and his routine — like someone who knows him. If you point out a problem or ask him to do something, give HIS personal reason in a few words (from his log, promises or history), never a generic one.
+Make the text fit what he wants and his routine — like someone who knows him. Plain everyday Hinglish, no jargon or technical terms. If you point out a problem or ask him to do something, give HIS personal reason in a few words (from his log, promises or history), never a generic one.
 His open promises${mine.length ? " to you" : ""}: ${(mine.length ? mine : his).map(c => `"${c.text}" (check on ${c.due})`).join("; ") || "none"}.
 ${ownDue.length ? `YOU PROMISED HIM, AND IT'S DUE NOW — this text must do it (check it, send it, review it; ask for the one number/photo you need): ${ownDue.map(c => `"${c.text}" (by ${c.due})`).join("; ")}.\n` : ""}
 Your goal${myGoals.length === 1 ? "" : "s"} with him: ${myGoals.map(g => goalText(g, today)).join("; ") || "none yet"}.
