@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-66";
+const APP_BUILD = "2026.10.14-67";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1038,7 +1038,15 @@ function timeNowPrompt(hist) {
     else if (last) prev = "\nYou're mid-conversation (last message " + gapText(Math.max(gap, 60000)) + " ago).";
     return `TIME RIGHT NOW: ${now.toLocaleDateString("en-US", { weekday: "long", day: "numeric", month: "short" })}, ${now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} — ${partOfDay(now.getHours())} for Jeet (India).${prev}
 - His messages are stamped like [today 2:54 PM] so you know when he said what. Never write these stamps yourself.
-- Talk for the real time of day: morning = the day ahead, afternoon/evening = how the day's going, night = wind down. Never say good night in the afternoon or push a workout at 1 AM. After 11:30 PM keep it short and help him get to sleep.`;
+- Talk for the real time of day: morning = the day ahead, afternoon/evening = how the day's going, night = wind down. Never say good night in the afternoon or push a workout at 1 AM.${modeLine(now)}`;
+}
+// Night recovery mode and the morning reality check, by his local clock.
+function modeLine(now) {
+    const h = now.getHours() + now.getMinutes() / 60;
+    if (h >= 23.5 || h < 5) return "\n- 🌙 NIGHT RECOVERY MODE: it's past his bedtime. Help him get to sleep: 1-2 short, calm texts, one tiny wind-down step (phone outside the bedroom, lights off). No workout analysis, no business planning, no long journaling, no new plans or commitments tonight — park anything else for the morning (\"subah baat karte hain\"). The clock alone doesn't tell you why he's up — ask gently if it matters.";
+    if (h >= 5 && h < 11) return "\n- ☀️ MORNING REALITY CHECK: before planning his day, know how he actually slept (his logged sleep, or ask when he woke up). If sleep was short, adjust today's plan to his real energy instead of forcing the ideal routine.";
+    if (h >= 20) return "\n- 🌆 EVENING: good time for a short reality review — what got done, what didn't, and the ONE most important action for tomorrow. Keep it light; bedtime is close.";
+    return "";
 }
 function stampMsgs(src, mapped) {
     return mapped.map((m, i) => m.role === "user" && src[i] && src[i].ts ? Object.assign({}, m, { content: "[" + stampTime(src[i].ts) + "] " + m.content }) : m);
@@ -1151,6 +1159,7 @@ function fullRoutineText() {
 - Meals: ${meals}. Targets 1800 kcal, 170 g protein, vegetarian.
 - Supplements: ${supp}.
 - Night drink 11 PM${alpha ? " tonight" : ""}: ${alpha ? list(alpha.steps) : "—"}. Bedtime target 11:30 PM, wake 7 AM.
+- HIS PREFERRED DAY (what he WANTS his day to look like — an intention, not a record; check what actually happened before praising or chasing any of it): morning sunlight, goals page, Shlok reading, gym, journaling, library time, no phone in the first hour after waking, lights out around 11:30 PM with the phone outside the bedroom. Sequence these around his actual wake time and energy — never force all of them at once.
 Use it like a real team would: know how your advice touches the rest (amla in the glow juice is vitamin C, coffee at 5:30 PM hits his sleep, whey and milk can affect acne, creatine and water, hair oil and forehead acne). Never contradict another field's routine without saying why and telling that coach.`;
 }
 // ── FIELD LANES + DISCIPLINE: learned from the 108-conversation eval ──────
@@ -1677,6 +1686,9 @@ function HuddleSheet({ T, onClose }) {
 // When a coach's own promise falls due, that coach texts him first — at most
 // two per app open, once per promise. Returns [{coach, text, ts}].
 async function runCoachFollowups(CH) {
+    // Quiet hours: coaches don't text first between 11 PM and 6 AM — it waits for the morning.
+    const hr = new Date().getHours();
+    if (hr >= 23 || hr < 6) return [];
     const today = localIsoDate();
     const list = loadCommitments();
     const due = list.filter(c => c.owner === "coach" && c.status === "open" && c.due <= today && COACHES.some(x => x.id === c.coach));
