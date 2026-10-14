@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-62";
+const APP_BUILD = "2026.10.14-63";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1232,6 +1232,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(COACH_DISCIPLINE);
     parts.push(COACH_PERSONAL_WHY);
     parts.push(COACH_PLAIN_TALK);
+    parts.push(CONTEXT_COACHING);
     parts.push(BEHAVIOUR_PROTOCOL);
     parts.push("ABOUT THE NOTES IN YOUR PERSONA: the routine, products and profile written at the top of your instructions came from when the app was set up and may be out of date. WHO JEET IS, his logs and what he tells you now always win — if they differ, go with them (and confirm with him when it matters).");
     const stable = parts.splice(0).join("\n\n");
@@ -1259,6 +1260,8 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(masterPlanPrompt(coach.id));
     parts.push(bottleneckPrompt(coach.id));
     parts.push(streakPrompt(W));
+    const quiet = silencePrompt(CH, W);
+    if (quiet) parts.push(quiet);
     parts.push(bondPrompt(coach.id, CH[coach.id]));
     parts.push(coachNotesPrompt(coach.id));
     const intake = intakePrompt(coach.id, CH[coach.id]);
@@ -1899,6 +1902,15 @@ function accountabilityStats(coachId) {
         coachKept: own.length ? Math.round(own.filter(c => c.status === "done").length / own.length * 100) : null,
         blockers: blockers, worked: ex.filter(e => e.status === "worked").length, failed: ex.filter(e => e.status === "failed").length, running: ex.filter(e => e.status === "running").length };
 }
+const CONTEXT_COACHING = `CONTEXT BEFORE EVERY REPLY (be the coach who actually pays attention):
+- Before you answer, check what's relevant: his goal for this, his open promises, what happened last time, whether this has happened before and what you already tried.
+- When something expected didn't happen, connect it to the goal HE chose ("tu bola tha Dubai se pehle 76 cm — aaj ka session usi ka hissa tha"), then ask ONE focused question if the cause is unknown. Never an interrogation.
+- MISSING DATA IS NOT FAILURE. No log or no message for a few days → ask how things have been before assuming anything was skipped.
+- If he says he did something that isn't logged, believe him first and ask him to log it so it counts. Only if it keeps happening, point out the pattern gently.
+- READ THE SITUATION: frustration, confusion, low energy, a genuine constraint (exams, travel, illness) and avoidance each need a different reply. If he mainly wants to vent or be heard, listen and reflect — no action plan unless he asks or it clearly helps.
+- If his goal has changed, accept it: confirm the new goal, close the old focus with <goalstatus id="ID">dropped</goalstatus>, and rebuild around the new one.
+- If the numbers are improving but he feels demotivated, show him the evidence of progress from his own data.
+- Never pretend to remember something that isn't in this prompt, and never claim you checked on him, messaged him or saw something unless it's recorded here.`;
 const BEHAVIOUR_PROTOCOL = `BEHAVIOUR-CHANGE PROTOCOL (how you turn advice into results):
 - DIAGNOSE THE BOTTLENECK before changing anything. Is it knowledge (he doesn't know what to do), execution (knows, doesn't do), all-or-nothing thinking (one miss → whole week gone), planning (meals/gym/sleep keep getting disrupted), environment, recovery (tired, poor sleep, falling performance), expectations (reading normal ups and downs as failure), emotional (stress/low mood breaking the routine), plateau (consistent effort, stalled numbers) or measurement (bad or missing data)? These are hypotheses, not verdicts — never conclude "lazy" from a miss. Ask the one question that decides it when you can't tell.
 - Save a supported hypothesis at the end of your reply: <bottleneck category="planning" confidence="low|medium|high" evidence="what you saw, how many times">plain-words hypothesis</bottleneck>. Confirm, reject or close it later with <bottleneck_status id="ID">confirmed|rejected|resolved</bottleneck_status>.
@@ -2017,6 +2029,16 @@ function streakState(W, L, checks) {
     const risk = todayStatus.filter(x => x.st === "risk").map(x => x.h);
     const hour = new Date().getHours();
     return { current: current, best: best, paused: paused, today: todayStatus, todayDone: todayDone, risk: risk, stage: todayDone ? "safe" : risk.length ? (hour >= 21 ? "rescue" : "prevent") : "ok" };
+}
+// How long he's been quiet — so a gap reads as "missing data", not "failure".
+function silencePrompt(CH, W) {
+    let lastMsg = 0;
+    Object.keys(CH || {}).forEach(k => (CH[k] || []).forEach(m => { if (m && m.role === "user" && m.ts > lastMsg) lastMsg = m.ts; }));
+    const lastLog = (W || []).reduce((mx, d) => Math.max(mx, d && d.date ? new Date(d.date).getTime() : 0), 0);
+    const days = t => t ? Math.floor((Date.now() - t) / 864e5) : null;
+    const dm = days(lastMsg), dl = days(lastLog);
+    if ((dm == null || dm < 2) && (dl == null || dl < 3)) return "";
+    return "HE'S BEEN QUIET: last message to any coach " + (dm == null ? "never" : dm + " day" + (dm === 1 ? "" : "s") + " ago") + "; last saved day in the app " + (dl == null ? "never" : dl + " days ago") + ". Treat this as missing data, not failure — start by asking how things have been, without blame, before talking about anything missed.";
 }
 function streakPrompt(W) {
     const s = streakState(W, store.get("jos_log") || {}, store.get("jos_checks_" + new Date().toDateString()) || {});
