@@ -283,3 +283,11 @@ create policy "allow all for anon" on public.jeetos_streak_marks for all to publ
 create table if not exists public.jeetos_goal_state (id text primary key, data jsonb not null, updated_at timestamptz not null default now());
 alter table public.jeetos_goal_state enable row level security;
 create policy "allow all for anon" on public.jeetos_goal_state for all to public using (true) with check (true);
+
+-- Truth engine: claims checked against records (verified / self_reported / inconsistent / incomplete / unknown / corrected / honest_miss).
+create table if not exists public.jeetos_claims (
+  id text primary key, coach text, type text not null, claimed text not null, value numeric, unit text, day text,
+  status text not null, evidence text, correction jsonb, created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+);
+alter table public.jeetos_claims enable row level security;
+create policy "allow all for anon" on public.jeetos_claims for all to public using (true) with check (true);
