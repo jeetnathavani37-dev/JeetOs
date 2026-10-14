@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-59";
+const APP_BUILD = "2026.10.14-60";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1255,6 +1255,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(commitmentsPrompt(coach.id));
     parts.push(goalsPrompt(coach.id));
     parts.push(departmentPrompt(coach.id));
+    parts.push(masterPlanPrompt(coach.id));
     parts.push(bondPrompt(coach.id, CH[coach.id]));
     parts.push(coachNotesPrompt(coach.id));
     const intake = intakePrompt(coach.id, CH[coach.id]);
@@ -1404,7 +1405,7 @@ function addNotes(list, source) {
     const all = loadNotes(), added = [];
     (list || []).forEach(n => {
         const from = String(n.from || ""), to = String(n.to || "").toLowerCase(), text = String(n.text || "").trim().slice(0, 400);
-        if (!text || !NOTE_TO.includes(to) || from === to || !COACHES.some(c => c.id === from)) return;
+        if (!text || !NOTE_TO.includes(to) || from === to || (from !== "head" && !COACHES.some(c => c.id === from))) return;
         if (all.some(x => x.from === from && x.to === to && x.text.toLowerCase() === text.toLowerCase())) return;
         const note = { id: "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), from: from, to: to, text: text, source: source || "chat", at: Date.now(), synced: false };
         all.push(note); added.push(note);
@@ -1431,6 +1432,149 @@ ${h && h.focus ? "- Today's team focus from the morning huddle: " + h.focus + "\
 - Act on teammates' notes in your next real answer and bring them up like a real team would ("Sam bol raha tha tu 2 baje so raha hai — isliye…"). Don't dump them all at once.
 - When you notice something another coach must act on (his sleep is wrecking your progress, he sounded low, a food/skin link, a promise in their area), message them privately: <tell to="sleep">short note with the numbers and what you want them to do</tell> at the end of your reply. Coaches: skin, hair, fitness, nutrition, sleep, style, grooming, ronaldo, mind, or team for everyone. Only for things that matter — not every message.`;
 }
+// ── HEAD COACH: approved master plan, decision log, conflicts, safety ───
+// Coaches propose plan changes with <decision area="…" reason="…" evidence="…">
+// change</decision>. Nothing changes the plan until Jeet approves it; approved
+// changes become the next plan version and are logged with reason + evidence.
+// The daily huddle is chaired by the Head Coach, who also flags conflicts.
+const DECISIONS_KEY = "jos_decisions";
+function loadDecisions() { const l = store.get(DECISIONS_KEY); return Array.isArray(l) ? l : []; }
+function saveDecisions(l) { store.set(DECISIONS_KEY, l.slice(-150)); }
+async function pushDecision(d) {
+    if (!supabaseReady()) return false;
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_decisions?on_conflict=id", { method: "POST", headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }),
+            body: JSON.stringify({ id: d.id, coach: d.coach, area: d.area || null, change: d.change, reason: d.reason || null, evidence: d.evidence || null, source: d.source, status: d.status, version: d.version || null, created_at: new Date(d.at).toISOString(), decided_at: d.decidedAt ? new Date(d.decidedAt).toISOString() : null }) });
+        if (r.ok) { const l = loadDecisions(); const x = l.find(y => y.id === d.id); if (x) { x.synced = true; saveDecisions(l); } }
+        return r.ok;
+    } catch (_a) { return false; }
+}
+async function syncDecisions() {
+    if (!supabaseReady()) return loadDecisions();
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_decisions?select=*&order=created_at.asc&limit=150", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        if (!r.ok || !Array.isArray(rows)) return loadDecisions();
+        const pending = loadDecisions().filter(x => !x.synced);
+        const ids = new Set(pending.map(x => x.id));
+        saveDecisions(rows.filter(x => !ids.has(x.id)).map(x => ({ id: x.id, coach: x.coach, area: x.area, change: x.change, reason: x.reason, evidence: x.evidence, source: x.source, status: x.status, version: x.version,
+            at: Date.parse(x.created_at) || Date.now(), decidedAt: x.decided_at ? Date.parse(x.decided_at) : null, synced: true })).concat(pending));
+        pending.forEach(pushDecision);
+        return loadDecisions();
+    } catch (_a) { return loadDecisions(); }
+}
+function addDecision(d, source) {
+    const change = String(d.change || "").trim().slice(0, 300);
+    if (!change || !COACHES.some(c => c.id === d.coach)) return null;
+    const list = loadDecisions();
+    if (list.some(x => x.status === "pending" && x.coach === d.coach && x.change.toLowerCase() === change.toLowerCase())) return null;
+    // One open proposal per coach — a newer one replaces the older pending one.
+    list.filter(x => x.status === "pending" && x.coach === d.coach).forEach(x => { x.status = "superseded"; x.synced = false; pushDecision(x); });
+    const item = { id: "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), coach: d.coach, area: String(d.area || COACH_LANE[d.coach] && COACH_LANE[d.coach].split(" — ")[0] || "").slice(0, 40),
+        change: change, reason: String(d.reason || "").slice(0, 300), evidence: String(d.evidence || "").slice(0, 300), source: source || "chat", status: "pending", at: Date.now(), synced: false };
+    list.push(item); saveDecisions(list); pushDecision(item);
+    return item;
+}
+function planVersion() { return loadDecisions().filter(d => d.status === "approved").length; }
+function decide(id, approve) {
+    const l = loadDecisions(); const d = l.find(x => x.id === id);
+    if (!d || d.status !== "pending") return null;
+    d.status = approve ? "approved" : "rejected"; d.decidedAt = Date.now();
+    if (approve) d.version = l.filter(x => x.status === "approved").length;
+    d.synced = false; saveDecisions(l); pushDecision(d);
+    // The coach who proposed it hears the outcome through the team notes.
+    addNotes([{ from: "head", to: d.coach, text: "Jeet " + (approve ? "APPROVED" : "rejected") + " your plan change: " + d.change + (approve ? " — it's now master plan v" + d.version + "." : " — keep the current plan, ask him why if it matters.") }], "headcoach");
+    return d;
+}
+function applyDecisionTags(text, coachId) {
+    return String(text).replace(/<decision\b([^>]*)>([\s\S]*?)<\/decision>/gi, (_, attrs, body) => {
+        const a = {}; String(attrs).replace(/(\w+)="([^"]*)"/g, (__, k, v) => { a[k.toLowerCase()] = v; });
+        addDecision({ coach: coachId, area: a.area, change: body, reason: a.reason, evidence: a.evidence }, "chat");
+        return "";
+    }).replace(/<\/?decision\b[^>]*>/gi, "").trim();
+}
+function masterPlanPrompt(coachId) {
+    const all = loadDecisions();
+    const approved = all.filter(d => d.status === "approved").slice(-14);
+    const pending = all.filter(d => d.status === "pending");
+    const h = store.get(HUDDLE_KEY);
+    const conflicts = (h && Array.isArray(h.conflicts) ? h.conflicts : []).filter(c => (c.between || []).includes(coachId) || !coachId);
+    return `APPROVED MASTER PLAN — v${planVersion()} (Jeet approved these; this is the plan the whole team follows):
+${approved.length ? approved.map(d => "- v" + d.version + " [" + d.area + ", " + personaName(d.coach) + ", " + agoText(localIsoDate(new Date(d.decidedAt || d.at))) + "] " + d.change).join("\n") : "- Nothing approved yet — the base routine below is the plan."}
+${pending.length ? "PENDING — proposed, NOT approved (don't treat as the plan):\n" + pending.map(d => "- [" + personaName(d.coach) + "] " + d.change).join("\n") : ""}
+${conflicts.length ? "CONFLICTS THE HEAD COACH FLAGGED:\n" + conflicts.map(c => "- " + (c.between || []).map(personaName).join(" vs ") + ": " + c.issue + " → resolution: " + c.resolution).join("\n") : ""}
+- To change something in the plan in your field (calories, split, bedtime, a product, a supplement…), don't just announce it — propose it at the end of your reply: <decision area="your field" reason="why, in plain words" evidence="his data">the exact change</decision>. It goes to Jeet for approval in the Master plan; tell him in one line that he can approve it there. One change at a time, reversible, never several plan variables at once, never on a single noisy number.
+- Never contradict an approved item without proposing a change. Never claim something was saved, approved or updated unless you see it here.`;
+}
+// Words that mean "stop optimising, check safety first".
+const SAFETY_TRIGGERS = [
+    { re: /chest pain|seene? (me|mein) dard|chhati (me|mein) dard|saans (nahi|nai|phool|ruk)|can'?t breathe|breathless|faint|behosh|blackout|suicid|marna chahta|mar ja(u|un|oon)|khud ko (nuksan|hurt|maar)|self.?harm|khatam kar (du|dun|lu)|khoon (aa|nikal)|blood in|vomit(ing)? blood/i, sev: "high" },
+    { re: /sharp pain|tez dard|bahut dard|severe pain|injur|chot (lagi|lag gayi)|sprain|moch|swell|soojan|pop sound|numb|sunn ho|jhunjhun|tingl|chakkar|dizzy|fever|bukhar|ulti|vomit|panic attack|ghutn(a|e) (me|mein) dard|kamar (me|mein)? ?dard|back pain|knee pain|shoulder pain/i, sev: "med" },
+];
+function safetyCheck(text) {
+    const t = String(text || "");
+    for (const s of SAFETY_TRIGGERS) { const m = t.match(s.re); if (m) return { severity: s.sev, trigger: m[0] }; }
+    return null;
+}
+function logSafetyEvent(coachId, sc) {
+    if (!supabaseReady()) return;
+    fetch(SUPABASE_URL + "/rest/v1/jeetos_safety_events", { method: "POST", headers: SUPA_HEADERS(), body: JSON.stringify({ id: "s" + Date.now().toString(36), coach: coachId, trigger: sc.trigger, severity: sc.severity }) }).catch(() => { });
+}
+function safetyModePrompt(sc) {
+    return `\n\n⚠️ SAFETY CHECK FIRST — his latest message mentions "${sc.trigger}" (${sc.severity === "high" ? "possibly serious" : "needs checking"}). Before ANY fitness, diet or routine optimisation:
+1. Ask what exactly is happening, since when and how bad (1–10) — unless he already said.
+2. If it could be serious (chest pain, trouble breathing, fainting, severe or sudden pain, an injury with swelling or a pop, blood, high fever, numbness, or any thought of hurting himself) — tell him clearly and calmly to stop and get medical help now (doctor / emergency 112). For self-harm thoughts: take it seriously, stay with him, Tele-MANAS 14416, and loop in Dr. Meher with <handoff>.
+3. Never coach training through pain — pause the affected part of the plan until it's checked. Don't diagnose.
+4. If it's clearly minor (normal muscle soreness the day after legs), say why it's normal and how to recover, then carry on.
+Plain, calm, caring words.`;
+}
+function MasterPlanCard({ T, onOpen }) {
+    const font = "Inter,system-ui,sans-serif";
+    const pend = loadDecisions().filter(d => d.status === "pending").length;
+    const h = store.get(HUDDLE_KEY), nc = h && Array.isArray(h.conflicts) ? h.conflicts.length : 0;
+    return React.createElement("div", { onClick: onOpen, style: { background: T.card, border: "1px solid " + (pend ? "rgba(201,168,76,.5)" : T.border), borderRadius: 14, padding: "12px 16px", marginBottom: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 12 } },
+        React.createElement("span", { style: { fontSize: 22 } }, "📋"),
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+            React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontFamily: font, fontWeight: 600 } }, "Master plan · v" + planVersion(), pend ? React.createElement("span", { style: { marginLeft: 6, fontSize: 11, color: T.gold } }, pend + " approval pending") : null),
+            React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, fontFamily: font, marginTop: 3 } }, "Head Coach · decision log" + (nc ? " · " + nc + " conflict" + (nc > 1 ? "s" : "") + " resolved today" : ""))),
+        React.createElement("span", { style: { fontSize: 14, color: T.ivoryD } }, "›"));
+}
+function MasterPlanSheet({ T, onClose }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [tick, setTick] = React.useState(0);
+    React.useEffect(() => { syncDecisions().then(() => setTick(t => t + 1)); }, []);
+    const all = loadDecisions();
+    const pending = all.filter(d => d.status === "pending");
+    const log = all.filter(d => d.status === "approved" || d.status === "rejected").slice().reverse().slice(0, 40);
+    const h = store.get(HUDDLE_KEY), conflicts = h && Array.isArray(h.conflicts) ? h.conflicts : [];
+    const box = { padding: 12, borderRadius: 14, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", marginBottom: 10 };
+    const label = t => React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: T.gold, letterSpacing: ".06em", textTransform: "uppercase", margin: "14px 0 8px" } }, t);
+    const who = id => { const c = COACHES.find(x => x.id === id) || {}; return React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 } }, React.createElement(CoachAvatar, { coachId: id, color: c.color, size: 26 }), React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: c.color || T.ivory } }, personaName(id))); };
+    return React.createElement(ChatSheet, { T: T, title: "📋 Master plan · v" + planVersion(), onClose: onClose },
+        React.createElement("div", { style: { fontFamily: font }, "data-tick": tick },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, lineHeight: 1.5 } }, "Coaches plan mein koi bhi badlaav sirf propose karte hain. Tum approve karoge tabhi wo plan ka hissa banega — har decision ka reason aur data yahan record hota hai. Head Coach roz departments ke beech takraav pakadta aur suljhata hai."),
+            label("Approval chahiye (" + pending.length + ")"),
+            !pending.length && React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryD } }, "Kuch pending nahi."),
+            pending.map(d => React.createElement("div", { key: d.id, style: Object.assign({}, box, { border: "1px solid rgba(201,168,76,.35)" }) },
+                who(d.coach),
+                React.createElement("div", { style: { fontSize: 14, color: T.ivory, lineHeight: 1.45, fontWeight: 600 } }, d.change),
+                d.reason && React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 4 } }, "Kyun: " + d.reason),
+                d.evidence && React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD, marginTop: 2 } }, "Data: " + d.evidence),
+                React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 } },
+                    React.createElement("button", { onClick: () => { decide(d.id, true); setTick(t => t + 1); }, style: { flex: 1, padding: 9, borderRadius: 10, border: "none", background: "#3DD68C", color: "#062615", fontWeight: 700, fontSize: 13, cursor: "pointer" } }, "✅ Approve"),
+                    React.createElement("button", { onClick: () => { decide(d.id, false); setTick(t => t + 1); }, style: { flex: 1, padding: 9, borderRadius: 10, border: "1px solid rgba(255,255,255,.15)", background: "transparent", color: T.ivory, fontSize: 13, cursor: "pointer" } }, "✖ Reject")))),
+            conflicts.length > 0 && label("Head Coach — aaj ke conflicts"),
+            conflicts.map((c, i) => React.createElement("div", { key: i, style: box },
+                React.createElement("div", { style: { fontSize: 12.5, fontWeight: 700, color: T.ivory } }, (c.between || []).map(personaName).join(" vs ")),
+                React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, marginTop: 3 } }, c.issue),
+                React.createElement("div", { style: { fontSize: 12.5, color: "#3DD68C", marginTop: 3 } }, "→ " + c.resolution))),
+            label("Decision log"),
+            !log.length && React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryD } }, "Abhi koi decision nahi — base routine hi plan hai."),
+            log.map(d => React.createElement("div", { key: d.id, style: { padding: "9px 0", borderBottom: "1px solid rgba(255,255,255,.06)" } },
+                React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD } }, (d.status === "approved" ? "✅ v" + d.version : "✖ rejected") + " · " + personaName(d.coach) + " · " + new Date(d.decidedAt || d.at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })),
+                React.createElement("div", { style: { fontSize: 13, color: d.status === "approved" ? T.ivory : T.ivoryD, marginTop: 2, textDecoration: d.status === "rejected" ? "line-through" : "none" } }, d.change),
+                d.reason && React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD, marginTop: 2 } }, d.reason)))));
+}
 // Once a day the whole team meets privately on his data and sends each other notes.
 async function runTeamHuddle(CH) {
     const today = localIsoDate();
@@ -1442,7 +1586,7 @@ async function runTeamHuddle(CH) {
     store.set(HUDDLE_KEY, { date: today, focus: h && h.focus, running: true });
     const chats = active.map(c => personaName(c.id) + " (" + c.id + "):\n" + (CH[c.id] || []).filter(m => !m.error).slice(-4).map(m => (m.role === "user" ? "Jeet: " : "Coach: ") + String(m.content || "").replace(/\s+/g, " ").slice(0, 220)).join("\n")).join("\n\n");
     const open = loadCommitments().filter(c => c.status === "open").map(c => "- " + (c.owner === "coach" ? personaName(c.coach) + " owes him: " : "Jeet promised " + personaName(c.coach) + ": ") + c.text + " (due " + c.due + ")").join("\n");
-    const sys = `You are running the PRIVATE morning huddle of Jeet's coaching team: Dr. Aria (skin), Kai (hair), Marcus (fitness), Maya (nutrition), Dr. Sam (sleep), Lex (style), Blade (grooming), Cristiano (ronaldo — discipline), Dr. Meher (mind). Jeet never sees this meeting.
+    const sys = `You are the HEAD COACH chairing the PRIVATE morning huddle of Jeet's coaching team: Dr. Aria (skin), Kai (hair), Marcus (fitness), Maya (nutrition), Dr. Sam (sleep), Lex (style), Blade (grooming), Cristiano (ronaldo — discipline), Dr. Meher (mind). Jeet never sees this meeting.
 Look at his real situation, connect causes across fields (sleep → training → skin → mood…), and decide who must tell whom what, so the team works as one on his goals. Today is ${today}.
 
 ${statusReport(null, W, L)}
@@ -1456,15 +1600,20 @@ RECENT CHATS (last 7 days):
 ${chats || "- no chats this week"}
 NOTES ALREADY SENT THIS WEEK (don't repeat): ${loadNotes().filter(n => n.at > Date.now() - 7 * 864e5).map(n => n.from + "→" + n.to + ": " + n.text).join(" | ") || "none"}
 
+${masterPlanPrompt(null).split("\n- To change")[0]}
+As Head Coach you also: (1) spot CONFLICTS — two coaches pushing him in opposite directions (e.g. more calories vs deficit, late gym vs early bedtime) — and resolve each one for the team; (2) propose at most 2 plan DECISIONS, only with solid evidence from his data, reversible, one variable each — they go to Jeet for approval.
 Reply with ONLY JSON (no markdown):
-{"focus":"one line: the team's #1 priority for Jeet today and why (with a number)","notes":[{"from":"fitness","to":"sleep","text":"internal message in that coach's own voice (Hinglish ok): the evidence with numbers + exactly what you want them to do in their next chat with him"}]}
+{"focus":"one line: the team's #1 priority for Jeet today and why (with a number)","conflicts":[{"between":["fitness","nutrition"],"issue":"plain words","resolution":"what the team will do"}],"decisions":[{"coach":"nutrition","area":"nutrition","change":"the exact change","reason":"plain words","evidence":"his data"}],"notes":[{"from":"fitness","to":"sleep","text":"internal message in that coach's own voice (Hinglish ok): the evidence with numbers + exactly what you want them to do in their next chat with him"}]}
 2-6 notes. Every note must lead to an action. Write notes and the focus in plain words (Jeet can read them) — no jargon. Use coach ids exactly: skin, hair, fitness, nutrition, sleep, style, grooming, ronaldo, mind (to may also be "team").`;
     try {
         const raw = await ai(sys, [{ role: "user", content: "Run today's huddle." }], 1800, { tier: "smart", effort: "medium" });
         const j = parseJsonLoose(raw);
         if (!j || !Array.isArray(j.notes)) throw new Error("bad huddle");
         const added = addNotes(j.notes, "huddle");
-        store.set(HUDDLE_KEY, { date: today, focus: String(j.focus || "").slice(0, 300), count: added.length });
+        const conflicts = (Array.isArray(j.conflicts) ? j.conflicts : []).filter(c => c && c.issue && Array.isArray(c.between)).slice(0, 4)
+            .map(c => ({ between: c.between.filter(x => COACHES.some(k => k.id === x)).slice(0, 3), issue: String(c.issue).slice(0, 240), resolution: String(c.resolution || "").slice(0, 240) })).filter(c => c.between.length);
+        (Array.isArray(j.decisions) ? j.decisions : []).slice(0, 2).forEach(d => addDecision(d, "huddle"));
+        store.set(HUDDLE_KEY, { date: today, focus: String(j.focus || "").slice(0, 300), count: added.length, conflicts: conflicts });
         return { focus: j.focus, notes: added };
     } catch (_a) { store.set(HUDDLE_KEY, h || null); return null; }
 }
@@ -1536,7 +1685,7 @@ function processCoachReply(raw, coachId) {
     const mem = extractTeamMemory(raw);
     addTeamMemoryFacts(mem.facts, coachId);
     const ho = extractHandoff(mem.clean || raw);
-    const gl = applyGoalTags(applyFlagTags(applyCommitTags(applyTellTags(ho.clean || mem.clean || raw, coachId), coachId), coachId), coachId);
+    const gl = applyGoalTags(applyDecisionTags(applyFlagTags(applyCommitTags(applyTellTags(ho.clean || mem.clean || raw, coachId), coachId), coachId), coachId), coachId);
     const clean = applyMomentTags(gl.clean, coachId) || String(raw).replace(/<[^>]+>/g, "").trim();
     let parts = clean.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
     if (parts.length > 3) parts = parts.slice(0, 2).concat([parts.slice(2).join("\n\n")]);
@@ -2327,7 +2476,8 @@ function statusReport(coachId, W, L) {
             if (isNaN(b)) return null;
             return x.name + " " + b + x.unit + (isNaN(a) || m.length < 2 ? "" : " (was " + a + x.unit + " on " + (first.dateShort || first.date) + ", " + (b - a >= 0 ? "+" : "") + (b - a).toFixed(1) + ")");
         }).filter(Boolean);
-        if (body.length) lines.push("- Body now: " + body.join(", ") + ".");
+        const ageDays = last.date ? Math.round((Date.now() - new Date(last.date).getTime()) / 864e5) : null;
+        if (body.length) lines.push("- Body (last measured " + (ageDays == null ? "on an unknown date" : ageDays <= 0 ? "today" : ageDays + " days ago") + "): " + body.join(", ") + "." + (ageDays != null && ageDays > 14 ? " ⚠️ STALE — these numbers are old; don't treat them as today's, ask for fresh measurements before judging progress." : ""));
     } else lines.push("- No body measurements logged yet (weight, waist, chest, biceps) — ask for them when it matters.");
     const ck = loadCheckins();
     const last = ck[ck.length - 1];
@@ -4391,7 +4541,7 @@ function CheckinEntryCard({ T, onOpen }) {
 // and has them talk to Jeet and to each other. Stored in CH.team.
 const GROUP_ID = "team";
 const GROUP_ORDER = ["fitness", "nutrition", "skin", "hair", "sleep", "style", "grooming", "ronaldo", "mind"];
-function personaName(id) { return String(COACH_VOICES[id] || coachLabel(id)).split(" (")[0]; }
+function personaName(id) { if (id === "head") return "Head Coach"; return String(COACH_VOICES[id] || coachLabel(id)).split(" (")[0]; }
 function groupLiveData(L, W, viewDay) {
     const w7 = (W || []).slice(-7);
     const avg = k => w7.length ? +(w7.reduce((s, d) => s + (+d[k] || 0), 0) / w7.length).toFixed(1) : 0;
@@ -4445,7 +4595,10 @@ async function groupTurn(hist, L, W, viewDay, voice, image) {
         ? { role: "user", content: ((m.image || m.imageKey) ? "[sent a photo] " : "") + (m.content === "📷" ? "" : m.content) }
         : { role: "assistant", content: personaName(m.coach) + ": " + m.content }));
     if (image && msgs.length) msgs[msgs.length - 1] = Object.assign({}, msgs[msgs.length - 1], { image: image });
-    const raw = await ai(buildGroupSystem(L, W, viewDay, voice, hist.slice(0, -1)), msgs, 1500, { tier: "smart", effort: "medium" });
+    const lastUser = [...hist].reverse().find(m => m.role === "user");
+    const gsafety = lastUser ? safetyCheck(lastUser.content) : null;
+    if (gsafety) logSafetyEvent("team", gsafety);
+    const raw = await ai(buildGroupSystem(L, W, viewDay, voice, hist.slice(0, -1)) + (gsafety ? safetyModePrompt(gsafety) + " In the group, the coach whose area it is (or Dr. Meher for anything emotional) answers first." : ""), msgs, 1500, { tier: "smart", effort: "medium" });
     const j = parseJsonLoose(raw);
     let list = j && Array.isArray(j.replies) ? j.replies : [{ coach: "ronaldo", text: String(raw).replace(/[{}"]/g, "") }];
     list = list.filter(r => r && r.text && GROUP_ORDER.includes(r.coach)).slice(0, voice ? 2 : 3);
@@ -7225,13 +7378,15 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         const gymDays7 = w7.filter(d => d.gymDone).length;
         const avgProt7 = w7.length ? Math.round(w7.reduce((s, d) => s + (d.totalProtein || 0), 0) / w7.length) : 0;
         const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nLast 7 days: " + (w7.length ? gymDays7 + "/7 gym days | avg sleep " + avgSl + "h | avg protein " + avgProt7 + "g" : "not logged yet") + (L.dayNotes ? "\nHis note today: " + L.dayNotes : "") + "\nLIFTS HE LOGGED (recent sessions):\n" + recentLiftsText(21) + "\nMEALS LOGGED TODAY:\n" + todaysMealsText() + "\nUse these when they matter for what he asked — they're what makes your answer his, not generic.\n\n" + statusReport(id, W, L);
-        const fullSys = buildCoachSystem(coach, CH, ctx, W) + (voice ? VOICE_CALL_NOTE : "");
+        const safety = safetyCheck(msg);
+        if (safety) logSafetyEvent(id, safety);
+        const fullSys = buildCoachSystem(coach, CH, ctx, W) + (voice ? VOICE_CALL_NOTE : "") + (safety ? safetyModePrompt(safety) : "");
         try {
             // Only the photo just sent travels to the model; older ones become a note.
             const src = newHistUser.filter(m => !m.error).slice(-20);
             const aiMsgs = stampMsgs(src, src.map(m => (m.image || m.imageKey) ? { role: m.role, content: m.content === "📷" ? "[sent a photo]" : "[sent a photo] " + m.content } : { role: m.role, content: m.content }));
             if (pic) aiMsgs[aiMsgs.length - 1] = { role: "user", content: "[" + stampTime(userMsg.ts) + "] " + (msg.trim() || "(sent a photo)"), image: pic.full };
-            const raw = await ai(fullSys, aiMsgs, 1500, coachBrain(msg, !!pic));
+            const raw = await ai(fullSys, aiMsgs, 1500, safety ? { tier: "pro", effort: "medium" } : coachBrain(msg, !!pic));
             const reply = processCoachReply(raw, id);
             if (reply.milestone) { setMilestone(reply.milestone); setTimeout(() => setMilestone(null), 3200); }
             // With voice on, the coach starts talking as the first text lands.
@@ -7761,6 +7916,7 @@ function JeetOS() {
     const [unread, setUnread] = React.useState(store.get("jos_unread") || {});
     const [huddleOpen, setHuddleOpen] = React.useState(false);
     const [focusOpen, setFocusOpen] = React.useState(false);
+    const [planOpen, setPlanOpen] = React.useState(false);
     const [tab, setTab] = React.useState("today");
     React.useEffect(() => {
         if (tab === "today") {
@@ -7868,6 +8024,7 @@ function JeetOS() {
         });
         syncGoals();
         syncFlags();
+        syncDecisions();
         syncMoments();
         // The team's private morning huddle (once a day).
         syncNotes().then(() => setTimeout(() => runTeamHuddle(keptCH), 4000));
@@ -9140,6 +9297,8 @@ function JeetOS() {
         tab === "coaches" && (React.createElement("div", { style: { paddingBottom: 80, animation: "josFadeIn .28s ease" } },
             React.createElement("div", { style: { padding: "12px 20px" } },
                 React.createElement(GroupEntryCard, { T: T, CH: CH, onOpen: () => setScreen("group") }),
+                React.createElement(MasterPlanCard, { T: T, onOpen: () => setPlanOpen(true) }),
+                planOpen && React.createElement(MasterPlanSheet, { T: T, onClose: () => setPlanOpen(false) }),
                 React.createElement(FocusBoardCard, { T: T, onOpen: () => setFocusOpen(true) }),
                 focusOpen && React.createElement(FocusBoardSheet, { T: T, onClose: () => setFocusOpen(false) }),
                 React.createElement(HuddleEntryCard, { T: T, onOpen: () => setHuddleOpen(true) }),
