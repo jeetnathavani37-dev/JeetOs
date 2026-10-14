@@ -9,6 +9,7 @@
 // (?slot=review) every coach with an active goal sends a 2-line weekly review.
 
 const { COACHES, personaPrompt } = require("./_coach-personas");
+const { sendToAll } = require("./_push");
 
 // The jeetos_* tables are open to the app's public key. Env keys are tried
 // first, but an old/rotated one answers 401 — then fall back to the public key.
@@ -173,7 +174,9 @@ ${notes.length ? `Your teammates told you privately (act on it, you can mention 
   for (const c of ownDue) {
     await supa(`jeetos_commitments?id=eq.${encodeURIComponent(c.id)}`, { method: "PATCH", body: JSON.stringify({ status: "done", resolved_at: new Date().toISOString() }) }).catch(() => null);
   }
-  return { coach: coachId, slot, text, telegram: await sendTelegram(coachId, text) };
+  // iPhone push: the coach's text lands on his lock screen; tapping opens that chat.
+  const push = await sendToAll(supa, { title: (COACHES[coachId] && COACHES[coachId].name) || "JeetOS", body: text.replace(/\s+/g, " ").slice(0, 180), url: "/?chat=" + coachId, tag: coachId + "-" + slot }).catch(e => ({ error: e.message }));
+  return { coach: coachId, slot, text, telegram: await sendTelegram(coachId, text), push };
 }
 
 module.exports = async function handler(req, res) {

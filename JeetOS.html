@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-67";
+const APP_BUILD = "2026.10.14-68";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -2077,6 +2077,66 @@ function truthPrompt(msg) {
     const check = detectClaims(msg).map(c => { const v = verifyClaim(Object.assign({ day: new Date().toDateString() }, c)); return "- He says " + (c.type === "workout" ? "workout " + c.claimed_status : c.type + " " + c.value + (c.unit || "h")) + " → " + v.status.toUpperCase().replace("_", " ") + " (" + v.evidence + ")"; });
     return `TRUTH LEDGER (computed by the app from his records today): workout — ${r.split}${r.split !== "Rest" ? ", " + r.exDone + "/" + r.exTotal + " exercises with sets logged" + (r.gymTicked ? ", 'gym done' ticked" : "") : ""}; food — ${r.meals} items logged, ${r.cal} kcal / ${r.protein}g protein recorded, meals ticked ${r.mealsTicked}/3; sleep — ${r.sleep ? r.sleep + "h logged" : "not logged"}.
 Last 7 days: ${st.claims} claims checked (${st.verified} verified, ${st.selfReported} self-reported), ${st.honest} honest reports/corrections, record completeness ${st.completeness}%.${st.open.length ? " OPEN discrepancies to clear up gently: " + st.open.slice(-3).map(c => "[id " + c.id + "] " + c.evidence).join("; ") : ""}${check.length ? "\nCLAIM CHECK for his latest message:\n" + check.join("\n") : ""}`;
+}
+
+// ── iPHONE PUSH NOTIFICATIONS (Web Push, works on iOS 16.4+ from the Home Screen app) ──
+function pushSupport() {
+    if (typeof window === "undefined") return "none";
+    const standalone = window.navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent || "");
+    if (!("serviceWorker" in navigator)) return "none";
+    if (ios && !standalone) return "needs-homescreen";
+    if (!("PushManager" in window) || !("Notification" in window)) return ios ? "needs-homescreen" : "none";
+    return "ok";
+}
+function b64uToBytes(s) { const pad = "=".repeat((4 - s.length % 4) % 4); const raw = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(raw, c => c.charCodeAt(0)); }
+async function subscribePush() {
+    const reg = await navigator.serviceWorker.register("/sw.js");
+    await navigator.serviceWorker.ready;
+    const info = await fetch("/api/push").then(r => r.json());
+    if (!info.publicKey) throw new Error("Server pe push abhi set nahi hai");
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") throw new Error("Notification permission nahi mili — Settings → JeetOS → Notifications ON karo");
+    let sub = await reg.pushManager.getSubscription();
+    if (sub && store.get("jos_push_pub") !== info.publicKey) { await sub.unsubscribe(); sub = null; }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(info.publicKey) });
+    const r = await fetch("/api/push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "subscribe", subscription: sub.toJSON() }) });
+    if (!r.ok) throw new Error("Subscription save nahi hui");
+    store.set("jos_push_pub", info.publicKey); store.set("jos_push_on", true);
+    return true;
+}
+async function unsubscribePush() {
+    try { const reg = await navigator.serviceWorker.getRegistration("/sw.js"); const sub = reg && await reg.pushManager.getSubscription();
+        if (sub) { await fetch("/api/push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "unsubscribe", endpoint: sub.endpoint }) }); await sub.unsubscribe(); } } catch (_a) { }
+    store.set("jos_push_on", false);
+}
+// Keep the subscription fresh (e.g. if the server key changed) without asking again.
+async function refreshPush() {
+    if (pushSupport() !== "ok" || !store.get("jos_push_on") || Notification.permission !== "granted") return;
+    try { await subscribePush(); } catch (_a) { }
+}
+function PushCard({ T }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [on, setOn] = React.useState(!!store.get("jos_push_on") && typeof Notification !== "undefined" && Notification.permission === "granted");
+    const [msg, setMsg] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const sup = pushSupport();
+    const act = async (fn) => { setBusy(true); setMsg(""); try { await fn(); } catch (e) { setMsg("⚠️ " + (e.message || e)); } setBusy(false); };
+    const btn = (label, onClick, primary) => React.createElement("button", { onClick: onClick, disabled: busy, style: { flex: 1, padding: "9px 10px", borderRadius: 10, border: primary ? "none" : "1px solid rgba(255,255,255,.14)", background: primary ? T.gold : "transparent", color: primary ? "#16120A" : T.ivory, fontWeight: primary ? 700 : 500, fontSize: 12.5, cursor: "pointer", opacity: busy ? .6 : 1 } }, label);
+    return React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 16px", marginBottom: 16, fontFamily: font } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+            React.createElement("span", { style: { fontSize: 20 } }, "🔔"),
+            React.createElement("div", { style: { flex: 1 } },
+                React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontWeight: 600 } }, "iPhone notifications" + (on ? " · ON" : "")),
+                React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, marginTop: 2, lineHeight: 1.45 } },
+                    sup === "needs-homescreen" ? "Pehle Safari mein Share → \"Add to Home Screen\" karo, phir Home Screen wale JeetOS icon se app kholo — tabhi iPhone notifications allow karta hai (iOS 16.4+)."
+                    : sup === "none" ? "Is browser mein push supported nahi hai."
+                    : on ? "Coaches ke messages, streak rescue aur follow-ups lock screen pe aayenge. Tap karo → seedha us coach ki chat." : "Coaches khud message karein to lock screen pe notification aaye."))),
+        sup === "ok" && React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 10 } },
+            on ? [btn("Test bhejo", () => act(async () => { const r = await fetch("/api/push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "test" }) }).then(x => x.json()); setMsg(r.sent ? "✓ Test bheja — 2-3 second mein aana chahiye" : "⚠️ " + (r.error || "koi device nahi mila")); }), true),
+                    btn("Band karo", () => act(async () => { await unsubscribePush(); setOn(false); }))]
+                : btn("🔔 Notifications ON karo", () => act(async () => { await subscribePush(); setOn(true); setMsg("✓ ON ho gaya"); }), true)),
+        msg && React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryM, marginTop: 8 } }, msg));
 }
 
 // ── GOAL EXECUTION ENGINE: one primary goal at a time ───────────────────
@@ -8585,6 +8645,13 @@ function JeetOS() {
         syncFlags();
         syncDecisions();
         BN.sync();
+        // Push: register the (no-cache) service worker, keep the subscription fresh,
+        // and open the right coach chat when a notification is tapped.
+        if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("/sw.js").then(() => refreshPush()).catch(() => { });
+            navigator.serviceWorker.addEventListener("message", e => { const u = e.data && e.data.type === "open" && e.data.url; const m = u && /[?&]chat=([a-z]+)/.exec(u); if (m && COACHES.some(c => c.id === m[1])) { setActiveCoach(m[1]); setScreen("coach"); } });
+        }
+        try { const qc = new URLSearchParams(location.search).get("chat"); if (qc && COACHES.some(c => c.id === qc)) { setActiveCoach(qc); setScreen("coach"); history.replaceState(null, "", "/"); } } catch (_a) { }
         CLAIMS.sync();
         syncPrimary().then(() => setStreakTick(t => t + 1));
         EXP.sync();
@@ -9871,6 +9938,7 @@ function JeetOS() {
         tab === "coaches" && (React.createElement("div", { style: { paddingBottom: 80, animation: "josFadeIn .28s ease" } },
             React.createElement("div", { style: { padding: "12px 20px" } },
                 React.createElement(GroupEntryCard, { T: T, CH: CH, onOpen: () => setScreen("group") }),
+                React.createElement(PushCard, { T: T }),
                 React.createElement(MasterPlanCard, { T: T, onOpen: () => setPlanOpen(true) }),
                 planOpen && React.createElement(MasterPlanSheet, { T: T, onClose: () => setPlanOpen(false) }),
                 React.createElement(FocusBoardCard, { T: T, onOpen: () => setFocusOpen(true) }),
