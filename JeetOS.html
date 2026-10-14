@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-68";
+const APP_BUILD = "2026.10.15-69";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -732,33 +732,6 @@ const store = { get: (k) => { try {
 // Replace with your own project URL + anon public key from Supabase Settings > API.
 const SUPABASE_URL = "https://qzripzgbstvxkfobzhyv.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
-async function syncToSupabase(dateStr, log) {
-    if (!SUPABASE_URL || SUPABASE_URL === "YOUR_SUPABASE_URL" || !SUPABASE_ANON_KEY) return;
-    try {
-        await fetch(SUPABASE_URL + "/rest/v1/jeetos_logs?on_conflict=date", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "apikey": SUPABASE_ANON_KEY,
-                "Authorization": "Bearer " + SUPABASE_ANON_KEY,
-                "Prefer": "resolution=merge-duplicates",
-            },
-            body: JSON.stringify({
-                date: dateStr,
-                gym_done: !!log.gymDone,
-                skincare_done: !!log.skincareDone,
-                sleep_hours: log.sleepHours || 0,
-                total_protein: log.totalProtein || 0,
-                total_cal: log.totalCal || 0,
-                water: log.water || 0,
-                mood: log.mood || 0,
-                energy: log.energy || 0,
-                supplements_done: !!log.supplementsDone,
-                updated_at: new Date().toISOString(),
-            }),
-        });
-    } catch (_a) { /* silent — localStorage stays source of truth */ }
-}
 // ── PERMANENT TASK-LABEL SYNC (Edits tab) — same Supabase project as above ──
 async function syncLabelToSupabase(key, value) {
     if (!SUPABASE_URL || SUPABASE_URL === "YOUR_SUPABASE_URL" || !SUPABASE_ANON_KEY) return;
@@ -1222,19 +1195,19 @@ const COACH_DISCIPLINE = `DISCIPLINE (non-negotiable):
 - First slip = curiosity, never mockery. Firmness is for patterns, not for one bad day.`;
 // What the app actually logs in your field (so nobody guesses).
 function fieldDataText(id, W) {
-    const w = (W || []).slice(-7), L = store.get("jos_log") || {};
+    const w = factDays(7, W), L = dayFacts(todayStr(), W);
     const c = k => w.filter(d => d[k]).length;
-    const avg = k => w.length ? +(w.reduce((s, d) => s + (+d[k] || 0), 0) / w.length).toFixed(1) : null;
+    const days = " of the last 7 days (" + w.length + " of them have anything logged — a blank day is unknown, not a miss)";
     const lines = {
-        skin: "Skincare logged " + c("skincareDone") + "/" + w.length + " days this week; today " + (L.skincareDone ? "done" : "not yet") + ". No acne count, SPF log or photo score in the app — ask or use his photo scans.",
-        hair: "Haircare logged " + c("haircareDone") + "/" + w.length + " days this week; today " + (L.haircareDone ? "done" : "not yet") + ". No hairfall count in the app — ask for it or a photo.",
+        skin: "Skincare ticked on " + c("skincareDone") + days + "; today " + (L.skincareDone ? "done (AM " + L.rec.skinAM + " steps, PM " + L.rec.skinPM + " steps ticked)" : "not ticked yet") + ". No acne count, SPF log or photo score in the app — ask or use his photo scans.",
+        hair: "Haircare ticked on " + c("haircareDone") + days + "; today " + (L.haircareDone ? "done" : "not ticked yet") + ". No hairfall count in the app — ask for it or a photo.",
         style: "Today's outfit note: " + (L.outfitNote || "none") + ". The app doesn't log clothes — ask or use his outfit photos.",
         grooming: "The app doesn't log grooming — ask or use his photos.",
-        sleep: "Sleep " + avg("sleepHours") + "h avg, quality " + avg("sleepQuality") + "/5 this week; last night " + (L.sleepHours || "?") + "h.",
-        mind: "Mood " + avg("mood") + "/5, energy " + avg("energy") + "/5 this week; today mood " + (L.mood || "?") + ", energy " + (L.energy || "?") + "." + (L.dayNotes ? " His note today: " + L.dayNotes : ""),
-        nutrition: "Protein " + avg("totalProtein") + "g, calories " + avg("totalCal") + ", water " + avg("water") + " glasses/day this week; today " + (L.totalProtein || 0) + "g so far.",
-        fitness: "Gym " + c("gymDone") + "/" + w.length + " days this week; today " + (L.gymDone ? "done" : "not yet") + ".",
-        ronaldo: "Gym " + c("gymDone") + ", skincare " + c("skincareDone") + ", haircare " + c("haircareDone") + " of " + w.length + " logged days this week.",
+        sleep: "Sleep " + shown(meanOf(w, "sleepHours"), "h") + " avg, quality " + shown(meanOf(w, "sleepQuality"), "/5") + " (last 7 days, logged nights only); last night " + shown(L.sleepHours, "h") + ".",
+        mind: "Mood " + shown(meanOf(w, "mood"), "/5") + ", energy " + shown(meanOf(w, "energy"), "/5") + " (last 7 days, logged days only); today mood " + shown(L.mood, "/5") + ", energy " + shown(L.energy, "/5") + "." + (L.dayNotes ? " His note today: " + L.dayNotes : ""),
+        nutrition: "Protein " + shown(meanOf(w, "totalProtein"), "g") + ", calories " + shown(meanOf(w, "totalCal")) + " a day (days with food logged), water " + shown(meanOf(w, "water"), " glasses") + "; today " + (L.totalProtein == null ? "no food logged yet" : L.totalProtein + "g protein, " + L.totalCal + " kcal logged so far") + ".",
+        fitness: "Gym logged on " + c("gymDone") + days + "; today " + (L.gymDone ? "done (" + (L.rec.exDone || L.rec.exTicked) + " exercises logged)" : "not logged yet") + ".",
+        ronaldo: "Gym " + c("gymDone") + ", skincare " + c("skincareDone") + ", haircare " + c("haircareDone") + days + ".",
     };
     return lines[id] ? "YOUR FIELD IN HIS LOGS: " + lines[id] : "";
 }
@@ -1612,7 +1585,7 @@ async function runTeamHuddle(CH) {
     const today = localIsoDate();
     const h = store.get(HUDDLE_KEY);
     if (h && h.date === today) return null;
-    const W = store.get("jos_history") || [], L = store.get("jos_log") || null;
+    const W = store.get("jos_history") || [], L = todayLog();
     const active = COACHES.filter(c => (CH[c.id] || []).some(m => m.ts && Date.now() - m.ts < 7 * 864e5));
     if (W.length < 3 && !active.length) return null;
     store.set(HUDDLE_KEY, { date: today, focus: h && h.focus, running: true });
@@ -1698,7 +1671,7 @@ async function runCoachFollowups(CH) {
     for (const coachId of Object.keys(byCoach).slice(0, 2)) {
         const items = byCoach[coachId];
         const coach = COACHES.find(x => x.id === coachId);
-        const W = store.get("jos_history") || [], L = store.get("jos_log") || null;
+        const W = store.get("jos_history") || [], L = todayLog();
         const sys = buildCoachSystem(coach, CH, statusReport(coachId, W, L), W) + `
 
 YOU'RE TEXTING HIM FIRST, because you promised to: ${items.map(c => "\"" + c.text + "\" (promised for " + c.due + ")").join("; ")}.
@@ -1991,19 +1964,131 @@ const CLAIMS = syncedList("jos_claims", "jeetos_claims", 200,
     c => ({ id: c.id, coach: c.coach || null, type: c.type, claimed: c.claimed, value: c.value, unit: c.unit || null, day: c.day, status: c.status, evidence: c.evidence || null, correction: c.correction || null, created_at: new Date(c.at).toISOString(), updated_at: new Date().toISOString() }),
     x => ({ id: x.id, coach: x.coach, type: x.type, claimed: x.claimed, value: x.value, unit: x.unit, day: x.day, status: x.status, evidence: x.evidence, correction: x.correction, at: Date.parse(x.created_at) || Date.now() }));
 // Today's (or a given day's) records, computed — never guessed.
-function dayRecords(dateStr) {
-    const isToday = dateStr === new Date().toDateString();
-    const wd = new Date(dateStr).toLocaleDateString("en-US", { weekday: "long" }), split = GYM_SPLIT[wd];
+// ── DAILY RECORD: one truth for every coach, cron, streak and sync ──────
+// What he actually did on a day comes from what he ticked and logged: the
+// gym checklist and sets, the meal checklist + food log + junk meals, the
+// routine checklists. Sleep / mood / energy / water count only if he entered
+// them — the form's starting values (7h, 3/5…) are not data. Missing is null,
+// never 0, so coaches can tell "didn't log" from "didn't do".
+const LOG_DEFAULTS = { gymDone: false, skincareDone: false, haircareDone: false, supplementsDone: false, water: 0, sleepHours: 7, sleepQuality: 3, mood: 3, energy: 3, outfitNote: "", hygieneNote: "", dayNotes: "" };
+const LOG_META = { day: 1, entered: 1, gymDone: 1, skincareDone: 1, haircareDone: 1, supplementsDone: 1, totalProtein: 1, totalCal: 1 };
+function todayStr() { return new Date().toDateString(); }
+// Today's log, or null once the day has changed (yesterday's values never leak into today).
+function todayLog() { const l = store.get("jos_log"); return l && l.day === todayStr() ? l : null; }
+function freshLog() { return Object.assign({}, LOG_DEFAULTS, { day: todayStr(), entered: {} }); }
+function findDay(W, dateStr) { return (W || []).find(d => d && d.date && new Date(d.date).toDateString() === dateStr) || null; }
+function dailyRecord(dateStr, W) {
+    W = W || store.get("jos_history") || [];
+    const isToday = dateStr === todayStr();
+    const w = findDay(W, dateStr), raw = store.get("jos_log");
+    const log = (raw && raw.day === dateStr) ? raw : (!isToday && w) ? w : {};
+    const checks = Object.assign({}, (w && w.checks) || {}, store.get("jos_checks_" + dateStr) || {});
+    const weekday = new Date(dateStr).toLocaleDateString("en-US", { weekday: "long" }), split = GYM_SPLIT[weekday];
+    const exList = EXERCISES[split] || [];
     const sets = store.get("jos_sets_" + dateStr) || {};
-    const exList = (EXERCISES[split] || []);
     const exDone = Object.keys(sets).filter(k => (sets[k] || []).some(x => x && x.reps && x.wt)).length;
-    const checks = store.get("jos_checks_" + dateStr) || {};
-    const L = isToday ? (store.get("jos_log") || {}) : ((store.get("jos_history") || []).find(d => d.date && new Date(d.date).toDateString() === dateStr) || {});
-    const meals = store.get("jos_meals_" + dateStr) || [];
-    const mealCal = Math.round(meals.reduce((a, m) => a + (+(m.macros && m.macros.cal) || 0), 0));
-    const mealP = Math.round(meals.reduce((a, m) => a + (+(m.macros && m.macros.p) || 0), 0));
-    return { split: split, exTotal: exList.length, exDone: exDone, gymTicked: !!(L.gymDone || checks.ex_0), meals: meals.length,
-        cal: Math.max(mealCal, +L.totalCal || 0), protein: Math.max(mealP, +L.totalProtein || 0), sleep: +L.sleepHours || 0, mealsTicked: ["breakfast_0", "lunch_0", "dinner_0"].filter(k => checks[k]).length };
+    const ticked = pre => Object.keys(checks).filter(k => checks[k] === true && k.indexOf(pre) === 0).length;
+    const custom = store.get("jos_meals_" + dateStr) || [], junk = store.get("jos_illegal_" + dateStr) || [];
+    const cm = custom.reduce((a, m) => ({ cal: a.cal + (+(m.macros && m.macros.cal) || 0), p: a.p + (+(m.macros && m.macros.p) || 0) }), { cal: 0, p: 0 });
+    const jk = junk.reduce((a, m) => ({ cal: a.cal + (parseInt(m.cal) || 0), p: a.p + (parseInt(m.protein) || 0) }), { cal: 0, p: 0 });
+    const diet = computeDietTotals(checks, cm);
+    const mealsTicked = ["bf_", "breakfast_", "lunch_", "dinner_"].filter(p => ticked(p)).length;
+    const food = custom.length > 0 || junk.length > 0 || mealsTicked > 0 || !!checks.eve_bar;
+    // Old entries (before "entered" existed): a value equal to the form's starting value is treated as not logged.
+    const entered = k => log.entered ? !!log.entered[k] : log[k] != null && log[k] !== "" && log[k] !== LOG_DEFAULTS[k];
+    const num = k => entered(k) ? (+log[k] || 0) : null;
+    const r = {
+        date: dateStr, isToday: isToday, weekday: weekday, split: split, exTotal: exList.length, exDone: exDone, exTicked: ticked("ex_"),
+        gym: exDone > 0 || ticked("ex_") > 0 || !!checks.cardio,
+        skinAM: ticked("skam_"), skinPM: ticked("skpm_"), skincare: ticked("skam_") + ticked("skpm_") > 0,
+        haircare: ticked("hair_") > 0, supplements: ticked("sg_") > 0,
+        food: food, protein: food ? Math.round(diet.eatenProt + jk.p) : null, cal: food ? Math.round(diet.eatenCal + jk.cal) : null,
+        customMeals: custom.length, junkMeals: junk.length, mealsTicked: mealsTicked,
+        sleep: num("sleepHours"), sleepQuality: num("sleepQuality"), mood: num("mood"), energy: num("energy"), water: num("water"),
+        notes: log.dayNotes || "", outfitNote: log.outfitNote || "", tasks: Object.keys(checks).filter(k => checks[k] === true).length,
+    };
+    r.any = r.gym || r.skincare || r.haircare || r.supplements || r.food || r.tasks > 0 || [r.sleep, r.mood, r.energy].some(v => v != null) || !!r.water;
+    return r;
+}
+// The same day in the field names the rest of the app already uses.
+function dayFacts(dateStr, W) {
+    const r = dailyRecord(dateStr, W);
+    return { date: dateStr, gymDone: r.gym, skincareDone: r.skincare, haircareDone: r.haircare, supplementsDone: r.supplements,
+        totalProtein: r.protein, totalCal: r.cal, sleepHours: r.sleep, sleepQuality: r.sleepQuality, mood: r.mood, energy: r.energy,
+        water: r.water, dayNotes: r.notes, outfitNote: r.outfitNote, logged: r.any, rec: r };
+}
+// The last n calendar days before today (oldest first) that have anything logged.
+function factDays(n, W) {
+    W = W || store.get("jos_history") || [];
+    const out = [];
+    for (let i = n; i >= 1; i--) { const f = dayFacts(new Date(Date.now() - i * 864e5).toDateString(), W); if (f.logged) out.push(f); }
+    return out;
+}
+// Averages skip days where the field wasn't logged.
+function meanOf(arr, k) { const v = (arr || []).map(d => d[k]).filter(x => x != null && x !== "" && isFinite(+x)); return v.length ? Math.round(v.reduce((a, b) => a + +b, 0) / v.length * 10) / 10 : null; }
+function shown(v, unit) { return v == null ? "not logged" : v + (unit || ""); }
+function withDerived(log, r) {
+    return Object.assign({}, log, { gymDone: r.gym, skincareDone: r.skincare, haircareDone: r.haircare, supplementsDone: r.supplements, totalProtein: r.protein, totalCal: r.cal });
+}
+// A new day: the old log goes into history (if he never pressed "lock in"), and today starts empty.
+function rolloverLog() {
+    const l = store.get("jos_log");
+    if (l && l.day === todayStr()) return l;
+    if (l && l.day) {
+        const W = store.get("jos_history") || [];
+        if (!findDay(W, l.day)) {
+            const entry = withDerived(Object.assign({}, l, { date: l.day, savedAt: "auto", autoSaved: true, checks: store.get("jos_checks_" + l.day) || {} }), dailyRecord(l.day, W));
+            store.set("jos_history", W.concat([entry]).sort((a, b) => new Date(a.date) - new Date(b.date)).slice(-60));
+        }
+        syncDays([l.day]);
+    }
+    const fresh = freshLog();
+    store.set("jos_log", fresh);
+    return fresh;
+}
+// Recompute the derived fields of saved history days from their checklists.
+function refreshHistory() {
+    const W = store.get("jos_history") || [];
+    if (!W.length) return W;
+    const up = W.map(d => d && d.date ? withDerived(d, dailyRecord(new Date(d.date).toDateString(), W)) : d);
+    store.set("jos_history", up);
+    return up;
+}
+// ── Cloud copy (jeetos_logs): the cron coaches read this ──
+function isoOf(dateStr) { return localIsoDate(new Date(dateStr)); }
+function logRow(dateStr, W) {
+    const r = dailyRecord(dateStr, W);
+    if (!r.any) return null;
+    return { date: dateStr, day: isoOf(dateStr), gym_done: r.gym, skincare_done: r.skincare, haircare_done: r.haircare, supplements_done: r.supplements,
+        total_protein: r.protein, total_cal: r.cal, sleep_hours: r.sleep, water: r.water, mood: r.mood, energy: r.energy };
+}
+const _daySync = {};
+function syncDays(dates) {
+    dates.forEach(d => { clearTimeout(_daySync[d]); _daySync[d] = setTimeout(() => pushDays([d]), 700); });
+}
+// Only days whose content changed are sent, so updated_at keeps meaning "he logged something".
+async function pushDays(dates) {
+    if (!supabaseReady()) return 0;
+    const W = store.get("jos_history") || [], sent = store.get("jos_day_sync") || {};
+    const rows = dates.map(d => logRow(d, W)).filter(r => r && sent[r.date] !== JSON.stringify(r));
+    if (!rows.length) return 0;
+    const now = new Date().toISOString();
+    try {
+        const res = await fetch(SUPABASE_URL + "/rest/v1/jeetos_logs?on_conflict=date", { method: "POST", headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }),
+            body: JSON.stringify(rows.map(r => Object.assign({}, r, { updated_at: now }))) });
+        if (!res.ok) return 0;
+        const s2 = store.get("jos_day_sync") || {};
+        rows.forEach(r => { s2[r.date] = JSON.stringify(r); });
+        Object.keys(s2).forEach(k => { if (Date.now() - new Date(k).getTime() > 90 * 864e5) delete s2[k]; });
+        store.set("jos_day_sync", s2);
+        return rows.length;
+    } catch (_a) { return 0; }
+}
+// Last 30 days, so the server copy matches the phone (fixes older rows synced before this existed).
+function backfillDays() { return pushDays(Array.from({ length: 31 }, (_, i) => new Date(Date.now() - i * 864e5).toDateString())); }
+function dayRecords(dateStr) {
+    const r = dailyRecord(dateStr);
+    return Object.assign({}, r, { gymTicked: r.gym, meals: r.customMeals, sleep: r.sleep || 0 });
 }
 function verifyClaim(c) {
     const r = dayRecords(c.day || new Date().toDateString());
@@ -2059,7 +2144,7 @@ function applyTruthTags(text, coachId) {
 function truthStats() {
     const since = Date.now() - 7 * 864e5, l = CLAIMS.load().filter(c => c.at >= since);
     const days = Array.from({ length: 7 }, (_, i) => new Date(Date.now() - (i + 1) * 864e5).toDateString());
-    const complete = days.filter(d => { const r = dayRecords(d); return r.meals > 0 && (r.split === "Rest" || r.exDone > 0 || !r.gymTicked); }).length;
+    const complete = days.filter(d => { const r = dayRecords(d); return r.food && (r.split === "Rest" || r.exDone > 0 || !r.gymTicked); }).length;
     const honest = l.filter(c => c.status === "honest_miss" || c.status === "corrected").length;
     const resolvedMisses = loadCommitments().filter(c => c.status === "missed" && c.due >= localIsoDate(new Date(since))).length;
     return { claims: l.length, verified: l.filter(c => c.status === "verified").length, selfReported: l.filter(c => c.status === "self_reported").length,
@@ -2302,27 +2387,27 @@ function streakDay(dateStr, W, todayL, todayChecks) {
     const w = (W || []).find(d => d.date && new Date(d.date).toDateString() === dateStr);
     const checks = isToday ? (todayChecks || {}) : (store.get("jos_checks_" + dateStr) || (w && w.checks) || {});
     const log = isToday ? (todayL || {}) : (w || {});
-    return { dateStr: dateStr, isToday: isToday, has: isToday || !!w || Object.keys(checks).length > 0, checks: checks, log: log, marks: dayMarks(dateStr), weekday: new Date(dateStr).toLocaleDateString("en-US", { weekday: "long" }) };
+    return { dateStr: dateStr, isToday: isToday, has: isToday || !!w || Object.keys(checks).length > 0, checks: checks, log: log, rec: dailyRecord(dateStr, W), marks: dayMarks(dateStr), weekday: new Date(dateStr).toLocaleDateString("en-US", { weekday: "long" }) };
 }
 // "full" | "min" | "recovery" | "miss" | "pending" | "risk"
 function habitStatus(h, d) {
     const m = d.marks[h.id];
     if (m && m.kind === "recovery") return "recovery";
-    const c = d.checks || {}, L = d.log || {};
+    const c = d.checks || {}, r = d.rec || {};
     let st = "miss";
     if (h.id === "move") {
-        if (L.gymDone || (c.ex_0 && c.ex_1)) st = "full";
+        if (r.gym) st = "full";
         else if (m && m.kind === "min") st = "min";
         else if (GYM_SPLIT[d.weekday] === "Rest") st = "recovery";
     } else if (h.id === "food") {
-        const p = +L.totalProtein || 0;
+        const p = +r.protein || 0;
         st = p >= 140 ? "full" : (p >= 100 || (m && m.kind === "min")) ? "min" : "miss";
     } else if (h.id === "sleep") {
-        const sl = +L.sleepHours || 0;
+        const sl = +r.sleep || 0;
         st = sl >= 7 ? "full" : sl >= 6 ? "min" : "miss";
     } else if (h.id === "checkin") {
         const n = Object.keys(c).filter(k => c[k] === true).length;
-        st = n >= 5 && L.mood ? "full" : n >= 1 ? "min" : "miss";
+        st = n >= 5 && r.mood != null ? "full" : n >= 1 ? "min" : "miss";
     }
     if (st === "miss" && d.isToday) return new Date().getHours() >= h.due - 2 ? "risk" : "pending";
     return st;
@@ -2359,7 +2444,7 @@ function silencePrompt(CH, W) {
     return "HE'S BEEN QUIET: last message to any coach " + (dm == null ? "never" : dm + " day" + (dm === 1 ? "" : "s") + " ago") + "; last saved day in the app " + (dl == null ? "never" : dl + " days ago") + ". Treat this as missing data, not failure — start by asking how things have been, without blame, before talking about anything missed.";
 }
 function streakPrompt(W, coachId) {
-    const s = streakState(W, store.get("jos_log") || {}, store.get("jos_checks_" + new Date().toDateString()) || {});
+    const s = streakState(W, todayLog() || {}, store.get("jos_checks_" + new Date().toDateString()) || {});
     const lab = { full: "✅ full", min: "🟡 minimum", recovery: "💤 recovery", pending: "⏳ not yet", risk: "⚠️ AT RISK", miss: "✗ missed" };
     const mine = STREAK_HABITS.filter(h => h.coach === coachId);
     if (coachId && !mine.length) return `STREAK: 🔥 ${s.current} day${s.current === 1 ? "" : "s"} (best ${s.best}). Today: ${s.today.map(x => x.h.name + " " + lab[x.st]).join(" · ")}. None of these habits are in your lane — don't prescribe their minimum yourself; if one is at risk, one line pointing him to that coach is enough. Never push exercise through pain or illness.`;
@@ -2372,11 +2457,11 @@ A streak day = every habit at least at its pre-agreed MINIMUM: ${STREAK_HABITS.m
 // Stage 3: once a day, when something is at risk in the evening, the right coach steps in.
 async function runStreakRescue(CH, W) {
     const today = new Date().toDateString();
-    const s = streakState(W, store.get("jos_log") || {}, store.get("jos_checks_" + today) || {});
+    const s = streakState(W, todayLog() || {}, store.get("jos_checks_" + today) || {});
     if (!s.risk.length || new Date().getHours() < 20 || store.get("jos_streak_rescue") === today) return null;
     store.set("jos_streak_rescue", today);
     const h = s.risk[0], coach = COACHES.find(c => c.id === h.coach) || COACHES[0];
-    const sys = buildCoachSystem(coach, CH, statusReport(coach.id, W, store.get("jos_log")), W) + `
+    const sys = buildCoachSystem(coach, CH, statusReport(coach.id, W, todayLog()), W) + `
 
 YOU'RE TEXTING HIM FIRST to protect his streak (🔥 ${s.current} days). It's evening and "${h.name}" isn't done yet today. Use what you know about what usually blocks him (bottlenecks, blockers). Offer the minimum version — ${h.min} — as the way to keep the streak tonight, make it feel doable right now, and ask him to mark it in the app when done. If he might be sick, injured or in pain, tell him to mark a recovery day instead. 1-2 short texts, warm but firm, no guilt.`;
     try {
@@ -2503,7 +2588,7 @@ MAJOR FOCUS: ${g ? "[id " + g.id + "] " + focusLine(g) + (g.plan && g.plan.weekl
 }
 // One call: all 9 departments examine him, flag issues and set a major focus each.
 async function runDepartmentScan() {
-    const W = store.get("jos_history") || [], L = store.get("jos_log") || null;
+    const W = store.get("jos_history") || [], L = todayLog();
     const ids = COACHES.map(c => c.id);
     const lanes = ids.map(id => id + " = " + personaName(id) + ", " + COACH_LANE[id]).join("\n");
     const scans = ids.map(scanContextText).filter(Boolean).join("\n");
@@ -2969,20 +3054,20 @@ function coachBrain(text, hasPhoto) {
 }
 // Patterns hidden in his logs — what a sharp coach would notice.
 function patternsText(W) {
-    const days = (W || []).filter(d => d && d.date).slice().sort((a, b) => new Date(a.date) - new Date(b.date)).slice(-60);
+    const days = factDays(60, W);
     if (days.length < 6) return "";
-    const avg = (arr, k) => arr.length ? arr.reduce((s, d) => s + (+d[k] || 0), 0) / arr.length : null;
+    const avg = meanOf;
     const f1 = x => Math.round(x * 10) / 10;
     const out = [];
-    const slept = days.filter(d => +d.sleepHours > 0);
+    const slept = days.filter(d => d.sleepHours != null && +d.sleepHours > 0);
     const good = slept.filter(d => +d.sleepHours >= 7), bad = slept.filter(d => +d.sleepHours < 7);
     if (good.length >= 2 && bad.length >= 2) {
         const e = [avg(good, "energy"), avg(bad, "energy")], m = [avg(good, "mood"), avg(bad, "mood")];
         const g = [good.filter(d => d.gymDone).length / good.length, bad.filter(d => d.gymDone).length / bad.length];
-        out.push("- Sleep 7h+ days (" + good.length + ") vs under 7h (" + bad.length + "): energy " + f1(e[0]) + " vs " + f1(e[1]) + "/5, mood " + f1(m[0]) + " vs " + f1(m[1]) + "/5, trained " + Math.round(g[0] * 100) + "% vs " + Math.round(g[1] * 100) + "% of days.");
+        out.push("- Sleep 7h+ days (" + good.length + ") vs under 7h (" + bad.length + "): energy " + shown(e[0]) + " vs " + shown(e[1], "/5") + ", mood " + shown(m[0]) + " vs " + shown(m[1], "/5") + ", trained " + Math.round(g[0] * 100) + "% vs " + Math.round(g[1] * 100) + "% of days.");
     }
     const gym = days.filter(d => d.gymDone), rest = days.filter(d => !d.gymDone);
-    if (gym.length >= 2 && rest.length >= 2) out.push("- Mood on gym days " + f1(avg(gym, "mood")) + "/5 vs " + f1(avg(rest, "mood")) + "/5 on other days; protein " + Math.round(avg(gym, "totalProtein")) + "g vs " + Math.round(avg(rest, "totalProtein")) + "g.");
+    if (gym.length >= 2 && rest.length >= 2) out.push("- Mood on gym days " + shown(avg(gym, "mood"), "/5") + " vs " + shown(avg(rest, "mood"), "/5") + " on other days; protein " + shown(avg(gym, "totalProtein"), "g") + " vs " + shown(avg(rest, "totalProtein"), "g") + ".");
     const wd = {};
     days.forEach(d => { const n = new Date(d.date).toLocaleDateString("en-US", { weekday: "long" }); (wd[n] = wd[n] || []).push(d); });
     const skipDays = Object.keys(wd).filter(n => n !== "Sunday" && wd[n].length >= 2 && wd[n].filter(d => d.gymDone).length / wd[n].length <= 0.34);
@@ -3066,21 +3151,23 @@ You: ${c.ex[1]}`;
 }
 // One snapshot of his current condition across areas, for judging him properly.
 function statusReport(coachId, W, L) {
-    const days = (W || []).slice(-30), week = days.slice(-7), before = days.slice(0, -7);
-    const avg = (arr, k) => arr.length ? +(arr.reduce((s, d) => s + (+d[k] || 0), 0) / arr.length).toFixed(1) : null;
+    const days = factDays(30, W), weekStart = Date.now() - 8 * 864e5;
+    const week = days.filter(d => new Date(d.date).getTime() > weekStart), before = days.filter(d => new Date(d.date).getTime() <= weekStart);
+    if (L) L = dayFacts(todayStr(), W);
+    const avg = meanOf;
     const cnt = (arr, k) => arr.filter(d => d[k]).length;
     const trend = (a, b) => a == null || b == null ? "" : a > b ? " (up from " + b + ")" : a < b ? " (down from " + b + ")" : " (same)";
     const lines = [];
-    if (!days.length) lines.push("- He hasn't saved any days in the app yet — judge from what he tells you and ask for the numbers you need.");
+    if (!days.length) lines.push("- Nothing logged in the app in the last 30 days — judge from what he tells you and ask for the numbers you need.");
     else {
-        lines.push("- Logged " + days.length + " of the last 30 days.");
+        lines.push("- Something logged on " + days.length + " of the last 30 days (a blank day is unknown, not a miss).");
         lines.push("- Gym: " + cnt(week, "gymDone") + "/7 this week, " + cnt(days, "gymDone") + " sessions in " + days.length + " logged days.");
-        lines.push("- Sleep: " + avg(week, "sleepHours") + "h avg this week" + trend(avg(week, "sleepHours"), avg(before, "sleepHours")) + " vs 7.5h target.");
-        lines.push("- Protein: " + Math.round(avg(week, "totalProtein") || 0) + "g/day this week" + trend(Math.round(avg(week, "totalProtein") || 0), before.length ? Math.round(avg(before, "totalProtein") || 0) : null) + " vs 170g target.");
-        lines.push("- Water: " + avg(week, "water") + " glasses/day vs 18. Skincare: " + cnt(week, "skincareDone") + "/7 days. Haircare: " + cnt(week, "haircareDone") + "/7.");
-        lines.push("- Mood " + avg(week, "mood") + "/5, energy " + avg(week, "energy") + "/5 this week" + trend(avg(week, "mood"), avg(before, "mood")) + ".");
+        lines.push("- Sleep: " + shown(avg(week, "sleepHours"), "h") + " avg this week" + trend(avg(week, "sleepHours"), avg(before, "sleepHours")) + " vs 7.5h target.");
+        lines.push("- Protein: " + shown(avg(week, "totalProtein"), "g") + "/day on days with food logged this week" + trend(avg(week, "totalProtein"), avg(before, "totalProtein")) + " vs 170g target.");
+        lines.push("- Water: " + shown(avg(week, "water"), " glasses") + "/day vs 18. Skincare: " + cnt(week, "skincareDone") + "/7 days. Haircare: " + cnt(week, "haircareDone") + "/7.");
+        lines.push("- Mood " + shown(avg(week, "mood"), "/5") + ", energy " + shown(avg(week, "energy"), "/5") + " this week" + trend(avg(week, "mood"), avg(before, "mood")) + ".");
     }
-    if (L) lines.push("- Today so far: gym " + (L.gymDone ? "done" : "not yet") + ", sleep " + (L.sleepHours || 0) + "h, protein " + (L.totalProtein || 0) + "g, water " + (L.water || 0) + ", mood " + (L.mood || 0) + "/5.");
+    if (L) lines.push("- Today so far: gym " + (L.gymDone ? "done" : "not logged yet") + ", sleep " + shown(L.sleepHours, "h") + ", protein " + shown(L.totalProtein, "g") + ", calories " + shown(L.totalCal) + ", water " + shown(L.water, " glasses") + ", mood " + shown(L.mood, "/5") + ". \"not logged\" means he hasn't entered it — ask, don't assume he skipped it.");
     const m = (store.get("jos_measurements") || {}).entries || [];
     if (m.length) {
         const first = m[m.length - 1], last = m[0];
@@ -4656,16 +4743,16 @@ function saveCheckins(l) { store.set(CHECKINS_KEY, l.slice(-26)); }
 function weekStats(W, weeksAgo) {
     const end = Date.now() - weeksAgo * 7 * 86400000, start = end - 7 * 86400000;
     // Log dates are local midnights, so (end - 7d, end] holds exactly 7 days.
-    const days = (W || []).filter(d => { const t = new Date(d.date).getTime(); return t > start && t <= end; });
+    const days = Array.from({ length: 7 }, (_, i) => dayFacts(new Date(end - i * 864e5).toDateString(), W)).filter(d => d.logged);
     const n = days.length;
-    const avg = k => n ? +(days.reduce((s, d) => s + (+d[k] || 0), 0) / n).toFixed(1) : 0;
+    const avg = k => meanOf(days, k);
     const cnt = k => days.filter(d => d[k]).length;
     return { daysLogged: n, gymDays: cnt("gymDone"), skincareDays: cnt("skincareDone"), haircareDays: cnt("haircareDone"), suppDays: cnt("supplementsDone"),
-        avgSleep: avg("sleepHours"), avgSleepQuality: avg("sleepQuality"), avgProtein: Math.round(avg("totalProtein")), avgCalories: Math.round(avg("totalCal")),
+        avgSleep: avg("sleepHours"), avgSleepQuality: avg("sleepQuality"), avgProtein: avg("totalProtein") == null ? null : Math.round(avg("totalProtein")), avgCalories: avg("totalCal") == null ? null : Math.round(avg("totalCal")),
         avgWater: avg("water"), avgMood: avg("mood"), avgEnergy: avg("energy"), dayNotes: days.map(d => d.dayNotes).filter(Boolean).slice(-4) };
 }
 function statsText(s) {
-    return `${s.daysLogged}/7 days logged · gym ${s.gymDays} days · sleep avg ${s.avgSleep}h (quality ${s.avgSleepQuality}/5) · protein avg ${s.avgProtein}g · calories avg ${s.avgCalories} · water avg ${s.avgWater} glasses · skincare ${s.skincareDays} days · haircare ${s.haircareDays} days · supplements ${s.suppDays} days · mood avg ${s.avgMood}/5 · energy avg ${s.avgEnergy}/5`;
+    return `${s.daysLogged}/7 days logged · gym ${s.gymDays} days · sleep avg ${shown(s.avgSleep, "h")} (quality ${shown(s.avgSleepQuality, "/5")}) · protein avg ${shown(s.avgProtein, "g")} · calories avg ${shown(s.avgCalories)} · water avg ${shown(s.avgWater, " glasses")} · skincare ${s.skincareDays} days · haircare ${s.haircareDays} days · supplements ${s.suppDays} days · mood avg ${shown(s.avgMood, "/5")} · energy avg ${shown(s.avgEnergy, "/5")}`;
 }
 function weekPromises() {
     const from = localIsoDate(new Date(Date.now() - 7 * 86400000));
@@ -5057,10 +5144,10 @@ function CheckinScreen({ T, W, setCH, onBack, onOpenCoach, onCoachMessages }) {
                 label("This week vs last week"),
                 CHECKIN_STAT_ROWS.map(([l, k, u]) => {
                     const a = stats[k], b = prevStats[k];
-                    const d = +(a - b).toFixed(1);
+                    const d = a == null || b == null ? 0 : +(a - b).toFixed(1);
                     return React.createElement("div", { key: k, style: { display: "flex", justifyContent: "space-between", fontSize: 12, fontFamily: font, padding: "4px 0", borderTop: "1px solid " + T.border } },
                         React.createElement("span", { style: { color: T.ivoryM } }, l),
-                        React.createElement("span", { style: { color: T.ivory } }, a + u, React.createElement("span", { style: { color: d > 0 ? T.green : d < 0 ? T.red : T.ivoryD, fontSize: 10, marginLeft: 6 } }, d > 0 ? "+" + d : d < 0 ? String(d) : "=")));
+                        React.createElement("span", { style: { color: T.ivory } }, a == null ? "—" : a + u, React.createElement("span", { style: { color: d > 0 ? T.green : d < 0 ? T.red : T.ivoryD, fontSize: 10, marginLeft: 6 } }, a == null || b == null ? "" : d > 0 ? "+" + d : d < 0 ? String(d) : "=")));
                 })),
             React.createElement("textarea", { value: note, onChange: e => setNote(e.target.value), placeholder: "Is hafte kaisa raha? Kya mushkil tha, kya achha laga… (optional)", rows: 3, style: { width: "100%", boxSizing: "border-box", background: T.card2, border: "1px solid " + T.border2, borderRadius: 12, color: T.ivory, fontFamily: font, fontSize: 16, padding: "12px 14px", outline: "none", resize: "vertical", marginBottom: 14 } }),
             error && React.createElement("div", { style: { fontSize: 12, color: T.red, fontFamily: font, marginBottom: 10 } }, error),
@@ -5156,10 +5243,9 @@ const GROUP_ID = "team";
 const GROUP_ORDER = ["fitness", "nutrition", "skin", "hair", "sleep", "style", "grooming", "ronaldo", "mind"];
 function personaName(id) { if (id === "head") return "Head Coach"; return String(COACH_VOICES[id] || coachLabel(id)).split(" (")[0]; }
 function groupLiveData(L, W, viewDay) {
-    const w7 = (W || []).slice(-7);
-    const avg = k => w7.length ? +(w7.reduce((s, d) => s + (+d[k] || 0), 0) / w7.length).toFixed(1) : 0;
-    return "JEET'S LIVE DATA: " + viewDay + " | gym " + (L.gymDone ? "done" : "not yet") + " | skincare " + (L.skincareDone ? "done" : "not yet") + " | sleep " + (L.sleepHours || 0) + "h | water " + (L.water || 0)
-        + " glasses | protein " + (L.totalProtein || 0) + "g | mood " + (L.mood || 0) + "/5 | energy " + (L.energy || 0) + "/5. Last 7 days: gym " + w7.filter(d => d.gymDone).length + " days, sleep avg " + avg("sleepHours") + "h, protein avg " + Math.round(avg("totalProtein")) + "g.";
+    const t = dayFacts(todayStr(), W), w7 = factDays(7, W);
+    return "JEET'S LIVE DATA: " + viewDay + " | gym " + (t.gymDone ? "done" : "not logged yet") + " | skincare " + (t.skincareDone ? "done" : "not ticked yet") + " | sleep " + shown(t.sleepHours, "h") + " | water " + shown(t.water, " glasses")
+        + " | protein " + shown(t.totalProtein, "g") + " | mood " + shown(t.mood, "/5") + " | energy " + shown(t.energy, "/5") + ". Last 7 days (" + w7.length + " with anything logged): gym " + w7.filter(d => d.gymDone).length + " days, sleep avg " + shown(meanOf(w7, "sleepHours"), "h") + ", protein avg " + shown(meanOf(w7, "totalProtein"), "g") + ".";
 }
 function buildGroupSystem(L, W, viewDay, voice, prevHist) {
     const today = localIsoDate();
@@ -7990,11 +8076,10 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
         setThinking(true);
         // Rich context for the AI coach
         const split = ({ Monday: "Push", Tuesday: "Pull", Wednesday: "Legs", Thursday: "Push", Friday: "Pull", Saturday: "Legs", Sunday: "Rest" })[viewDay] || "Rest";
-        const w7 = W.slice(-7);
-        const avgSl = w7.length ? +(w7.reduce((s, d) => s + (d.sleepHours || 0), 0) / w7.length).toFixed(1) : 0;
-        const gymDays7 = w7.filter(d => d.gymDone).length;
-        const avgProt7 = w7.length ? Math.round(w7.reduce((s, d) => s + (d.totalProtein || 0), 0) / w7.length) : 0;
-        const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (L.gymDone ? "DONE" : "NOT YET") + " | Sleep: " + (L.sleepHours || 0) + "h | Mood: " + (L.mood || 0) + "/5 | Energy: " + (L.energy || 0) + "/5 | Water: " + (L.water || 0) + " glasses | Protein: " + (L.totalProtein || 0) + "g | Calories: " + (L.totalCal || 0) + "kcal | Skincare AM: " + (L.skincareDone ? "DONE" : "SKIPPED") + "\nLast 7 days: " + (w7.length ? gymDays7 + "/7 gym days | avg sleep " + avgSl + "h | avg protein " + avgProt7 + "g" : "not logged yet") + (L.dayNotes ? "\nHis note today: " + L.dayNotes : "") + "\nLIFTS HE LOGGED (recent sessions):\n" + recentLiftsText(21) + "\nMEALS LOGGED TODAY:\n" + todaysMealsText() + "\nUse these when they matter for what he asked — they're what makes your answer his, not generic.\n\n" + statusReport(id, W, L);
+        const t = dayFacts(todayStr(), W), w7 = factDays(7, W);
+        const ctx = "JEET'S LIVE DATA (today):\nToday: " + viewDay + " | Split: " + split + " | Gym: " + (t.gymDone ? "DONE (" + (t.rec.exDone || t.rec.exTicked) + " exercises logged)" : "NOT LOGGED YET") + " | Sleep: " + shown(t.sleepHours, "h") + " | Mood: " + shown(t.mood, "/5") + " | Energy: " + shown(t.energy, "/5") + " | Water: " + shown(t.water, " glasses") + " | Protein: " + shown(t.totalProtein, "g") + " | Calories: " + shown(t.totalCal, " kcal") + " | Skincare: " + (t.skincareDone ? "AM " + t.rec.skinAM + " / PM " + t.rec.skinPM + " steps ticked" : "nothing ticked yet")
+            + "\n(\"not logged\" = he hasn't entered it in the app — ask, never assume he skipped it.)"
+            + "\nLast 7 days: " + (w7.length ? w7.length + " days with anything logged | gym " + w7.filter(d => d.gymDone).length + " days | avg sleep " + shown(meanOf(w7, "sleepHours"), "h") + " | avg protein " + shown(meanOf(w7, "totalProtein"), "g") : "nothing logged") + (t.dayNotes ? "\nHis note today: " + t.dayNotes : "") + "\nLIFTS HE LOGGED (recent sessions):\n" + recentLiftsText(21) + "\nMEALS LOGGED TODAY:\n" + todaysMealsText() + "\nUse these when they matter for what he asked — they're what makes your answer his, not generic.\n\n" + statusReport(id, W, L);
         const safety = safetyCheck(msg);
         recordClaims(msg, id);
         if (safety) logSafetyEvent(id, safety);
@@ -8546,7 +8631,7 @@ function JeetOS() {
     const [viewDay, setViewDay] = React.useState(TODAY);
     const [checks, setChecks] = React.useState({});
     const [altEx, setAltEx] = React.useState({});
-    const [L, setL] = React.useState({ gymDone: false, skincareDone: false, haircareDone: false, supplementsDone: false, water: 0, sleepHours: 7, sleepQuality: 3, mood: 3, energy: 3, outfitNote: "", hygieneNote: "", dayNotes: "" });
+    const [L, setL] = React.useState(() => freshLog());
     const [W, setW] = React.useState([]);
     const totalXP = W.reduce((s,d)=>{
       return s+(d.gymDone?40:0)+(d.skincareDone?25:0)+((d.sleepHours||0)>=7?25:0)+((d.totalProtein||0)>=170?20:0)+(d.supplementsDone?15:0);
@@ -8607,12 +8692,10 @@ function JeetOS() {
         const sa = store.get("jos_alt");
         if (sa)
             setAltEx(sa);
-        const sl = store.get("jos_log");
-        if (sl)
-            setL(sl);
-        const sw = store.get("jos_history");
-        if (sw)
-            setW(sw);
+        // New day → yesterday's log moves to history and today starts empty.
+        setL(rolloverLog());
+        setW(refreshHistory());
+        backfillDays();
         if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
             scheduleAllNotifs();
         }
@@ -8796,7 +8879,32 @@ function JeetOS() {
         reader.readAsDataURL(file);
     };
     const toggleAlt = k => { const up = Object.assign({}, altEx, { [k]: !altEx[k] }); setAltEx(up); store.set("jos_alt", up); };
-    const saveLog = async (l) => { setL(l); store.set("jos_log", l); syncToSupabase(new Date().toDateString(), l); };
+    // Only fields he actually changed count as entered; derived fields come from the checklists.
+    const saveLog = (l) => {
+        const today = todayStr();
+        let base = L;
+        if (L.day !== today) { base = rolloverLog(); setW(store.get("jos_history") || []); }
+        const changed = Object.keys(l).filter(k => !LOG_META[k] && l[k] !== L[k]);
+        const entered = Object.assign({}, base.entered);
+        changed.forEach(k => { entered[k] = true; });
+        const next = Object.assign({}, base, ...changed.map(k => ({ [k]: l[k] })), { day: today, entered: entered });
+        store.set("jos_log", next);
+        const out = withDerived(next, dailyRecord(today));
+        store.set("jos_log", out);
+        setL(out);
+        syncDays([today]);
+    };
+    // Ticks, sets and meals change what he did today — recompute and sync.
+    const refreshToday = () => {
+        const today = todayStr();
+        let base = store.get("jos_log");
+        if (!base || base.day !== today) { base = rolloverLog(); setW(store.get("jos_history") || []); }
+        const out = withDerived(base, dailyRecord(today));
+        store.set("jos_log", out);
+        setL(out);
+        syncDays([today]);
+    };
+    React.useEffect(() => { const t = setTimeout(refreshToday, 300); return () => clearTimeout(t); }, [checks, gymSets, customMeals, illegalMeals]);
     const saveMealEdit = (key, field, val) => {
         const up = { ...mealEdits, [key + "_" + field]: parseFloat(val) || 0 };
         setMealEdits(up);
@@ -8827,7 +8935,7 @@ function JeetOS() {
     const saveDay = () => {
         const today = new Date().toDateString();
         const time = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
-        const up = [...W.filter(x => x.date !== today), { ...L, date: today, savedAt: time, checks: { ...checks } }].slice(-60);
+        const up = [...W.filter(x => x.date !== today), withDerived({ ...L, date: today, savedAt: time, checks: { ...checks } }, dailyRecord(today))].slice(-60);
         const bGym = W.filter(d => d.checks && d.checks.ex_0).length;
         const bSleep = W.filter(d => (d.sleepHours || 0) >= 7).length;
         const bSupps = W.filter(d => d.checks && d.checks.sg_0_0).length;

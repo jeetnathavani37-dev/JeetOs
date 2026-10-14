@@ -299,3 +299,10 @@ create table if not exists public.jeetos_push_subs (
 );
 alter table public.jeetos_push_subs enable row level security;
 create policy "allow all for anon" on public.jeetos_push_subs for all to public using (true) with check (true);
+
+-- Daily record (build -69): ISO day for range queries, haircare flag.
+-- NULL now means "not logged" (the app sends null instead of form defaults / 0).
+alter table public.jeetos_logs add column if not exists day date;
+alter table public.jeetos_logs add column if not exists haircare_done boolean;
+update public.jeetos_logs set day = to_date(substr(date, 5), 'Mon DD YYYY') where day is null;
+create index if not exists jeetos_logs_day_idx on public.jeetos_logs (day);
