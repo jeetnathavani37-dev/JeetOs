@@ -212,6 +212,16 @@ module.exports = async function handler(req, res) {
     }
 
     const log = logs[0] || null;
+    // Gone quiet 3+ days → a no-blame check-in instead of the usual nudge (morning only).
+    if (slot === "morning" && !(req.query && req.query.coach)) {
+      const last = await supaJson("jeetos_logs?select=updated_at&order=updated_at.desc&limit=1");
+      const quietDays = last[0] && last[0].updated_at ? Math.floor((Date.now() - Date.parse(last[0].updated_at)) / 864e5) : null;
+      if (quietDays != null && quietDays >= 3) {
+        const result = await writeAndSend(quietDays >= 7 ? "mind" : "ronaldo", "morning",
+          `You're texting Jeet first. Nothing has been logged in the app for ${quietDays} days. Treat it as missing data, not failure — you don't know what happened. Warmly ask how things have been (exams? travel? low phase?), no blame, no list of what he missed, no lecture. One or two short lines, and make it easy to reply.`, shared);
+        return res.status(200).json(Object.assign({ quietDays }, result));
+      }
+    }
     // Streak rescue: only if something is actually at risk and he hasn't marked a minimum/recovery.
     if (slot === "streak") {
       const marks = await supaJson(`jeetos_streak_marks?date=eq.${today}&select=habit,kind`);
