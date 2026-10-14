@@ -43,6 +43,9 @@ function pickCoach(slot, log, commitments) {
   const now = istNow();
   const day = now.getUTCDate();
   const today = istIsoDate(now);
+  // A coach who promised to follow up today gets the slot first.
+  const own = commitments.find(c => c.owner === "coach" && c.due <= today && COACHES[c.coach]);
+  if (own && slot !== "night") return own.coach;
   if (slot === "morning") return day % 2 ? "skin" : "nutrition";
   if (slot === "afternoon") {
     const due = commitments.find(c => c.due <= today);
@@ -132,7 +135,10 @@ async function writeAndSend(coachId, slot, task, shared) {
     supaJson(`jeetos_coach_inbox?coach=eq.${coachId}&select=text,created_on&order=created_at.desc&limit=5`),
     supaJson(`jeetos_convo_summaries?coach=eq.${coachId}&select=summary,to_ts&order=to_ts.desc&limit=4`),
   ]);
-  const mine = commitments.filter(c => c.coach === coachId);
+  const his = commitments.filter(c => c.owner !== "coach");
+  const mine = his.filter(c => c.coach === coachId);
+  // Things this coach promised to do for him that are due now — the text must deliver them.
+  const ownDue = commitments.filter(c => c.owner === "coach" && c.coach === coachId && c.due <= today);
   const myGoals = goals.filter(g => g.coach === coachId);
   const myMoments = moments.filter(m => m.coach === coachId).slice(-8);
   const nick = [...myMoments].reverse().find(m => m.kind === "nickname");
@@ -145,7 +151,8 @@ Who he is (built up from all his chats): ${profileText(profile) || "still gettin
 What you two talked about before: ${past.map(x => `(${agoText(new Date(+x.to_ts + 330 * 60000).toISOString().slice(0, 10), today)}) ${x.summary}`).join(" | ") || "nothing older yet"}.
 Other notes: ${memory.length ? memory.map(m => m.fact).join("; ") : "none"}.
 Make the text fit what he wants and his routine — like someone who knows him.
-His open promises${mine.length ? " to you" : ""}: ${(mine.length ? mine : commitments).map(c => `"${c.text}" (check on ${c.due})`).join("; ") || "none"}.
+His open promises${mine.length ? " to you" : ""}: ${(mine.length ? mine : his).map(c => `"${c.text}" (check on ${c.due})`).join("; ") || "none"}.
+${ownDue.length ? `YOU PROMISED HIM, AND IT'S DUE NOW — this text must do it (check it, send it, review it; ask for the one number/photo you need): ${ownDue.map(c => `"${c.text}" (by ${c.due})`).join("; ")}.\n` : ""}
 Your goal${myGoals.length === 1 ? "" : "s"} with him: ${myGoals.map(g => goalText(g, today)).join("; ") || "none yet"}.
 ${nick ? `Your nickname for him: "${nick.text}" (use it if it fits).\n` : ""}Things that happened between you two: ${myMoments.map(m => `(${agoText(m.created_on, today)}) ${m.text}`).join("; ") || "nothing special yet"}.
 Your last few texts to him (don't repeat these): ${recent.map(r => r.text).join(" | ") || "none"}.`;
@@ -159,6 +166,10 @@ Your last few texts to him (don't repeat these): ${recent.map(r => r.text).join(
   }).catch(() => null);
   const inserted = ins && ins.ok ? await ins.json().catch(() => []) : [];
   if (!inserted.length) return { coach: coachId, skipped: "already sent for this slot today" };
+  // The coach kept their word — close those promises.
+  for (const c of ownDue) {
+    await supa(`jeetos_commitments?id=eq.${encodeURIComponent(c.id)}`, { method: "PATCH", body: JSON.stringify({ status: "done", resolved_at: new Date().toISOString() }) }).catch(() => null);
+  }
   return { coach: coachId, slot, text, telegram: await sendTelegram(coachId, text) };
 }
 
@@ -174,7 +185,7 @@ module.exports = async function handler(req, res) {
   const [logs, memory, commitments, goals, moments, profileRows] = await Promise.all([
     supaJson(`jeetos_logs?date=eq.${encodeURIComponent(istDateString())}&select=*`),
     supaJson("jeetos_team_memory?select=fact&order=created_at.asc&limit=60"),
-    supaJson("jeetos_commitments?status=eq.open&select=id,coach,text,due&order=due.asc&limit=20"),
+    supaJson("jeetos_commitments?status=eq.open&select=id,coach,text,due,owner&order=due.asc&limit=30"),
     supaJson("jeetos_coach_goals?status=eq.active&select=coach,text,unit,start_value,target,current_value,deadline,history&order=created_at.asc&limit=20"),
     supaJson("jeetos_coach_moments?select=coach,kind,text,created_on&order=created_at.asc&limit=120"),
     supaJson("jeetos_profile?id=eq.jeet&select=data"),

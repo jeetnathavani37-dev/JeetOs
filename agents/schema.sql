@@ -209,3 +209,6 @@ create table if not exists public.jeetos_photo_vault (
 );
 alter table public.jeetos_photo_vault enable row level security;
 create policy "allow all for anon" on public.jeetos_photo_vault for all to public using (true) with check (true);
+
+-- Who made the promise: 'jeet' (his commitment) or 'coach' (a follow-up the coach owes him).
+alter table public.jeetos_commitments add column if not exists owner text not null default 'jeet';
