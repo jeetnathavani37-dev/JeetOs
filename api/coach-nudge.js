@@ -131,9 +131,11 @@ async function sendTelegram(coachId, text) {
 // per slot per day) and forwards it to Telegram.
 async function writeAndSend(coachId, slot, task, shared) {
   const { today, memory, commitments, goals, moments, profile } = shared;
-  const [recent, past] = await Promise.all([
+  const since = new Date(Date.now() - 4 * 864e5).toISOString();
+  const [recent, past, notes] = await Promise.all([
     supaJson(`jeetos_coach_inbox?coach=eq.${coachId}&select=text,created_on&order=created_at.desc&limit=5`),
     supaJson(`jeetos_convo_summaries?coach=eq.${coachId}&select=summary,to_ts&order=to_ts.desc&limit=4`),
+    supaJson(`jeetos_coach_notes?to_coach=in.(${coachId},team)&from_coach=neq.${coachId}&created_at=gte.${encodeURIComponent(since)}&select=from_coach,text&order=created_at.desc&limit=4`),
   ]);
   const his = commitments.filter(c => c.owner !== "coach");
   const mine = his.filter(c => c.coach === coachId);
@@ -155,7 +157,7 @@ His open promises${mine.length ? " to you" : ""}: ${(mine.length ? mine : his).m
 ${ownDue.length ? `YOU PROMISED HIM, AND IT'S DUE NOW — this text must do it (check it, send it, review it; ask for the one number/photo you need): ${ownDue.map(c => `"${c.text}" (by ${c.due})`).join("; ")}.\n` : ""}
 Your goal${myGoals.length === 1 ? "" : "s"} with him: ${myGoals.map(g => goalText(g, today)).join("; ") || "none yet"}.
 ${nick ? `Your nickname for him: "${nick.text}" (use it if it fits).\n` : ""}Things that happened between you two: ${myMoments.map(m => `(${agoText(m.created_on, today)}) ${m.text}`).join("; ") || "nothing special yet"}.
-Your last few texts to him (don't repeat these): ${recent.map(r => r.text).join(" | ") || "none"}.`;
+${notes.length ? `Your teammates told you privately (act on it, you can mention them by name): ${notes.map(n => `${(COACHES[n.from_coach] && COACHES[n.from_coach].name) || n.from_coach}: ${n.text}`).join(" | ")}.\n` : ""}Your last few texts to him (don't repeat these): ${recent.map(r => r.text).join(" | ") || "none"}.`;
 
   const text = await callClaude(system, "Write the text now. Only the message itself.");
   // Save first; the unique (coach, slot, created_on) key makes cron retries no-ops.

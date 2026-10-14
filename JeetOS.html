@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-51";
+const APP_BUILD = "2026.10.14-52";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1043,6 +1043,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(commitmentsPrompt(coach.id));
     parts.push(goalsPrompt(coach.id));
     parts.push(bondPrompt(coach.id, CH[coach.id]));
+    parts.push(coachNotesPrompt(coach.id));
     const intake = intakePrompt(coach.id, CH[coach.id]);
     if (intake) parts.push(intake);
     parts.push(ctx);
@@ -1152,6 +1153,134 @@ HOW A RESPONSIBLE COACH ACTS:
 - Own your side too: if your plan didn't work, say "mera plan galat tha" and change it. Don't blame him for a bad plan.
 - Never mention the tags.`;
 }
+// ── COACHES TALK TO EACH OTHER (behind the scenes) ──────────────────────
+// A coach messages a teammate with <tell to="sleep">…</tell> in any reply, and
+// once a day the whole team holds a private huddle on his data. Notes reach
+// the other coach's prompt so the team acts as one. Synced to jeetos_coach_notes.
+const NOTES_KEY = "jos_coach_notes";
+const HUDDLE_KEY = "jos_huddle";
+const NOTE_TO = ["skin", "hair", "fitness", "nutrition", "sleep", "style", "grooming", "ronaldo", "mind", "team"];
+function loadNotes() { const l = store.get(NOTES_KEY); return Array.isArray(l) ? l : []; }
+function saveNotes(l) { store.set(NOTES_KEY, l.slice(-150)); }
+async function pushNote(n) {
+    if (!supabaseReady()) return;
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_coach_notes?on_conflict=id", { method: "POST", headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }),
+            body: JSON.stringify({ id: n.id, from_coach: n.from, to_coach: n.to, text: n.text, source: n.source, created_at: new Date(n.at).toISOString() }) });
+        if (r.ok) { const l = loadNotes(); const f = l.find(x => x.id === n.id); if (f) { f.synced = true; saveNotes(l); } }
+    } catch (_a) { }
+}
+async function syncNotes() {
+    if (!supabaseReady()) return loadNotes();
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_coach_notes?select=id,from_coach,to_coach,text,source,created_at&order=created_at.desc&limit=100", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        if (!r.ok || !Array.isArray(rows)) return loadNotes();
+        const remote = rows.reverse().map(x => ({ id: x.id, from: x.from_coach, to: x.to_coach, text: x.text, source: x.source, at: Date.parse(x.created_at) || Date.now(), synced: true }));
+        const have = new Set(remote.map(x => x.id));
+        const pending = loadNotes().filter(x => !x.synced && !have.has(x.id));
+        saveNotes(remote.concat(pending).sort((a, b) => a.at - b.at));
+        pending.forEach(pushNote);
+        return loadNotes();
+    } catch (_a) { return loadNotes(); }
+}
+function addNotes(list, source) {
+    const all = loadNotes(), added = [];
+    (list || []).forEach(n => {
+        const from = String(n.from || ""), to = String(n.to || "").toLowerCase(), text = String(n.text || "").trim().slice(0, 400);
+        if (!text || !NOTE_TO.includes(to) || from === to || !COACHES.some(c => c.id === from)) return;
+        if (all.some(x => x.from === from && x.to === to && x.text.toLowerCase() === text.toLowerCase())) return;
+        const note = { id: "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), from: from, to: to, text: text, source: source || "chat", at: Date.now(), synced: false };
+        all.push(note); added.push(note);
+    });
+    if (added.length) { saveNotes(all); added.forEach(pushNote); }
+    return added;
+}
+function applyTellTags(text, coachId) {
+    const notes = [];
+    const clean = String(text).replace(/<tell\s+to="([^"]+)"\s*>([\s\S]*?)<\/tell>/gi, (_, to, body) => { notes.push({ from: coachId, to: to.trim(), text: body }); return ""; })
+        .replace(/<\/?tell[^>]*>/gi, "").trim();
+    addNotes(notes, "chat");
+    return clean;
+}
+function coachNotesPrompt(coachId) {
+    const week = Date.now() - 7 * 864e5;
+    const all = loadNotes().filter(n => n.at >= week);
+    const toMe = all.filter(n => (n.to === coachId || n.to === "team") && n.from !== coachId).slice(-6);
+    const fromMe = all.filter(n => n.from === coachId).slice(-3);
+    const h = store.get(HUDDLE_KEY);
+    const ago = t => agoText(localIsoDate(new Date(t)));
+    return `YOUR TEAM, BEHIND THE SCENES (Jeet doesn't see these unless you mention them):
+${h && h.focus ? "- Today's team focus from the morning huddle: " + h.focus + "\n" : ""}${toMe.length ? "Teammates told you:\n" + toMe.map(n => "- " + personaName(n.from) + " (" + ago(n.at) + "): " + n.text).join("\n") : "- No notes from teammates right now."}${fromMe.length ? "\nYou told them recently:\n" + fromMe.map(n => "- to " + (n.to === "team" ? "the whole team" : personaName(n.to)) + ": " + n.text).join("\n") : ""}
+- Act on teammates' notes in your next real answer and bring them up like a real team would ("Sam bol raha tha tu 2 baje so raha hai — isliye…"). Don't dump them all at once.
+- When you notice something another coach must act on (his sleep is wrecking your progress, he sounded low, a food/skin link, a promise in their area), message them privately: <tell to="sleep">short note with the numbers and what you want them to do</tell> at the end of your reply. Coaches: skin, hair, fitness, nutrition, sleep, style, grooming, ronaldo, mind, or team for everyone. Only for things that matter — not every message.`;
+}
+// Once a day the whole team meets privately on his data and sends each other notes.
+async function runTeamHuddle(CH) {
+    const today = localIsoDate();
+    const h = store.get(HUDDLE_KEY);
+    if (h && h.date === today) return null;
+    const W = store.get("jos_history") || [], L = store.get("jos_log") || null;
+    const active = COACHES.filter(c => (CH[c.id] || []).some(m => m.ts && Date.now() - m.ts < 7 * 864e5));
+    if (W.length < 3 && !active.length) return null;
+    store.set(HUDDLE_KEY, { date: today, focus: h && h.focus, running: true });
+    const chats = active.map(c => personaName(c.id) + " (" + c.id + "):\n" + (CH[c.id] || []).filter(m => !m.error).slice(-4).map(m => (m.role === "user" ? "Jeet: " : "Coach: ") + String(m.content || "").replace(/\s+/g, " ").slice(0, 220)).join("\n")).join("\n\n");
+    const open = loadCommitments().filter(c => c.status === "open").map(c => "- " + (c.owner === "coach" ? personaName(c.coach) + " owes him: " : "Jeet promised " + personaName(c.coach) + ": ") + c.text + " (due " + c.due + ")").join("\n");
+    const sys = `You are running the PRIVATE morning huddle of Jeet's coaching team: Dr. Aria (skin), Kai (hair), Marcus (fitness), Maya (nutrition), Dr. Sam (sleep), Lex (style), Blade (grooming), Cristiano (ronaldo — discipline), Dr. Meher (mind). Jeet never sees this meeting.
+Look at his real situation, connect causes across fields (sleep → training → skin → mood…), and decide who must tell whom what, so the team works as one on his goals. Today is ${today}.
+
+${statusReport(null, W, L)}
+${patternsText(W)}
+${teamViewText(null)}
+${profilePrompt().split("How to use it:")[0]}
+OPEN PROMISES:
+${open || "- none"}
+RECENT CHATS (last 7 days):
+${chats || "- no chats this week"}
+NOTES ALREADY SENT THIS WEEK (don't repeat): ${loadNotes().filter(n => n.at > Date.now() - 7 * 864e5).map(n => n.from + "→" + n.to + ": " + n.text).join(" | ") || "none"}
+
+Reply with ONLY JSON (no markdown):
+{"focus":"one line: the team's #1 priority for Jeet today and why (with a number)","notes":[{"from":"fitness","to":"sleep","text":"internal message in that coach's own voice (Hinglish ok): the evidence with numbers + exactly what you want them to do in their next chat with him"}]}
+2-6 notes. Every note must lead to an action. Use coach ids exactly: skin, hair, fitness, nutrition, sleep, style, grooming, ronaldo, mind (to may also be "team").`;
+    try {
+        const raw = await ai(sys, [{ role: "user", content: "Run today's huddle." }], 1800, { tier: "smart", effort: "medium" });
+        const j = parseJsonLoose(raw);
+        if (!j || !Array.isArray(j.notes)) throw new Error("bad huddle");
+        const added = addNotes(j.notes, "huddle");
+        store.set(HUDDLE_KEY, { date: today, focus: String(j.focus || "").slice(0, 300), count: added.length });
+        return { focus: j.focus, notes: added };
+    } catch (_a) { store.set(HUDDLE_KEY, h || null); return null; }
+}
+function HuddleEntryCard({ T, onOpen }) {
+    const font = "Inter,system-ui,sans-serif";
+    const h = store.get(HUDDLE_KEY);
+    const n = loadNotes().filter(x => x.at > Date.now() - 864e5).length;
+    return React.createElement("div", { onClick: onOpen, style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 16px", marginBottom: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 12 } },
+        React.createElement("span", { style: { fontSize: 22 } }, "🤫"),
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+            React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontFamily: font, fontWeight: 600 } }, "Team huddle", n ? React.createElement("span", { style: { marginLeft: 6, fontSize: 11, color: T.gold } }, n + " new") : null),
+            React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, fontFamily: font, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, h && h.focus ? "Aaj ka focus: " + h.focus : "Coaches aapas mein kya baat kar rahe hain")),
+        React.createElement("span", { style: { fontSize: 14, color: T.ivoryD } }, "›"));
+}
+function HuddleSheet({ T, onClose }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [notes, setNotes] = React.useState(loadNotes());
+    React.useEffect(() => { syncNotes().then(setNotes); }, []);
+    const h = store.get(HUDDLE_KEY);
+    const list = notes.slice().reverse().slice(0, 60);
+    return React.createElement(ChatSheet, { T: T, title: "🤫 Team huddle", onClose: onClose },
+        React.createElement("div", { style: { fontFamily: font } },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, lineHeight: 1.5, marginBottom: 12 } }, "Coaches aapas mein chupke se jo baat karte hain — taaki poori team ek plan pe kaam kare. Har subah ek huddle hoti hai, aur chat ke beech bhi coaches ek dusre ko notes bhejte hain."),
+            h && h.focus && React.createElement("div", { style: { padding: 12, borderRadius: 14, background: "rgba(201,168,76,.08)", border: "1px solid rgba(201,168,76,.25)", marginBottom: 12 } },
+                React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: T.gold, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 4 } }, "Aaj ka team focus"),
+                React.createElement("div", { style: { fontSize: 13.5, color: T.ivory, lineHeight: 1.5 } }, h.focus)),
+            !list.length && React.createElement("div", { style: { fontSize: 13, color: T.ivoryD, textAlign: "center", padding: 20 } }, "Abhi koi note nahi. Coaches se baat karo — wo aapas mein discuss karna shuru kar denge."),
+            list.map(n => { const fc = COACHES.find(c => c.id === n.from) || {}; return React.createElement("div", { key: n.id, style: { display: "flex", gap: 10, padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,.06)" } },
+                React.createElement(CoachAvatar, { coachId: n.from, color: fc.color, size: 34 }),
+                React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+                    React.createElement("div", { style: { fontSize: 12, color: T.ivoryD, marginBottom: 3 } }, React.createElement("b", { style: { color: fc.color || T.ivory } }, personaName(n.from)), " → ", n.to === "team" ? "poori team" : personaName(n.to), " · ", n.source === "huddle" ? "huddle" : "chat", " · ", chatListTime(n.at)),
+                    React.createElement("div", { style: { fontSize: 13.5, color: T.ivory, lineHeight: 1.5 } }, n.text))); })));
+}
 // When a coach's own promise falls due, that coach texts him first — at most
 // two per app open, once per promise. Returns [{coach, text, ts}].
 async function runCoachFollowups(CH) {
@@ -1189,7 +1318,7 @@ function processCoachReply(raw, coachId) {
     const mem = extractTeamMemory(raw);
     addTeamMemoryFacts(mem.facts, coachId);
     const ho = extractHandoff(mem.clean || raw);
-    const gl = applyGoalTags(applyCommitTags(ho.clean || mem.clean || raw, coachId), coachId);
+    const gl = applyGoalTags(applyCommitTags(applyTellTags(ho.clean || mem.clean || raw, coachId), coachId), coachId);
     const clean = applyMomentTags(gl.clean, coachId) || String(raw).replace(/<[^>]+>/g, "").trim();
     let parts = clean.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
     if (parts.length > 3) parts = parts.slice(0, 2).concat([parts.slice(2).join("\n\n")]);
@@ -7209,6 +7338,7 @@ function FormCard({ sc, items, T }) {
 function JeetOS() {
     const [screen, setScreen] = React.useState("home");
     const [unread, setUnread] = React.useState(store.get("jos_unread") || {});
+    const [huddleOpen, setHuddleOpen] = React.useState(false);
     const [tab, setTab] = React.useState("today");
     React.useEffect(() => {
         if (tab === "today") {
@@ -7316,6 +7446,8 @@ function JeetOS() {
         });
         syncGoals();
         syncMoments();
+        // The team's private morning huddle (once a day).
+        syncNotes().then(() => setTimeout(() => runTeamHuddle(keptCH), 4000));
         // Long-term memory: pull the profile/summaries, then learn from anything new.
         Promise.all([syncProfile(), syncSummaries()]).then(() => runMemoryPass(keptCH));
         syncAssessments();
@@ -8585,6 +8717,8 @@ function JeetOS() {
         tab === "coaches" && (React.createElement("div", { style: { paddingBottom: 80, animation: "josFadeIn .28s ease" } },
             React.createElement("div", { style: { padding: "12px 20px" } },
                 React.createElement(GroupEntryCard, { T: T, CH: CH, onOpen: () => setScreen("group") }),
+                React.createElement(HuddleEntryCard, { T: T, onOpen: () => setHuddleOpen(true) }),
+                huddleOpen && React.createElement(HuddleSheet, { T: T, onClose: () => setHuddleOpen(false) }),
                 React.createElement(CheckinEntryCard, { T: T, onOpen: () => setScreen("checkin") }),
                 React.createElement(CoachChatList, { T: T, CH: CH, unread: unread, onOpen: (cid) => { setActiveCoach(cid); setScreen("coach"); } }),
                 React.createElement(TeamMemoryCard, { T: T }),

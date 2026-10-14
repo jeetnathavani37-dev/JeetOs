@@ -212,3 +212,15 @@ create policy "allow all for anon" on public.jeetos_photo_vault for all to publi
 
 -- Who made the promise: 'jeet' (his commitment) or 'coach' (a follow-up the coach owes him).
 alter table public.jeetos_commitments add column if not exists owner text not null default 'jeet';
+
+-- Coaches messaging each other behind the scenes (<tell> tags + daily huddle).
+create table if not exists public.jeetos_coach_notes (
+  id text primary key,
+  from_coach text not null,
+  to_coach text not null,
+  text text not null,
+  source text not null default 'chat',
+  created_at timestamptz not null default now()
+);
+alter table public.jeetos_coach_notes enable row level security;
+create policy "allow all for anon" on public.jeetos_coach_notes for all to public using (true) with check (true);
