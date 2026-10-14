@@ -211,12 +211,25 @@ module.exports = async function handler(req, res) {
     }
 
     const log = logs[0] || null;
-    const coachId = (req.query && COACHES[req.query.coach] && req.query.coach) || pickCoach(slot, log, commitments);
+    let coachId = (req.query && COACHES[req.query.coach] && req.query.coach) || pickCoach(slot, log, commitments);
+    // Repeated misses with one coach → that coach does a bottleneck check instead of another reminder.
+    let missNote = "";
+    if (!(req.query && req.query.coach) && (slot === "afternoon" || slot === "evening")) {
+      const weekAgo = istIsoDate(new Date(istNow().getTime() - 7 * 864e5));
+      const missed = await supaJson(`jeetos_commitments?status=eq.missed&owner=neq.coach&due=gte.${weekAgo}&select=coach,text,blocker`);
+      const by = {};
+      missed.forEach(m => { if (COACHES[m.coach]) (by[m.coach] = by[m.coach] || []).push(m); });
+      const top = Object.keys(by).sort((a, b) => by[b].length - by[a].length)[0];
+      if (top && by[top].length >= 2) {
+        coachId = top;
+        missNote = `\nHe has missed ${by[top].length} promises with you this week: ${by[top].map(m => `"${m.text}"${m.blocker ? ` (blocker: ${m.blocker})` : ""}`).join("; ")}. Don't send another reminder or pep talk. Without judgement, ask what's REALLY getting in the way, and offer one smaller or different strategy — thank him for being honest if he tells you.`;
+      }
+    }
     const result = await writeAndSend(coachId, slot,
       `You're texting Jeet on WhatsApp first, unprompted — like a real coach who thought of him. ${SLOT_MOMENT[slot]}
 Write ONE short text (1-2 lines). Reference one specific thing below if it fits naturally (today's log, a promise, your goal with him, something from your history); otherwise just check in about your area. End with something he'd want to reply to.
 
-Today in his log: ${log ? logLine(log) : "nothing logged in the app yet today"}.`, shared);
+Today in his log: ${log ? logLine(log) : "nothing logged in the app yet today"}.${missNote}`, shared);
     return res.status(200).json(result);
   } catch (e) {
     return res.status(502).json({ error: e.message });
