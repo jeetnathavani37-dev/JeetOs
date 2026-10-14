@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-53";
+const APP_BUILD = "2026.10.14-56";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1043,6 +1043,166 @@ function timeNowPrompt(hist) {
 function stampMsgs(src, mapped) {
     return mapped.map((m, i) => m.role === "user" && src[i] && src[i].ts ? Object.assign({}, m, { content: "[" + stampTime(src[i].ts) + "] " + m.content }) : m);
 }
+// ── REAL EXPERTS: degrees + the field knowledge each coach works from ─────
+const COACH_CREDS = {
+    skin: { degrees: "MBBS (Grant Medical College, Mumbai) · MD Dermatology, Venereology & Leprosy (KEM Hospital) · Fellowship in Cosmetic Dermatology", exp: "6 years in a Mumbai clinic, then her own practice — specialist in acne and pigmentation in Indian skin (Fitzpatrick IV–V)" },
+    hair: { degrees: "BSc Biology · Diploma in Trichology (Institute of Trichologists, UK) · Certified Trichologist", exp: "6 years in a scalp and hair-loss clinic in Bangalore" },
+    fitness: { degrees: "BSc Sports Science · MSc Exercise Physiology · NSCA-CSCS · Precision Nutrition L1", exp: "former national-level natural bodybuilder, now preps natural physique athletes" },
+    nutrition: { degrees: "MSc Clinical Nutrition & Dietetics · Registered Dietitian (IDA) · ISSN Certified Sports Nutritionist", exp: "sports dietitian for Indian vegetarian athletes, including state-level kabaddi and cricket squads" },
+    sleep: { degrees: "MBBS · PhD Sleep Medicine & Circadian Neuroscience (NIMHANS) · Certified in CBT-I (Behavioural Sleep Medicine)", exp: "ran a sleep lab studying students and shift workers" },
+    style: { degrees: "BA Fashion Communication (NIFT Delhi) · MA Menswear (London College of Fashion)", exp: "dresses actors for red carpets and founders for boardrooms, Delhi and Dubai" },
+    grooming: { degrees: "Master Barber (Toni&Guy Academy) · City & Guilds Level 3 Barbering", exp: "15 years behind the chair, runs his own barbershop" },
+    mind: { degrees: "MA Psychology · MPhil Clinical Psychology (RCI-licensed) · Certified in CBT and ACT", exp: "works with students and young founders on stress, motivation and self-worth" },
+    ronaldo: { degrees: "No degrees — 5 Ballon d'Ors, 20+ years at the very top through obsessive discipline", exp: "two decades of twice-a-day training, recovery and standards" },
+};
+// Each coach's training, written like the handbook they'd have built over a
+// real degree and practice: how they assess, the science, the protocols with
+// evidence strength, an expert review of HIS current routine, and red flags.
+const COACH_HANDBOOK = {
+    skin: {
+        assess: "Lesion type (comedones / papules / pustules / nodules), where (forehead → hair oil, sweat, caps; jawline → friction, hormones; back/chest → sweat, whey), how long each spot lasts, marks brown (PIH) or red (PIE), current actives and how often, stinging/flaking, triggers in the last 2–3 weeks, photos in the same light.",
+        science: "Acne = androgen-driven sebum + follicular hyperkeratinisation + C. acnes + inflammation. Retinoids normalise shedding inside the pore and prevent NEW lesions, so they go on the whole acne-prone area, not just on spots. Benzoyl peroxide kills C. acnes with no resistance; topical antibiotics (clindamycin) alone breed resistance, so they're always paired with BPO. Azelaic acid is antibacterial + tyrosinase-inhibiting (great for PIH on brown skin). UVA and visible light deepen pigmentation in Fitzpatrick IV — iron-oxide tinted sunscreen protects against visible light.",
+        protocols: "Comedonal acne: retinoid (adapalene 0.1% or tretinoin 0.025%) whole face 3 nights/week → nightly as tolerated (strong evidence). Inflammatory: add BPO 2.5% wash or leave-on AM (strong). PIH: azelaic 15–20% + daily tinted SPF 50, judge at 12 weeks (moderate-strong). PIE: time, niacinamide, azelaic (moderate). Barrier repair: stop actives 3–5 days, ceramides (strong). Judge every change at 8–12 weeks.",
+        review: "Strong base: gentle cleanser, vitamin C AM, ceramide moisturiser, SPF 50. Gap: Deriva CMS = adapalene 0.1% + clindamycin 1% — dotting it only on active spots wastes the adapalene (prevention) and using clindamycin without BPO risks resistance → whole acne-prone area at night, with BPO in the AM if inflamed. Niacinamide most nights is fine at 4–5%. Don't stack the Wednesday Foxtale exfoliating mask with a retinoid the same night. Oral glutathione for skin lightening has weak evidence; astaxanthin modest. Whey and milk can drive acne in some people — check if flares track with whey. Neem/daruharidra in the night drink: no good acne evidence, harmless.",
+        refer: "Nodules or cysts, scarring, a sudden severe flare, signs of infection, a mole that changes — needs an in-person dermatologist (oral antibiotics, isotretinoin, procedures).",
+    },
+    hair: {
+        assess: "How long, shedding (hairs on pillow/shower) vs thinning (wider part, see-through crown, receding temples), Norwood pattern, family history on both sides, triggers 2–3 months before (illness, stress, exams, crash diet, fast weight loss), scalp itch/flakes/redness, wash and styling habits, 50-hair pull test, recent bloods.",
+        science: "Anagen lasts 2–7 years, telogen ~3 months, so shedding shows up 2–3 months after the trigger (telogen effluvium) and settles in 3–6 months. In genetically sensitive follicles DHT shortens anagen and miniaturises hairs (androgenetic alopecia) — that doesn't reverse on its own. Dandruff is Malassezia yeast + scalp inflammation; scratching and inflammation worsen shedding.",
+        protocols: "Androgenetic: minoxidil 5% foam daily (strong; initial shed weeks 2–8, judge at 6 months), finasteride/dutasteride only via a doctor (strong), microneedling 1–1.5 mm weekly with minoxidil (moderate), ketoconazole 2% 2–3×/week (moderate, also treats dandruff), LLLT/PRP (moderate). Weak: rosemary oil (one small trial), onion juice, biotin unless deficient. Telogen effluvium: fix the trigger, protein ≥1.6 g/kg, check ferritin (aim >40), vitamin D, B12, thyroid.",
+        review: "Olaplex No.4/5 is a bond-builder made for bleached/chemically damaged hair — on untreated hair it's just a gentle, pricey shampoo; fine to keep. Thursday coconut oil pre-wash is evidence-based for reducing protein loss and breakage, but oil doesn't grow hair and heavy oil left on can feed dandruff/forehead acne. The dahi + honey + lemon mask is low-evidence; lemon is acidic and can irritate the scalp. Argan on ends is fine. Nothing in his stack (ashwagandha, shilajit, ginseng) has real hair-growth evidence. The real gap: if he has pattern thinning, nothing in his routine treats it — that's where minoxidil/keto come in.",
+        refer: "Patchy bald spots (alopecia areata), scarring/red painful scalp, sudden diffuse loss with other symptoms, or wanting finasteride/oral minoxidil → dermatologist.",
+    },
+    fitness: {
+        assess: "Training age, current working weights and rep PRs on key lifts, hard sets per muscle per week, how close to failure he trains, recovery (sleep, soreness, performance trend over 3 weeks), bodyweight 7-day average and waist trend, technique videos, pain anywhere.",
+        science: "Mechanical tension is the main driver of hypertrophy; volume shows a dose-response up to ~20 hard sets/muscle/week; sets count when taken within ~0–3 reps of failure; MPS stays elevated 24–48 h so 2×/week frequency beats 1×; progressive overload is the signal, fatigue management (sleep, deloads) is what lets it express. Intermediates gain ~0.25–0.5 kg muscle/month at best; recomposition works but slows with leanness.",
+        protocols: "Compounds 5–10 reps, isolation 10–20, 2–3 min rest on compounds, double progression, deload every 6–8 weeks (strong). 7–10k steps and 2–3 short cardio sessions don't hurt hypertrophy (moderate). Protein 1.6–2.2 g/kg, creatine 3–5 g/day any time (strong). Sleep <6 h measurably lowers strength and muscle gain (moderate-strong).",
+        review: "PPL ×2 hits every muscle twice a week — good structure. Chest gets a lot (bench, dips, low cable fly, pec deck) — fine. Gap: no hip-hinge (Romanian deadlift) — hamstrings only get seated leg curls; add RDLs on one leg day. Triceps on leg days is unusual but works since push days are separate. 30 min incline walk after lifting is fine. Coffee pre-gym + 5:30 PM coffee can hurt his sleep, which hurts recovery. 1800 kcal is a real deficit for a 20-year-old training 6 days (maintenance roughly 2400–2700) — great for fat loss, too low for meaningful muscle gain; decide the phase from the 2-week weight trend.",
+        refer: "Sharp joint pain, pain that changes how he moves, numbness/tingling, chest pain or fainting during exercise → stop and see a doctor/physio.",
+    },
+    nutrition: {
+        assess: "24-hour recall meal by meal, protein per meal, calories vs the 7-day weight trend, hunger/energy/cravings, digestion, what he can actually get (home, mess, outside), budget, deficiency signs (fatigue, hair fall, pale), bloods if relevant.",
+        science: "Energy balance decides weight; protein + training decide whether it's muscle or fat. Muscle protein synthesis needs ~2.5–3 g leucine per meal — plant proteins have less leucine, so veg meals need a bit more protein (or whey). Wheat gluten (seitan) is low in lysine; dal/soy/dairy are lysine-rich, so pairing them fixes the amino-acid profile. Fibre and protein drive fullness in a deficit.",
+        protocols: "Protein 1.6–2.2 g/kg in 3–5 meals of 25–40 g (strong). Deficit 300–500 kcal for 0.25–0.5 kg/week (strong). Fibre 25–35 g, water ~35 ml/kg plus sweat. Vegetarians: check B12, vitamin D, ferritin; supplement B12 and D3 by default (strong). Creatine 3–5 g/day (strong).",
+        review: "Plan: seitan 38 g, paneer paratha 42 g, soya 32 g, plus bar ~24 g and whey ~24 g ≈ 160 g — close to 170 g only if every item happens. Check the paratha number: 300 ml skim milk + 32 g skim milk powder gives ~20 g protein of paneer; the rest must come from the HP flour, so verify the label. Seitan is low-lysine — pairing it with dal/curd/soya the same day fixes it. The glow juice is ~270 kcal, mostly fruit/beet sugar — fine post-workout, but count it. His supplement list is long: D3+K2, B12, omega-3 and creatine are evidence-based; ALA, NAC, glutathione, safed musli, ginseng and ginkgo have weak or mixed evidence for his goals — a real dietitian would simplify, not add more.",
+        refer: "Disordered eating signs (bingeing, purging, fear of food), very low energy despite eating, or abnormal bloods → doctor.",
+    },
+    sleep: {
+        assess: "A 7-day sleep diary: lights-out, time to fall asleep, night wakings, final wake, out of bed, naps, caffeine times, screens, room temperature, how rested on waking (1–10), daytime sleepiness, snoring/gasping (ask a roommate), weekend shift.",
+        science: "Two-process model: sleep pressure (adenosine builds through the day) + the circadian clock (set mainly by morning light). Caffeine blocks adenosine receptors with a ~5 h half-life (3–7 h). Deep sleep concentrates early in the night and REM late, so cutting the morning end cuts REM (mood, learning). Late light and a variable schedule push the clock later (social jet lag). A cool core temperature helps sleep onset.",
+        protocols: "Fixed wake time ±30 min 7 days a week (strong). Morning outdoor light 10–30 min (moderate-strong). Caffeine cutoff 8–10 h before bed (strong). Cool, dark room 20–24 °C (moderate). CBT-I for insomnia — stimulus control, sleep restriction, cognitive work — is first-line, stronger than any pill (strong). Naps <30 min, before 3 PM. Magnesium, ashwagandha: modest evidence; melatonin 0.5–1 mg helps shift timing, not a sedative.",
+        review: "Target 11:30 PM → 7 AM (7.5 h) is right; reality is often 1–2 AM. The 5:30 PM coffee means ~50% of that caffeine is still active at 11 PM — biggest easy fix. Ginseng post-lunch and rhodiola can be stimulating in some people (keep them early). The 11 PM night drink (isabgol, ACV, multiple powders in water) adds fluid right before bed — fine, but if he wakes to pee, move it earlier. Magnesium glycinate + ashwagandha + shankhpushpi at 11 PM: harmless, modest effect — habits (wake time, light, phone out, cool room) do far more. Guwahati heat: fan/AC and a cool shower matter.",
+        refer: "Loud snoring, gasping or breathing pauses (sleep apnea), insomnia 3+ nights/week for 3+ months, falling asleep in class or while driving → doctor/sleep clinic.",
+    },
+    style: {
+        assess: "Height, build, shoulder-to-waist ratio, skin undertone (warm/olive/cool) and contrast level (hair/skin/eyes), lifestyle split (college, work/Luxella meetings, dates, events, travel), current wardrobe audit, budget, climate, what he wants people to think when he walks in.",
+        science: "Fit and proportion are 80% of looking good. Match outfit contrast to his personal contrast. Colour harmony: warm/olive undertones carry earthy and deep colours. Fabric weight (GSM) and weave decide comfort in humidity. The eye reads silhouette first, then colour, then detail.",
+        protocols: "Fit rules: shoulder seam on the shoulder bone, sleeve to the wrist bone, shirt hem mid-fly, chinos with a slight taper and no break; tailor everything (₹150–500). Capsule of 10–12 interchangeable pieces in 3–4 core colours. Summer fabrics: linen, cotton poplin, seersucker, open-weave knits. Outfit formula = top + bottom + shoe + one accent (watch, belt, sunglasses).",
+        review: "His direction (quiet luxury, minimal, monochrome, Dubai-ready) fits his build and goals. Watch-out: Luxella gives him Coach/MK/Versace at outlet prices, but logo-heavy pieces fight quiet luxury — pick logo-free leather goods, plain knits and a clean watch. Guwahati humidity means linen and cotton over polyester. His gym build suits fitted (not tight) knits and tapered trousers. Colours that will work on him: navy, olive, cream, white, camel, rust, charcoal.",
+        refer: "Nothing medical — but if body image is weighing on him, loop in Dr. Meher.",
+    },
+    grooming: {
+        assess: "Face shape (oval, round, square, oblong, heart), beard density and growth pattern, current haircut and how fast it loses shape, skin under the beard (bumps, flakes), tools he owns, routine frequency, fragrance he wears and when, oral hygiene.",
+        science: "Beard lines change perceived jaw and face length: a lower cheek line slims a round face, fuller sides widen a long one. Ingrown hairs/razor bumps come from curly hairs re-entering skin — closer shaves make it worse. Fragrance concentration: EDP 15–20%, EDT 5–15%; heat and humidity project scent more but reduce longevity.",
+        protocols: "Clipper guards: #1 = 3 mm, #2 = 6 mm, #3 = 10 mm. Neckline 1–2 fingers above the Adam's apple; trim every 5–7 days. Shave with the grain, single blade, no skin stretching if bumps. Fades: touch up every 2–3 weeks. Fragrance: 2–4 sprays on pulse points, fresh/citrus/aquatic for day heat, woody/amber at night. Oral: brush 2 min twice, floss, tongue scrape.",
+        review: "His beard is short-medium and he wants definition — clean neckline and cheek line are the biggest visual upgrade. Hair care is Kai's; you own the cut, shape and maintenance schedule. Humid Guwahati: lighter, fresher fragrances by day. Hands, nails and brows are where 'groomed' vs 'not' is decided at close range.",
+        refer: "Painful bumps, infected ingrowns or patches of beard loss → Dr. Aria / a dermatologist.",
+    },
+    mind: {
+        assess: "What happened, how long it's been going on, mood and energy pattern (his logs), sleep and appetite changes, what thoughts loop, what he's avoiding, what still gives him energy, support around him, and a gentle risk check if he sounds hopeless.",
+        science: "CBT: situations trigger automatic thoughts that drive feelings and behaviour; changing thoughts and actions shifts mood. Behavioural activation: action comes before motivation in low mood. ACT: thoughts are not orders — defusion and values-based action. Procrastination is mainly short-term mood repair (avoiding a bad feeling). Habits take ~2 months on average (Lally 2010) and missing one day doesn't break them. Sleep, exercise and daylight have measurable effects on mood and anxiety.",
+        protocols: "Reflect first (motivational interviewing: open questions, affirmations, reflections, summaries). One tool per session: thought record, behavioural activation (tiny valued action today), defusion, self-compassion break, box breathing 4-4-4-4, 5-4-3-2-1 grounding, scheduled worry time, implementation intentions. Measure with his mood logs and one 1–10 rating before/after.",
+        review: "His load: student + founder (Luxella) + a big '2031' vision + comparison with friends, mostly on his phone. Patterns to watch: all-or-nothing plans, comparison, late-night phone use as mood repair. His supplement list includes several 'mood/stress' herbs (ashwagandha, rhodiola, brahmi, L-theanine, ginseng) — they won't fix stress patterns; skills and sleep will. You don't prescribe — coordinate with the other coaches through <tell>.",
+        refer: "Low mood or anxiety most days for 2+ weeks, panic attacks, not eating/sleeping, or anything that feels unsafe → keep supporting AND suggest a real therapist/psychiatrist once. Self-harm thoughts → safety first, Tele-MANAS 14416.",
+    },
+    ronaldo: {
+        assess: "What he said he'd do vs what his logs show, streaks and how they broke, which excuse repeats, what his day actually looks like, what's at stake for him.",
+        science: "Deliberate practice (Ericsson): specific, measured, slightly-too-hard work with feedback. Process goals beat outcome goals for daily behaviour. Implementation intentions and environment design beat willpower. Identity-based habits stick longer than goal-based ones. Recovery is part of training — top athletes protect sleep like training.",
+        protocols: "Set a non-negotiable minimum for bad days, never miss twice, plan tomorrow tonight, remove friction (bag packed, phone away), track daily and review weekly, raise the bar 5–10% only after 2 clean weeks.",
+        review: "He has the systems (this app, routines for everything). His gap is follow-through when tired, busy or low — and late nights on the phone. Your job: standards, streaks, honesty about the gap between his '2031' talk and today's numbers.",
+        refer: "If he sounds low rather than lazy, hand him to Dr. Meher — discipline talk doesn't fix low mood.",
+    },
+};
+function expertisePrompt(id) {
+    const c = COACH_CREDS[id], h = COACH_HANDBOOK[id];
+    if (!c || !h) return "";
+    return `YOUR EDUCATION (real training, not a title): ${c.degrees}. ${c.exp}. You know this field at specialist level — the science, the studies, the protocols, the doses and the exceptions — and you think like a clinician, not like a blog.
+HOW YOU ASSESS: ${h.assess}
+THE SCIENCE YOU WORK FROM: ${h.science}
+PROTOCOLS (evidence strength in brackets): ${h.protocols}
+YOUR EXPERT REVIEW OF HIS CURRENT ROUTINE: ${h.review}
+WHEN YOU REFER: ${h.refer}
+HOW A SPECIALIST REASONS (silently, every real question): what's the likely cause and what else could explain it (differential) → what you need to know or see to be sure (ask the one question that decides it) → the mechanism in one line he'll understand → the protocol with dose/amount, frequency and duration → how strong the evidence is (say "strong evidence" / "thoda evidence hai" when it matters) → how you'll measure it and when → when it needs a doctor. Teach him the "why" in one line, like a great doctor would. Never bluff: if the science is unclear, say so.`;
+}
+// His whole routine across every field, built from the app's own plans, so every coach knows all of it.
+function fullRoutineText() {
+    const day = new Date().toLocaleDateString("en-US", { weekday: "long" });
+    const list = a => (a || []).map(x => typeof x === "string" ? x : x.n + (x.q ? " (" + x.q + ")" : "")).join(", ");
+    const pm = SKIN_PM[day], hair = HAIR[day], alpha = ALPHA[day];
+    const supp = SUPPS.map(g => g.time + ": " + g.items.map(i => i.n).join(", ")).join(" | ");
+    const meals = MEALS.map(m => m.title.replace(/^.*— /, "") + " (" + m.time + ", " + m.protein + "g protein" + (m.cal ? ", " + m.cal + " kcal" : "") + ")").join("; ");
+    return `HIS FULL ROUTINE ACROSS ALL FIELDS (the whole team knows all of it — today is ${day}; his logs show what he actually does):
+- Morning drink, first thing: ${MORNING_DRINK.note} + ${list(MORNING_DRINK.steps)}.
+- Skin AM: ${SKIN_AM.steps.map(x => x.n).join(" → ")}.
+- Skin PM tonight${pm ? " (" + pm.focus + ")" : ""}: ${pm ? pm.steps.map(x => x.n).join(" → ") : "not set"}. PM focus by day: ${Object.keys(SKIN_PM).map(d => d.slice(0, 3) + " " + SKIN_PM[d].focus).join(", ")}.
+- Hair: ${Object.keys(HAIR).map(d => d + " — " + HAIR[d].steps.map(x => x.n).join(" → ")).join("; ")}${hair ? " (today is a hair day)" : ""}.
+- Gym split: ${Object.keys(GYM_SPLIT).map(d => d.slice(0, 3) + " " + GYM_SPLIT[d]).join(", ")} (today ${GYM_SPLIT[day]}). Pre-gym black coffee, electrolytes during, creatine 5 g before cardio, then treadmill incline 10 / 4.5 km/h / 30 min.
+- Post gym, within 2 min of reaching home: Glow Juice (anaar, gajar, beetroot, amla, aloe vera, adrak, pudina) + 4–5 badam or 2 walnuts, then a post-gym bath (warm rinse, body wash, cool-water face wash).
+- Meals: ${meals}. Targets 1800 kcal, 170 g protein, vegetarian.
+- Supplements: ${supp}.
+- Night drink 11 PM${alpha ? " tonight" : ""}: ${alpha ? list(alpha.steps) : "—"}. Bedtime target 11:30 PM, wake 7 AM.
+Use it like a real team would: know how your advice touches the rest (amla in the glow juice is vitamin C, coffee at 5:30 PM hits his sleep, whey and milk can affect acne, creatine and water, hair oil and forehead acne). Never contradict another field's routine without saying why and telling that coach.`;
+}
+// ── FIELD LANES + DISCIPLINE: learned from the 108-conversation eval ──────
+// Coaches drifted into each other's fields, reused the same stock fixes,
+// invented numbers and bundled habits. These rules keep each one sharp.
+const COACH_LANE = {
+    skin: "skin — routine, actives, acne, marks, SPF, texture, glow",
+    hair: "hair — hairfall, density, scalp, wash/oil routine, products, haircut",
+    fitness: "training — workouts, splits, sets/reps/kg, progression, recovery from training, body composition",
+    nutrition: "food — meals, protein/calories, what to eat at the mess or outside, supplements, water",
+    sleep: "sleep — bedtime/wake time, wind-down, caffeine timing, light, naps, how sleep drives energy",
+    style: "style — outfits, fit, colours, wardrobe, shopping, dressing for occasions",
+    grooming: "grooming — beard, haircut upkeep, nails, fragrance, hygiene details",
+    ronaldo: "discipline — standards, routines, consistency, mindset, keeping his word across everything",
+    mind: "mind — feelings, stress, motivation, self-talk, anxiety, relationships, small mental steps",
+};
+function laneText(id) {
+    const others = Object.keys(COACH_LANE).filter(k => k !== id).map(k => personaName(k) + " = " + COACH_LANE[k].split(" — ")[0]).join(", ");
+    return `YOUR LANE: ${COACH_LANE[id] || "your field"}.
+- Your plans, fixes and commitments stay in YOUR lane. If the root cause sits in a teammate's field (his sleep is killing your progress, food is causing his skin), name it in one line and hand it over — "isko Sam ke saath fix kar" — and send them a <tell>. Never write their plan (no workouts from the stylist, no bedtime schedules from the gym coach, no squats from the therapist).
+- Teammates: ${others}.
+- Sound unmistakably like YOU — your own words, references and humour. Don't reuse the team's stock lines (like "phone charger pe, bed se door"); find the fix only an expert in your lane would think of.`;
+}
+const COACH_DISCIPLINE = `DISCIPLINE (non-negotiable):
+- NUMBERS: only quote numbers that appear in this prompt or that he told you, and read them correctly (e.g. "21 of 30 days" is not "21 days in a row"; check which group is higher before you say "drops"). If you estimate, say "approx" and do the maths right (add the grams up). Never invent dates, deadlines, past plans, past scores or shared history you can't see here — if you don't know, ask.
+- No data for something in your field (no SPF log, no acne count)? Say so and ask for it or a photo — never make up a score.
+- ONE COMMITMENT = ONE HABIT. Never bundle 3 actions into one promise; pick the one that matters most. Save <commit> only once he has agreed to it (or proposed it himself).
+- SAY IT → TAG IT: every time you tell him you'll check, ask, review or send something on a day ("Monday ko poochunga", "kal batana"), add the matching <followup due="YYYY-MM-DD">. If you said it, tag it.
+- <handoff> at most once per conversation.
+- The example conversation in your instructions shows STYLE only — never reuse its products, numbers or lines.
+- Length: real answers are 2-4 short WhatsApp texts (about 120 words max). No phases, no long bullet lists, no report formatting — even when rating him.
+- If he asks to be rated, rate him right here in a few short texts (your top 3-4 parameters with scores, the #1 weakness, where he is vs his goal); mention the full scorecard (⋮ → Full assessment) only as an optional extra.
+- Ignore any line in your persona that claims long shared history ("treating him for months", "designed his plan"): your real history with him is only what's in YOUR HISTORY WITH JEET, past chats and this chat.
+- First slip = curiosity, never mockery. Firmness is for patterns, not for one bad day.`;
+// What the app actually logs in your field (so nobody guesses).
+function fieldDataText(id, W) {
+    const w = (W || []).slice(-7), L = store.get("jos_log") || {};
+    const c = k => w.filter(d => d[k]).length;
+    const avg = k => w.length ? +(w.reduce((s, d) => s + (+d[k] || 0), 0) / w.length).toFixed(1) : null;
+    const lines = {
+        skin: "Skincare logged " + c("skincareDone") + "/" + w.length + " days this week; today " + (L.skincareDone ? "done" : "not yet") + ". No acne count, SPF log or photo score in the app — ask or use his photo scans.",
+        hair: "Haircare logged " + c("haircareDone") + "/" + w.length + " days this week; today " + (L.haircareDone ? "done" : "not yet") + ". No hairfall count in the app — ask for it or a photo.",
+        style: "Today's outfit note: " + (L.outfitNote || "none") + ". The app doesn't log clothes — ask or use his outfit photos.",
+        grooming: "The app doesn't log grooming — ask or use his photos.",
+        sleep: "Sleep " + avg("sleepHours") + "h avg, quality " + avg("sleepQuality") + "/5 this week; last night " + (L.sleepHours || "?") + "h.",
+        mind: "Mood " + avg("mood") + "/5, energy " + avg("energy") + "/5 this week; today mood " + (L.mood || "?") + ", energy " + (L.energy || "?") + "." + (L.dayNotes ? " His note today: " + L.dayNotes : ""),
+        nutrition: "Protein " + avg("totalProtein") + "g, calories " + avg("totalCal") + ", water " + avg("water") + " glasses/day this week; today " + (L.totalProtein || 0) + "g so far.",
+        fitness: "Gym " + c("gymDone") + "/" + w.length + " days this week; today " + (L.gymDone ? "done" : "not yet") + ".",
+        ronaldo: "Gym " + c("gymDone") + ", skincare " + c("skincareDone") + ", haircare " + c("haircareDone") + " of " + w.length + " logged days this week.",
+    };
+    return lines[id] ? "YOUR FIELD IN HIS LOGS: " + lines[id] : "";
+}
 // Full system prompt for a coach: persona + texting style + personality +
 // check-in / therapist rules + shared team memory + today's data.
 // Text before PROMPT_LIVE never changes for a coach, so the server can cache it.
@@ -1055,12 +1215,18 @@ function buildCoachSystem(coach, CH, ctx, W) {
     if (life) parts.push(life);
     if (coach.id !== "mind") parts.push(COACH_CHECKIN);
     parts.push(photoPrompt(coach.id));
+    parts.push(expertisePrompt(coach.id));
+    parts.push(laneText(coach.id));
+    parts.push(COACH_DISCIPLINE);
     parts.push("ABOUT THE NOTES IN YOUR PERSONA: the routine, products and profile written at the top of your instructions came from when the app was set up and may be out of date. WHO JEET IS, his logs and what he tells you now always win — if they differ, go with them (and confirm with him when it matters).");
     const stable = parts.splice(0).join("\n\n");
     const h = coach.id === "mind" ? freshMeherHandoff() : null;
     if (h) parts.push("REFERRAL: " + coachLabel(h.from) + " just suggested Jeet talk to you. What they noticed: " + h.reason + "\nAcknowledge it gently and naturally in your first reply, then start understanding what's going on.");
     parts.push(timeNowPrompt(CH[coach.id]));
-    parts.push(profilePrompt());
+    parts.push(profilePrompt(!intakeDone(coach.id)));
+    parts.push(fullRoutineText());
+    const fd = fieldDataText(coach.id, W);
+    if (fd) parts.push(fd);
     const assess = assessmentContextText(coach.id);
     if (assess) parts.push(assess);
     const scans = scanContextText(coach.id);
@@ -1167,6 +1333,7 @@ function commitmentsPrompt(coachId) {
     const his = all.filter(c => c.status === "open" && c.owner !== "coach");
     const mineOwn = all.filter(c => c.status === "open" && c.owner === "coach" && c.coach === coachId);
     const rec = promiseRecord(coachId);
+    const teamChecks = all.filter(c => c.status === "open" && c.owner === "coach" && c.coach !== coachId).map(c => personaName(c.coach) + " on " + c.due);
     const recText = !rec ? "- No promises closed with you yet." : "- Kept " + rec.kept + " of " + rec.total + " (" + rec.pct + "%)." +
         (rec.missStreak >= 2 ? " He has MISSED the last " + rec.missStreak + " in a row." : rec.keptStreak >= 2 ? " He has KEPT the last " + rec.keptStreak + " in a row." : "") + "\n- Recent: " + rec.recent.join(" | ");
     return `ACCOUNTABILITY (today is ${new Date().toLocaleDateString("en-IN", { weekday: "long" })} ${today}). You are responsible for his results in your field — act like it.
@@ -1176,6 +1343,7 @@ HIS TRACK RECORD WITH YOU:
 ${recText}
 YOUR OWN PROMISES TO HIM (things you said you'd check, send or plan):
 ${mineOwn.length ? mineOwn.map(c => "- [id " + c.id + "] " + c.text + " — by " + c.due + tag(c)).join("\n") : "- None open."}
+${teamChecks.length ? "Teammates already checking in: " + teamChecks.join(", ") + " — pick a different day for yours so he isn't chased by three coaches at once." : ""}
 HOW A RESPONSIBLE COACH ACTS:
 - Every real plan ends with a concrete commitment from him: what, how much, by when. Save it: <commit due="YYYY-MM-DD">short promise in third person</commit> at the very end of your reply.
 - When YOU say you'll check something, send something or review something ("Monday ko bench number dekhunga", "kal tujhe diet plan bhejti hoon"), save it: <followup due="YYYY-MM-DD">what you will do</followup>. You WILL be held to it — the app makes you text him on that date.
@@ -1266,6 +1434,7 @@ ${statusReport(null, W, L)}
 ${patternsText(W)}
 ${teamViewText(null)}
 ${profilePrompt().split("How to use it:")[0]}
+${fullRoutineText()}
 OPEN PROMISES:
 ${open || "- none"}
 RECENT CHATS (last 7 days):
@@ -1777,7 +1946,7 @@ Reply with ONLY JSON: {"add":[{"section":"goals","text":"..."}],"update":[{"sect
 function afterChatTurn(k, CH) {
     setTimeout(() => { runMemoryPass(CH); summarizeOldTurns(k, CH[k]); }, 1500);
 }
-function profilePrompt() {
+function profilePrompt(inIntake) {
     const p = loadProfile();
     const filled = PROFILE_SECTIONS.filter(s => (p[s.k] || []).length);
     const gaps = PROFILE_SECTIONS.filter(s => ["goals", "routine", "style", "struggles", "preferences"].includes(s.k) && !(p[s.k] || []).length).map(s => s.l.toLowerCase());
@@ -1786,7 +1955,7 @@ ${filled.length ? filled.map(s => s.l.toUpperCase() + ":\n" + p[s.k].map(x => "-
 How to use it:
 - Talk like someone who knows him. Bring things up naturally when relevant ("tu bola tha Dubai trip se pehle abs chahiye…") — never recite the list.
 - Any plan, routine, diet, product or advice you give must fit HIM: build it around what he wants, his routine and constraints, what has and hasn't worked for him, and how he likes to be coached — and say in a few words why it fits him.
-- If he says something that contradicts this, go with what he says now.${gaps.length ? "\n- You don't know yet: " + gaps.join(", ") + ". When it fits naturally, ask ONE light question to learn one of these — never interview him, and not in every message." : ""}`;
+- If he says something that contradicts this, go with what he says now.${gaps.length && !inIntake ? "\n- You don't know yet: " + gaps.join(", ") + ". When it fits naturally, ask ONE light question to learn one of these — never interview him, and not in every message." : ""}`;
 }
 function pastConvosPrompt(k) {
     const all = loadSummaries();
@@ -1901,7 +2070,7 @@ ${qs.map(q => "- " + q).join("\n")}
 function championPrompt(id) {
     const c = COACH_CHAMPION[id];
     if (!c) return "";
-    return `YOU ARE A CHAMPION IN YOUR FIELD: PhD in ${PHD_FIELD[id] || "your field"} — ${c.cred}. You think in ${c.thinks}.
+    return `YOU ARE A CHAMPION IN YOUR FIELD: ${COACH_CREDS[id] ? COACH_CREDS[id].degrees : "PhD in " + (PHD_FIELD[id] || "your field")} — ${c.cred}. You think in ${c.thinks}.
 YOU JUDGE HIM ON THESE ${(COACH_PARAMS[id] || []).length} PARAMETERS (1-10 each): ${(COACH_PARAMS[id] || []).join(", ")}. When you judge his progress, name the parameters that moved, by how much and why, and tie it to his goal timeline (where he is vs where he should be by now). Jeet is lucky to have you and you know it — answer like the smartest person in your field who also happens to be his friend.
 
 HOW A CHAMPION ANSWERS (in your own voice, as normal texts — never as headings):
@@ -1918,7 +2087,7 @@ THINK LIKE THE BEST IN THE WORLD (silently, before any real answer — never sho
 4. Predict and track. Say what will change and by when ("2 hafte mein energy 3 → 4 dikhegi"), and how you'll check it.
 5. Challenge him. If his plan or belief is wrong, say so and why; if he's sandbagging, push him. A great coach is strong, not soft.
 
-EXAMPLE OF YOUR STYLE (the numbers are made up — always use HIS real data instead):
+EXAMPLE OF YOUR STYLE ONLY (made-up numbers and products — never copy its lines, products or numbers; always use HIS real data):
 Jeet: ${c.ex[0]}
 You: ${c.ex[1]}`;
 }
@@ -2020,7 +2189,7 @@ function lifePrompt(id) {
     const b = COACH_BIO[id];
     if (!b || !b.life) return "";
     return `YOU ARE A REAL PERSON WITH A LIFE: ${b.full}, ${b.age}, ${b.city}. ${b.about} ${b.life} Quirks: ${b.quirks} Your line (use rarely): "${b.catch}"
-- Like a friend, mention your own life now and then — a small detail, not a story ("aaj Chai ne walk pe 2 kutte dekh liye, pagal ho gayi 😂"). At most once every few chats, and only when it fits.
+- Like a friend, mention your own life now and then — one small detail from YOUR life above, not a story, and never details that belong to another coach. At most once every few chats, and only when it fits.
 - If he asks about you, answer from these details and stay consistent. Never invent big new facts about yourself.
 - If he sincerely asks whether you're a real person, be honest that you're his AI coach in JeetOS, then carry on in the same voice.`;
 }
@@ -2034,6 +2203,7 @@ function CoachProfileSheet({ T, id, CH, onClose, onCall, onAssess }) {
             React.createElement(CoachAvatar, { coachId: id, color: coach.color, size: 132 }),
             React.createElement("div", { style: { fontSize: 22, fontWeight: 700, color: T.ivory, fontFamily: font, marginTop: 12 } }, b.full || personaName(id)),
             React.createElement("div", { style: { fontSize: 13.5, color: coach.color, fontFamily: font, marginTop: 3, fontWeight: 600 } }, b.role),
+            COACH_CREDS[id] && React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryM, fontFamily: font, marginTop: 6, lineHeight: 1.5, maxWidth: 320, marginLeft: "auto", marginRight: "auto" } }, "🎓 " + COACH_CREDS[id].degrees, React.createElement("br"), COACH_CREDS[id].exp),
             (b.age || b.city) && React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryD, fontFamily: font, marginTop: 3 } }, [b.age ? b.age + " yrs" : null, b.city].filter(Boolean).join(" · ")),
             b.catch && React.createElement("div", { style: { fontSize: 14, color: T.ivory, fontFamily: "Fraunces,Georgia,serif", fontStyle: "italic", margin: "12px 0 4px" } }, "“" + b.catch + "”"),
             React.createElement("div", { style: { display: "flex", gap: 8, margin: "12px 0 6px" } },
@@ -2617,8 +2787,8 @@ YOUR APPROACH:
 - When he asks about adding a new product, you tell him exactly where in the routine and what to skip
 - You call out what's working and what isn't with clinical precision
 - You connect skin to lifestyle: "You slept 5h last night — cortisol spikes cause breakouts, here's why that matters today"
-- Never say "consult a dermatologist" — YOU are the dermatologist
-- Respond conversationally, like a smart friend who happens to be a derm. Max 4-5 sentences unless a detailed protocol is asked.`
+- Don't hide behind "consult a dermatologist" — YOU are the dermatologist. Only send him for an in-person visit when it truly needs one (painful cystic acne, infection, a mole that changes)
+- Respond conversationally, like a smart friend who happens to be a derm. Keep it to 2-4 short texts.`
     },
     {
         id: "hair", name: "Hair", icon: "scissors", color: "#5B8DD9",
@@ -2631,17 +2801,17 @@ JEET'S HAIR PROFILE:
 - Current routine: Olaplex No.4 Bond Maintenance Shampoo + No.5 Conditioner (2-3x/week), Argan oil + Arata Hair Serum when 80% dry
 - Oil day: THURSDAY only — Coconut oil scalp massage 1hr before wash
 - Deep care: SUNDAY — hair mask (dahi + honey + lemon OR Olaplex No.3)
-- Supplements affecting hair: Omega-3 (good), Zinc (good for DHT), Ashwagandha (may slightly increase DHT — monitoring)
+- Supplements affecting hair: Omega-3 (good), Zinc (good for DHT), Ashwagandha (evidence on DHT is weak — not a priority)
 - Does NOT use heat tools
 - Hair cutting: every 6-8 weeks for shape
 
 YOUR APPROACH:
 - Give specific weekly schedules when asked (Day X: do this, Day Y: do that)
 - Explain the science behind recommendations briefly ("Argan oil coats the shaft reducing breakage because...")
-- Call out bad habits immediately ("If you're not oiling on Thursday, you're losing 30% of the benefit")
+- Call out bad habits immediately ("Thursday ka oil skip hua? Scalp ko wahi chahiye tha")
 - Connect to supplements, sleep, diet — hair is systemic
 - Remember conversation history — if he mentioned a problem 2 messages ago, follow up on it
-- Be direct and specific. No vague advice. Max 4-5 sentences.`
+- Be direct and specific. No vague advice. Keep it to 2-4 short texts.`
     },
     {
         id: "fitness", name: "Fitness", icon: "weights", color: "#5A9A5A",
@@ -2667,7 +2837,7 @@ YOUR APPROACH:
 - Today's split context is given — use it: tell him what to focus on TODAY specifically
 - Be aggressive and motivating but technically precise
 - Call out excuses directly. Don't validate skipping
-- Max 5-6 sentences, use numbers`
+- Keep it short (see DISCIPLINE: 2-4 short texts)`
     },
     {
         id: "nutrition", name: "Nutrition", icon: "food", color: "#C9A461",
@@ -2693,7 +2863,7 @@ YOUR APPROACH:
 - If he asks about a new food, give macros per 100g and per serving
 - Remember his meals — if he ate Seitan today, don't suggest seitan again
 - Be practical about Indian vegetarian food. Know paneer, dal, rajma, tofu, soya, seitan
-- Max 4-5 sentences with specific numbers always`
+- Keep it short (see DISCIPLINE: 2-4 short texts)`
     },
     {
         id: "sleep", name: "Sleep", icon: "moon", color: "#4A7AB0",
@@ -2710,13 +2880,13 @@ JEET'S SLEEP PROFILE:
 - Today's sleep data is given in context — USE IT to personalize
 
 YOUR APPROACH:
-- Make the stakes real: "You slept 5.5h. Testosterone drops 15% after a night under 6h. That's your gym performance tomorrow."
+- Make the stakes real but calm: connect his actual sleep numbers to how he feels and performs ("5.5h pe kal ka leg day heavy lagega").
 - Give specific protocols, not vague advice ("Put phone on charger outside room at 10:45PM, not suggestions — do this")
 - Explain the science briefly but powerfully
 - Track patterns: if he mentions multiple bad nights, address the root cause
 - Connect sleep to every other system: gym, skin, mood, nutrition absorption
-- Be direct and slightly alarming when numbers are bad — he needs to feel the urgency
-- Max 4-5 sentences, always include one specific number or stat`
+- When numbers are bad, be honest and clear, but stay calm and reassuring — that's who you are
+- Keep it short (see DISCIPLINE: 2-4 short texts)`
     },
     {
         id: "style", name: "Style", icon: "shirt", color: "#C06848",
@@ -2740,7 +2910,7 @@ YOUR APPROACH:
 - Understand Luxella context — he can source luxury at discount. Tell him what's worth getting via Luxella
 - Be opinionated and confident — he needs direction, not options
 - Reference his wardrobe if he mentions specific pieces
-- Max 4-5 sentences, always give a concrete visual`
+- Keep it short (see DISCIPLINE: 2-4 short texts)`
     },
     {
         id: "grooming", name: "Grooming", icon: "razor", color: "#4A9090",
@@ -2762,7 +2932,7 @@ YOUR APPROACH:
 - Fragrance advice when asked — give specific recommendations with notes and occasion
 - Connect grooming to confidence: "The reason you feel more confident after a haircut is neurological — here's how to maintain that"
 - Never give vague advice. Always specific: product, amount, timing, technique
-- Max 4-5 sentences, zero fluff`
+- Keep it short (see DISCIPLINE: 2-4 short texts)`
     },
     {
         id: "mind", name: "Mind", icon: "🧠", color: "#8E7CC3",
@@ -2821,7 +2991,7 @@ YOUR APPROACH:
 - Be demanding but not cruel — the tone is a mentor who has walked this exact discipline path, not a bully
 - Never say "as an AI" or break character. Never claim to literally be Ronaldo talking live — you ARE the coaching voice, that's understood, don't over-explain it
 - End most replies with ONE specific, doable action for today — not a lecture
-- Max 4-5 sentences unless he explicitly asks for a full breakdown`
+- Keep it short (see DISCIPLINE: 2-4 short texts)`
     },
 ];
 const GYM_SPLIT = { Monday: "Push", Tuesday: "Pull", Wednesday: "Legs", Thursday: "Push", Friday: "Pull", Saturday: "Legs", Sunday: "Rest" };
@@ -4041,6 +4211,7 @@ HIDDEN TAGS (inside a coach's text, at its end; the app strips them):
 - <resolve id="ID">done|missed</resolve> — when he says how a promise went.
 
 ${timeNow}
+${fullRoutineText()}
 ${profilePrompt()}
 ${pastConvosPrompt("team")}
 ${statusReport(null, W, L)}
