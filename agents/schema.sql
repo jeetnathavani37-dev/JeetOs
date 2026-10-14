@@ -240,3 +240,17 @@ create table if not exists public.jeetos_flags (
 );
 alter table public.jeetos_flags enable row level security;
 create policy "allow all for anon" on public.jeetos_flags for all to public using (true) with check (true);
+
+-- Head Coach: decision log / approved master plan versions, and safety events.
+create table if not exists public.jeetos_decisions (
+  id text primary key, coach text not null, area text, change text not null, reason text, evidence text,
+  source text not null default 'chat', status text not null default 'pending', version int,
+  created_at timestamptz not null default now(), decided_at timestamptz
+);
+alter table public.jeetos_decisions enable row level security;
+create policy "allow all for anon" on public.jeetos_decisions for all to public using (true) with check (true);
+create table if not exists public.jeetos_safety_events (
+  id text primary key, coach text, trigger text not null, severity text not null default 'med', created_at timestamptz not null default now()
+);
+alter table public.jeetos_safety_events enable row level security;
+create policy "allow all for anon" on public.jeetos_safety_events for all to public using (true) with check (true);
