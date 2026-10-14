@@ -224,3 +224,19 @@ create table if not exists public.jeetos_coach_notes (
 );
 alter table public.jeetos_coach_notes enable row level security;
 create policy "allow all for anon" on public.jeetos_coach_notes for all to public using (true) with check (true);
+
+-- Focus board: one major focus goal per department + flagged issues.
+alter table public.jeetos_coach_goals add column if not exists focus boolean not null default false;
+alter table public.jeetos_coach_goals add column if not exists plan jsonb;
+create table if not exists public.jeetos_flags (
+  id text primary key,
+  coach text not null,
+  text text not null,
+  severity text not null default 'med',
+  evidence text,
+  status text not null default 'open',
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
+alter table public.jeetos_flags enable row level security;
+create policy "allow all for anon" on public.jeetos_flags for all to public using (true) with check (true);
