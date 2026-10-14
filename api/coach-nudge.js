@@ -131,7 +131,7 @@ async function sendTelegram(coachId, text) {
 // Writes one text in a coach's voice, saves it to the inbox (once per coach
 // per slot per day) and forwards it to Telegram.
 async function writeAndSend(coachId, slot, task, shared) {
-  const { today, memory, commitments, goals, moments, profile } = shared;
+  const { today, memory, commitments, goals, moments, profile, primary, todayPriority } = shared;
   const since = new Date(Date.now() - 4 * 864e5).toISOString();
   const [recent, past, notes] = await Promise.all([
     supaJson(`jeetos_coach_inbox?coach=eq.${coachId}&select=text,created_on&order=created_at.desc&limit=5`),
@@ -156,7 +156,7 @@ Other notes: ${memory.length ? memory.map(m => m.fact).join("; ") : "none"}.
 Make the text fit what he wants and his routine — like someone who knows him. Plain everyday Hinglish, no jargon or technical terms. If you point out a problem or ask him to do something, give HIS personal reason in a few words (from his log, promises or history), never a generic one.
 His open promises${mine.length ? " to you" : ""}: ${(mine.length ? mine : his).map(c => `"${c.text}" (check on ${c.due})`).join("; ") || "none"}.
 ${ownDue.length ? `YOU PROMISED HIM, AND IT'S DUE NOW — this text must do it (check it, send it, review it; ask for the one number/photo you need): ${ownDue.map(c => `"${c.text}" (by ${c.due})`).join("; ")}.\n` : ""}
-Your goal${myGoals.length === 1 ? "" : "s"} with him: ${myGoals.map(g => goalText(g, today)).join("; ") || "none yet"}.
+${primary ? `HIS ONE PRIMARY GOAL (the whole team supports it first): ${goalText(primary, today)}.${todayPriority ? ` Today's one priority: "${todayPriority.text}" — ${todayPriority.done ? "done" : "not done yet"}.` : ""} Tie your text to it when it fits; don't push a competing new project.\n` : ""}Your goal${myGoals.length === 1 ? "" : "s"} with him: ${myGoals.map(g => goalText(g, today)).join("; ") || "none yet"}.
 ${nick ? `Your nickname for him: "${nick.text}" (use it if it fits).\n` : ""}Things that happened between you two: ${myMoments.map(m => `(${agoText(m.created_on, today)}) ${m.text}`).join("; ") || "nothing special yet"}.
 ${notes.length ? `Your teammates told you privately (act on it, you can mention them by name): ${notes.map(n => `${(COACHES[n.from_coach] && COACHES[n.from_coach].name) || n.from_coach}: ${n.text}`).join(" | ")}.\n` : ""}Your last few texts to him (don't repeat these): ${recent.map(r => r.text).join(" | ") || "none"}.`;
 
@@ -185,15 +185,18 @@ module.exports = async function handler(req, res) {
   if (!SLOT_MOMENT[slot] && slot !== "review") return res.status(400).json({ error: "slot must be morning|afternoon|evening|night|streak|review" });
 
   const today = istIsoDate();
-  const [logs, memory, commitments, goals, moments, profileRows] = await Promise.all([
+  const [logs, memory, commitments, goals, moments, profileRows, goalState] = await Promise.all([
     supaJson(`jeetos_logs?date=eq.${encodeURIComponent(istDateString())}&select=*`),
     supaJson("jeetos_team_memory?select=fact&order=created_at.asc&limit=60"),
     supaJson("jeetos_commitments?status=eq.open&select=id,coach,text,due,owner&order=due.asc&limit=30"),
-    supaJson("jeetos_coach_goals?status=eq.active&select=coach,text,unit,start_value,target,current_value,deadline,history&order=created_at.asc&limit=20"),
+    supaJson("jeetos_coach_goals?status=eq.active&select=id,focus,coach,text,unit,start_value,target,current_value,deadline,history&order=created_at.asc&limit=20"),
     supaJson("jeetos_coach_moments?select=coach,kind,text,created_on&order=created_at.asc&limit=120"),
     supaJson("jeetos_profile?id=eq.jeet&select=data"),
+    supaJson("jeetos_goal_state?id=eq.jeet&select=data"),
   ]);
-  const shared = { today, memory, commitments, goals, moments, profile: profileRows[0] && profileRows[0].data };
+  const gs = goalState[0] && goalState[0].data;
+  const primary = gs && gs.goalId ? goals.find(g => g.id === gs.goalId) || null : null;
+  const shared = { today, memory, commitments, goals, moments, profile: profileRows[0] && profileRows[0].data, primary, todayPriority: gs && gs.today && gs.today.date === today ? gs.today : null };
 
   try {
     // Sunday review: every coach with an active goal sends a 2-line weekly review.

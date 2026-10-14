@@ -278,3 +278,8 @@ create table if not exists public.jeetos_streak_marks (
 );
 alter table public.jeetos_streak_marks enable row level security;
 create policy "allow all for anon" on public.jeetos_streak_marks for all to public using (true) with check (true);
+
+-- Goal execution engine: one primary goal at a time (single row id 'jeet').
+create table if not exists public.jeetos_goal_state (id text primary key, data jsonb not null, updated_at timestamptz not null default now());
+alter table public.jeetos_goal_state enable row level security;
+create policy "allow all for anon" on public.jeetos_goal_state for all to public using (true) with check (true);
