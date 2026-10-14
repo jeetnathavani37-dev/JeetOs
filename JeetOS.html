@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-57";
+const APP_BUILD = "2026.10.14-58";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1247,6 +1247,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(teamMemoryPrompt(CH, coach.id));
     parts.push(commitmentsPrompt(coach.id));
     parts.push(goalsPrompt(coach.id));
+    parts.push(departmentPrompt(coach.id));
     parts.push(bondPrompt(coach.id, CH[coach.id]));
     parts.push(coachNotesPrompt(coach.id));
     const intake = intakePrompt(coach.id, CH[coach.id]);
@@ -1528,7 +1529,7 @@ function processCoachReply(raw, coachId) {
     const mem = extractTeamMemory(raw);
     addTeamMemoryFacts(mem.facts, coachId);
     const ho = extractHandoff(mem.clean || raw);
-    const gl = applyGoalTags(applyCommitTags(applyTellTags(ho.clean || mem.clean || raw, coachId), coachId), coachId);
+    const gl = applyGoalTags(applyFlagTags(applyCommitTags(applyTellTags(ho.clean || mem.clean || raw, coachId), coachId), coachId), coachId);
     const clean = applyMomentTags(gl.clean, coachId) || String(raw).replace(/<[^>]+>/g, "").trim();
     let parts = clean.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
     if (parts.length > 3) parts = parts.slice(0, 2).concat([parts.slice(2).join("\n\n")]);
@@ -1541,7 +1542,7 @@ function processCoachReply(raw, coachId) {
 const GOALS_KEY = "jos_coach_goals";
 const GOAL_MILESTONES = [25, 50, 75, 100];
 function loadGoals() { const l = store.get(GOALS_KEY); return Array.isArray(l) ? l : []; }
-function saveGoals(l) { store.set(GOALS_KEY, l.slice(-40)); }
+function saveGoals(l) { store.set(GOALS_KEY, l.slice(-60)); }
 function goalPct(g) {
     const s = Number(g.start_value), t = Number(g.target), c = Number(g.current_value);
     if (!isFinite(s) || !isFinite(t) || !isFinite(c) || s === t) return null;
@@ -1562,7 +1563,7 @@ async function pushGoal(g) {
             method: "POST",
             headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }),
             body: JSON.stringify({ id: g.id, coach: g.coach, text: g.text, unit: g.unit || null, start_value: g.start_value, target: g.target,
-                current_value: g.current_value, deadline: g.deadline || null, status: g.status, history: g.history || [], updated_at: new Date().toISOString() }),
+                current_value: g.current_value, deadline: g.deadline || null, status: g.status, history: g.history || [], focus: !!g.focus, plan: g.plan || null, updated_at: new Date().toISOString() }),
         });
         if (r.ok) { const l = loadGoals(); const f = l.find(x => x.id === g.id); if (f) { f.synced = true; saveGoals(l); } }
     } catch (_a) { }
@@ -1570,7 +1571,7 @@ async function pushGoal(g) {
 async function syncGoals() {
     if (!supabaseReady()) return loadGoals();
     try {
-        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_coach_goals?select=id,coach,text,unit,start_value,target,current_value,deadline,status,history,created_at&order=created_at.asc&limit=40", { headers: SUPA_HEADERS() });
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_coach_goals?select=id,coach,text,unit,start_value,target,current_value,deadline,status,history,focus,plan,created_at&order=created_at.asc&limit=60", { headers: SUPA_HEADERS() });
         const rows = await r.json();
         if (!r.ok || !Array.isArray(rows)) return loadGoals();
         const pending = loadGoals().filter(x => !x.synced);
@@ -1591,11 +1592,13 @@ function applyGoalTags(text, coachId) {
         const a = {}; String(attrs).replace(/(\w+)="([^"]*)"/g, (__, k, v) => { a[k.toLowerCase()] = v; });
         const t = body.trim().slice(0, 160);
         const active = list.filter(g => g.coach === coachId && g.status === "active");
-        if (t && active.length < 2 && !active.some(g => g.text.toLowerCase() === t.toLowerCase())) {
+        const isFocus = /^(1|true|yes)$/i.test(a.focus || "");
+        if (t && (active.length < 2 || isFocus) && !active.some(g => g.text.toLowerCase() === t.toLowerCase())) {
             const start = num(a.start);
             const g = { id: "g" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), coach: coachId, text: t, unit: (a.unit || "").slice(0, 20),
                 start_value: start, target: num(a.target), current_value: start, deadline: /^\d{4}-\d{2}-\d{2}$/.test(a.by || "") ? a.by : null,
-                status: "active", history: start != null ? [{ d: localIsoDate(), v: start }] : [], created: localIsoDate(), synced: false };
+                status: "active", history: start != null ? [{ d: localIsoDate(), v: start }] : [], created: localIsoDate(), focus: isFocus, synced: false };
+            if (isFocus) active.filter(x => x.focus).forEach(x => { x.focus = false; x.synced = false; changed.push(x); });
             list.push(g); changed.push(g);
         }
         return "";
@@ -1643,6 +1646,199 @@ ${wins.length ? "Goals he already hit with you: " + wins.map(g => "\"" + g.text 
 - When he tells you a new number for a goal (a lift, weight, protein, hours…), log it: <progress id="ID">number</progress>. If it crosses 25/50/75/100%, celebrate it for real, in your own style.
 - If he hits it, <goalstatus id="ID">achieved</goalstatus> and suggest the next level. If he wants to drop it, <goalstatus id="ID">dropped</goalstatus>.
 - Use the log for perspective now and then: "3 hafte pehle 60 pe atka tha, aaj 70 — dekha?" Never mention the tags.`;
+}
+
+// ── FOCUS BOARD: every department flags his issues and drives ONE major focus ──
+// Coaches flag issues with <flag severity="high|med|low" evidence="…">…</flag>,
+// close them with <unflag id="…">fixed</unflag>, and keep one goal per department
+// marked focus with a timeline. A full department scan can set it all at once.
+const FLAGS_KEY = "jos_flags";
+const SEV_ORDER = { high: 0, med: 1, low: 2 };
+function loadFlags() { const l = store.get(FLAGS_KEY); return Array.isArray(l) ? l : []; }
+function saveFlags(l) { store.set(FLAGS_KEY, l.slice(-200)); }
+async function pushFlag(f) {
+    if (!supabaseReady()) return;
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_flags?on_conflict=id", { method: "POST", headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }),
+            body: JSON.stringify({ id: f.id, coach: f.coach, text: f.text, severity: f.severity, evidence: f.evidence || null, status: f.status, created_at: new Date(f.at).toISOString(), resolved_at: f.status === "open" ? null : new Date().toISOString() }) });
+        if (r.ok) { const l = loadFlags(); const x = l.find(y => y.id === f.id); if (x) { x.synced = true; saveFlags(l); } }
+    } catch (_a) { }
+}
+async function syncFlags() {
+    if (!supabaseReady()) return loadFlags();
+    try {
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_flags?select=id,coach,text,severity,evidence,status,created_at&order=created_at.asc&limit=200", { headers: SUPA_HEADERS() });
+        const rows = await r.json();
+        if (!r.ok || !Array.isArray(rows)) return loadFlags();
+        const pending = loadFlags().filter(x => !x.synced);
+        const ids = new Set(pending.map(x => x.id));
+        saveFlags(rows.filter(x => !ids.has(x.id)).map(x => ({ id: x.id, coach: x.coach, text: x.text, severity: x.severity, evidence: x.evidence, status: x.status, at: Date.parse(x.created_at) || Date.now(), synced: true })).concat(pending));
+        pending.forEach(pushFlag);
+        return loadFlags();
+    } catch (_a) { return loadFlags(); }
+}
+function addFlag(coachId, text, severity, evidence) {
+    const t = String(text || "").trim().slice(0, 140);
+    if (!t || !COACHES.some(c => c.id === coachId)) return null;
+    const list = loadFlags();
+    const key = t.toLowerCase().replace(/[^a-z0-9 ]/g, "").split(" ").filter(w => w.length > 3).slice(0, 4).join(" ");
+    if (list.some(f => f.coach === coachId && f.status === "open" && (f.text.toLowerCase() === t.toLowerCase() || (key && f.text.toLowerCase().replace(/[^a-z0-9 ]/g, "").includes(key))))) return null;
+    const f = { id: "fl" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), coach: coachId, text: t, severity: SEV_ORDER[severity] != null ? severity : "med", evidence: String(evidence || "").slice(0, 200), status: "open", at: Date.now(), synced: false };
+    list.push(f); saveFlags(list); pushFlag(f);
+    return f;
+}
+function applyFlagTags(text, coachId) {
+    let clean = String(text).replace(/<flag\b([^>]*)>([\s\S]*?)<\/flag>/gi, (_, attrs, body) => {
+        const a = {}; String(attrs).replace(/(\w+)="([^"]*)"/g, (__, k, v) => { a[k.toLowerCase()] = v; });
+        addFlag(coachId, body, (a.severity || "med").toLowerCase().replace("medium", "med"), a.evidence);
+        return "";
+    });
+    clean = clean.replace(/<unflag\s+id="([^"]+)"\s*>[\s\S]*?<\/unflag>/gi, (_, id) => {
+        const l = loadFlags(); const f = l.find(x => x.id === id);
+        if (f && f.status === "open") { f.status = "fixed"; f.synced = false; saveFlags(l); pushFlag(f); }
+        return "";
+    });
+    return clean.replace(/<\/?(flag|unflag)\b[^>]*>/gi, "").trim();
+}
+function focusGoal(coachId) {
+    const act = loadGoals().filter(g => g.coach === coachId && g.status === "active");
+    return act.find(g => g.focus) || null;
+}
+// Where he is vs where he should be on the timeline.
+function focusPace(g) {
+    if (!g || !g.deadline) return null;
+    const t0 = new Date(g.created || localIsoDate()), t1 = new Date(g.deadline), now = new Date();
+    const total = Math.max(7, (t1 - t0) / 864e5), el = Math.max(0, (now - t0) / 864e5);
+    const out = { week: Math.floor(el / 7) + 1, weeks: Math.max(1, Math.ceil(total / 7)), weeksLeft: Math.max(0, Math.ceil((t1 - now) / (7 * 864e5))) };
+    if (g.start_value == null || g.target == null || g.current_value == null || g.target === g.start_value) return out;
+    const exp = g.start_value + (g.target - g.start_value) * Math.min(1, el / total);
+    const dir = Math.sign(g.target - g.start_value);
+    out.expected = Math.round(exp * 10) / 10;
+    out.status = (g.current_value - exp) * dir >= -Math.abs(g.target - g.start_value) * 0.05 ? "on track" : "behind";
+    return out;
+}
+function focusLine(g) {
+    const p = focusPace(g), u = g.unit ? " " + g.unit : "";
+    return g.text + (g.target != null ? " — " + g.start_value + " → now " + g.current_value + " → target " + g.target + u : "") + (g.deadline ? " by " + g.deadline : "") +
+        (p ? " (week " + p.week + " of " + p.weeks + ", " + p.weeksLeft + " weeks left" + (p.expected != null ? "; should be ~" + p.expected + u + " by now — " + p.status.toUpperCase() : "") + ")" : "");
+}
+function departmentPrompt(coachId) {
+    const flags = loadFlags().filter(f => f.coach === coachId && f.status === "open").sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity]);
+    const g = focusGoal(coachId);
+    return `YOUR DEPARTMENT BOARD (${(COACH_LANE[coachId] || "").split(" — ")[0]}):
+OPEN FLAGS: ${flags.length ? flags.map(f => "\n- [id " + f.id + "] (" + f.severity.toUpperCase() + ") " + f.text + (f.evidence ? " — evidence: " + f.evidence : "") + " — flagged " + agoText(localIsoDate(new Date(f.at)))).join("") : "none yet."}
+MAJOR FOCUS: ${g ? "[id " + g.id + "] " + focusLine(g) + (g.plan && g.plan.weekly ? "\n  Weekly plan: " + g.plan.weekly.join(" | ") : "") + (g.plan && g.plan.why ? "\n  Why it's #1 for him: " + g.plan.why : "") : "NONE — set one."}
+- Flag EVERY real issue you notice in your field — from his photos, logs, routine, what he says (rough/dry hair, waist up, dark circles, late bedtime…) — at the end of your reply: <flag severity="high|med|low" evidence="short proof from his data">issue in a few words</flag>. Don't re-flag open ones. When one is fixed: <unflag id="ID">fixed</unflag>.
+- Your department drives ONE major focus at a time — the issue that moves him most toward his goals. ${g ? "Keep pushing it: tie your advice to it, judge every update against the timeline (\"week 3 of 9 — 81 → 79.5, should be 79.8, on track\"), log new numbers with <progress id=\"" + g.id + "\">number</progress>." : "Pick it from your flags (highest impact), propose it with a number, a deadline (realistic, evidence-based rate) and a weekly plan; once he agrees, save it: <goal focus=\"1\" start=\"current\" target=\"target\" unit=\"unit\" by=\"YYYY-MM-DD\">short goal</goal>. If there's no natural number, use a 1–10 rating or his photo-scan score."}
+- Minor flags wait unless they block the major focus. Never mention the tags.`;
+}
+// One call: all 9 departments examine him, flag issues and set a major focus each.
+async function runDepartmentScan() {
+    const W = store.get("jos_history") || [], L = store.get("jos_log") || null;
+    const ids = COACHES.map(c => c.id);
+    const lanes = ids.map(id => id + " = " + personaName(id) + ", " + COACH_LANE[id]).join("\n");
+    const scans = ids.map(scanContextText).filter(Boolean).join("\n");
+    const assess = ids.map(id => { const a = coachAssessments(id).pop(); return a ? id + ": " + a.overall + "/100 — " + a.parameters.map(p => p.name + " " + (p.score != null ? p.score : "n/a")).join(", ") : null; }).filter(Boolean).join("\n");
+    const open = loadFlags().filter(f => f.status === "open").map(f => f.coach + ": " + f.text).join("; ");
+    const goals = loadGoals().filter(g => g.status === "active").map(g => g.coach + ": " + focusLine(g) + (g.focus ? " [MAJOR FOCUS]" : "")).join("\n");
+    const sys = `You are Jeet's coaching team doing a full department-by-department examination, like 9 specialists each reviewing him in their own field:
+${lanes}
+Today is ${localIsoDate()}.
+
+${statusReport(null, W, L)}
+${patternsText(W)}
+${profilePrompt().split("How to use it:")[0]}
+${fullRoutineText()}
+${scans ? "PHOTO SCANS:\n" + scans : "No photo scans yet."}
+${assess ? "LATEST ASSESSMENTS:\n" + assess : ""}
+ALREADY FLAGGED (don't repeat): ${open || "none"}
+ACTIVE GOALS: ${goals || "none"}
+
+For EACH of the 9 departments:
+1. Flag every real issue you see evidence for in his data/routine/photos (severity high/med/low, evidence = the specific proof). Things you can't verify but that matter for his goals → severity low, evidence "needs a check: …".
+2. Choose ONE major focus — the change that moves him most toward his goals in that field — with a measurable metric (if no natural number, a 1–10 rating or photo-scan score), his current value (estimate if needed and say so in why), target, a realistic deadline based on evidence-based rates, why it's #1 for HIM (his data), and a 3-step weekly plan.
+Reply with ONLY JSON (no markdown):
+{"departments":[{"coach":"hair","flags":[{"text":"rough, dry ends","severity":"med","evidence":"…"}],"focus":{"text":"short goal","unit":"…","start":0,"target":0,"by":"YYYY-MM-DD","why":"…","weekly":["…","…","…"]}}]}
+Use the coach ids exactly: ${ids.join(", ")}.`;
+    const raw = await ai(sys, [{ role: "user", content: "Do the full department scan." }], 6000, { tier: "pro", effort: "medium" });
+    const j = parseJsonLoose(raw);
+    if (!j || !Array.isArray(j.departments)) throw new Error("Scan could not be read — try again");
+    const num = v => { const n = parseFloat(String(v == null ? "" : v).replace(/[^\d.\-]/g, "")); return isFinite(n) ? n : null; };
+    let flags = 0, focuses = 0;
+    j.departments.forEach(d => {
+        if (!ids.includes(d.coach)) return;
+        (d.flags || []).slice(0, 8).forEach(f => { if (addFlag(d.coach, f.text, String(f.severity || "med").toLowerCase().replace("medium", "med"), f.evidence)) flags++; });
+        const fc = d.focus;
+        if (fc && fc.text && !focusGoal(d.coach)) {
+            const list = loadGoals();
+            const start = num(fc.start);
+            const g = { id: "g" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), coach: d.coach, text: String(fc.text).slice(0, 160), unit: String(fc.unit || "").slice(0, 20),
+                start_value: start, target: num(fc.target), current_value: start, deadline: /^\d{4}-\d{2}-\d{2}$/.test(fc.by || "") ? fc.by : null, status: "active",
+                history: start != null ? [{ d: localIsoDate(), v: start }] : [], created: localIsoDate(), focus: true,
+                plan: { why: String(fc.why || "").slice(0, 300), weekly: (fc.weekly || []).slice(0, 4).map(x => String(x).slice(0, 160)) }, synced: false };
+            list.push(g); saveGoals(list); pushGoal(g); focuses++;
+        }
+    });
+    store.set("jos_dept_scan", { at: Date.now(), flags: flags, focuses: focuses });
+    return { flags: flags, focuses: focuses };
+}
+function FocusBoardCard({ T, onOpen }) {
+    const font = "Inter,system-ui,sans-serif";
+    const open = loadFlags().filter(f => f.status === "open");
+    const high = open.filter(f => f.severity === "high").length;
+    const foc = COACHES.filter(c => focusGoal(c.id)).length;
+    return React.createElement("div", { onClick: onOpen, style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 16px", marginBottom: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 12 } },
+        React.createElement("span", { style: { fontSize: 22 } }, "🎯"),
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+            React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontFamily: font, fontWeight: 600 } }, "Focus board"),
+            React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, fontFamily: font, marginTop: 3 } }, open.length ? "🚩 " + open.length + " flags" + (high ? " (" + high + " high)" : "") + " · " + foc + "/9 departments with a major focus" : "Har department tumhe flag kare aur ek major goal set kare")),
+        React.createElement("span", { style: { fontSize: 14, color: T.ivoryD } }, "›"));
+}
+function FocusBoardSheet({ T, onClose }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [tick, setTick] = React.useState(0);
+    const [busy, setBusy] = React.useState(false);
+    const [msg, setMsg] = React.useState("");
+    React.useEffect(() => { Promise.all([syncFlags(), syncGoals()]).then(() => setTick(t => t + 1)); }, []);
+    const scan = async () => {
+        setBusy(true); setMsg("9 departments tumhe examine kar rahe hain…");
+        try { const r = await runDepartmentScan(); setMsg("✓ " + r.flags + " naye flags · " + r.focuses + " naye major focus goals"); }
+        catch (e) { setMsg("⚠️ " + (e.message || "Scan nahi ho paaya")); }
+        setBusy(false); setTick(t => t + 1);
+    };
+    const fixFlag = (f) => { const l = loadFlags(); const x = l.find(y => y.id === f.id); if (x) { x.status = "fixed"; x.synced = false; saveFlags(l); pushFlag(x); setTick(t => t + 1); } };
+    const sevColor = { high: "#E5484D", med: "#E0A23B", low: "rgba(255,255,255,.35)" };
+    const flags = loadFlags().filter(f => f.status === "open");
+    const rows = COACHES.map(c => ({ c: c, g: focusGoal(c.id), flags: flags.filter(f => f.coach === c.id).sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity]) }))
+        .sort((a, b) => b.flags.filter(f => f.severity === "high").length - a.flags.filter(f => f.severity === "high").length);
+    return React.createElement(ChatSheet, { T: T, title: "🎯 Focus board", onClose: onClose },
+        React.createElement("div", { style: { fontFamily: font }, "data-tick": tick },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, lineHeight: 1.5, marginBottom: 10 } }, "Har department tumhari har problem flag karta hai aur ek MAJOR FOCUS goal timeline ke saath chalata hai. Coaches har chat mein isi ko aage badhayenge."),
+            React.createElement("button", { onClick: scan, disabled: busy, style: { width: "100%", padding: 12, borderRadius: 12, border: "none", background: T.gold, color: "#16120A", fontWeight: 700, fontSize: 13.5, cursor: "pointer", marginBottom: 6, opacity: busy ? .6 : 1 } }, busy ? "Scan ho raha hai…" : "🔍 Full department scan karwao"),
+            msg && React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, textAlign: "center", marginBottom: 10 } }, msg),
+            rows.map(r => {
+                const p = r.g ? focusPace(r.g) : null, pct = r.g ? goalPct(r.g) : null, u = r.g && r.g.unit ? " " + r.g.unit : "";
+                return React.createElement("div", { key: r.c.id, style: { padding: 12, borderRadius: 14, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", marginBottom: 10 } },
+                    React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 8 } },
+                        React.createElement(CoachAvatar, { coachId: r.c.id, color: r.c.color, size: 32 }),
+                        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+                            React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: T.ivory } }, r.c.name, React.createElement("span", { style: { fontWeight: 500, color: T.ivoryD, fontSize: 11.5 } }, " · " + personaName(r.c.id))),
+                            React.createElement("div", { style: { fontSize: 11, color: r.flags.length ? "#E0A23B" : T.ivoryD } }, r.flags.length ? "🚩 " + r.flags.length + " flag" + (r.flags.length > 1 ? "s" : "") : "No flags"))),
+                    r.g ? React.createElement("div", { style: { padding: "8px 10px", borderRadius: 10, background: "rgba(201,168,76,.08)", border: "1px solid rgba(201,168,76,.22)", marginBottom: 8 } },
+                        React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.gold, letterSpacing: ".06em", textTransform: "uppercase" } }, "Major focus"),
+                        React.createElement("div", { style: { fontSize: 13.5, color: T.ivory, marginTop: 2, lineHeight: 1.4 } }, r.g.text),
+                        r.g.target != null && React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryM, marginTop: 4 } }, r.g.start_value + " → " + r.g.current_value + " → " + r.g.target + u + (r.g.deadline ? " · by " + r.g.deadline : "")),
+                        pct != null && React.createElement("div", { style: { height: 4, background: "rgba(255,255,255,.08)", borderRadius: 2, overflow: "hidden", marginTop: 6 } }, React.createElement("div", { style: { height: "100%", width: pct + "%", background: r.c.color } })),
+                        p && React.createElement("div", { style: { fontSize: 11, marginTop: 5, color: p.status === "behind" ? "#E5484D" : p.status ? "#3DD68C" : T.ivoryD } }, "Week " + p.week + "/" + p.weeks + " · " + p.weeksLeft + " weeks left" + (p.status ? " · " + (p.status === "behind" ? "⚠️ behind (should be ~" + p.expected + u + ")" : "✓ on track") : "")),
+                        r.g.plan && r.g.plan.weekly && r.g.plan.weekly.length > 0 && React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryM, marginTop: 6, lineHeight: 1.5 } }, r.g.plan.weekly.map((w, i) => React.createElement("div", { key: i }, "• " + w))))
+                        : React.createElement("div", { style: { fontSize: 12, color: T.ivoryD, marginBottom: 8 } }, "Abhi major focus set nahi — scan karwao ya " + personaName(r.c.id).split(" ").pop() + " se baat karo."),
+                    r.flags.map(f => React.createElement("div", { key: f.id, style: { display: "flex", gap: 8, alignItems: "flex-start", padding: "5px 0" } },
+                        React.createElement("span", { style: { width: 8, height: 8, borderRadius: 4, background: sevColor[f.severity], marginTop: 5, flexShrink: 0 } }),
+                        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+                            React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, f.text, React.createElement("span", { style: { fontSize: 10, color: sevColor[f.severity], marginLeft: 6, fontWeight: 700, textTransform: "uppercase" } }, f.severity)),
+                            f.evidence && React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, marginTop: 1 } }, f.evidence)),
+                        React.createElement("button", { onClick: () => fixFlag(f), title: "Fixed", style: { border: "1px solid rgba(255,255,255,.12)", background: "transparent", color: T.ivoryD, borderRadius: 8, fontSize: 11, padding: "2px 6px", cursor: "pointer" } }, "✓"))));
+            })));
 }
 
 // ── BOND: shared history, nicknames and inside jokes per coach ─────────
@@ -4474,7 +4670,7 @@ function GroupEntryCard({ T, CH, onOpen }) {
         React.createElement("span", { style: { fontSize: 16 } }, "📞"));
 }
 function GoalStrip({ coachId, color, T }) {
-    const goals = loadGoals().filter(g => g.coach === coachId && g.status === "active");
+    const goals = loadGoals().filter(g => g.coach === coachId && g.status === "active").sort((a, b) => (b.focus ? 1 : 0) - (a.focus ? 1 : 0));
     if (!goals.length) return null;
     const font = "Inter,system-ui,sans-serif";
     return React.createElement("div", { style: { padding: "8px 20px", borderBottom: "1px solid " + T.border, flexShrink: 0 } }, goals.map(g => {
@@ -4482,7 +4678,7 @@ function GoalStrip({ coachId, color, T }) {
         const u = g.unit ? " " + g.unit : "";
         return React.createElement("div", { key: g.id, style: { marginBottom: 4 } },
             React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10, fontFamily: font } },
-                React.createElement("span", { style: { color: T.ivory } }, "🎯 " + g.text),
+                React.createElement("span", { style: { color: T.ivory } }, (g.focus ? "🎯 FOCUS: " : "• ") + g.text),
                 React.createElement("span", { style: { color: color, whiteSpace: "nowrap" } }, g.target != null ? g.current_value + " / " + g.target + u : (g.deadline ? "by " + g.deadline : ""))),
             pct != null && React.createElement("div", { style: { height: 3, background: T.border, borderRadius: 2, overflow: "hidden", marginTop: 4 } },
                 React.createElement("div", { style: { height: "100%", width: pct + "%", background: color, borderRadius: 2, transition: "width .6s" } })));
@@ -7556,6 +7752,7 @@ function JeetOS() {
     const [screen, setScreen] = React.useState("home");
     const [unread, setUnread] = React.useState(store.get("jos_unread") || {});
     const [huddleOpen, setHuddleOpen] = React.useState(false);
+    const [focusOpen, setFocusOpen] = React.useState(false);
     const [tab, setTab] = React.useState("today");
     React.useEffect(() => {
         if (tab === "today") {
@@ -7662,6 +7859,7 @@ function JeetOS() {
             });
         });
         syncGoals();
+        syncFlags();
         syncMoments();
         // The team's private morning huddle (once a day).
         syncNotes().then(() => setTimeout(() => runTeamHuddle(keptCH), 4000));
@@ -8934,6 +9132,8 @@ function JeetOS() {
         tab === "coaches" && (React.createElement("div", { style: { paddingBottom: 80, animation: "josFadeIn .28s ease" } },
             React.createElement("div", { style: { padding: "12px 20px" } },
                 React.createElement(GroupEntryCard, { T: T, CH: CH, onOpen: () => setScreen("group") }),
+                React.createElement(FocusBoardCard, { T: T, onOpen: () => setFocusOpen(true) }),
+                focusOpen && React.createElement(FocusBoardSheet, { T: T, onClose: () => setFocusOpen(false) }),
                 React.createElement(HuddleEntryCard, { T: T, onOpen: () => setHuddleOpen(true) }),
                 huddleOpen && React.createElement(HuddleSheet, { T: T, onClose: () => setHuddleOpen(false) }),
                 React.createElement(CheckinEntryCard, { T: T, onOpen: () => setScreen("checkin") }),
