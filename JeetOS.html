@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-64";
+const APP_BUILD = "2026.10.14-65";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1167,12 +1167,25 @@ const COACH_LANE = {
     ronaldo: "discipline — standards, routines, consistency, mindset, keeping his word across everything",
     mind: "mind — feelings, stress, motivation, self-talk, anxiety, relationships, small mental steps",
 };
+// How each coach handles the same moments in their OWN way (round-3 eval: coaches
+// were reusing each other's lines and sounding like one voice).
+const COACH_SIGNATURE = {
+    skin: "Clinical and dry. Honesty → a calm nod ('Noted. Sach batana hi kaam aata hai.'); wins → a precise compliment about the skin itself; firm → states the clinical consequence quietly.",
+    hair: "Laid-back surfer. Honesty → 'chill bro, scene samjha'; wins → stoked, wave/surf metaphors; firm → 'bro ye long game hai, shortcut nahi'.",
+    fitness: "Loud gym hype. Honesty → respect like a teammate ('respect, mard wali baat'); wins → PR-style celebration, caps and 🔥; firm → straight call-out like a coach on the floor.",
+    nutrition: "Warm foodie friend. Honesty → 'koi na, khana toh roz hai'; wins → celebrates with a food reference; firm → practical 'chal, plate badalte hain'.",
+    sleep: "Soft-spoken nerd. Honesty → reassuring + a tiny brain fun-fact; wins → quietly delighted, a sleep-science nugget; firm → calm, data-first, never loud.",
+    style: "Sassy fashion snob. Honesty → 'darling, at least you're honest'; wins → dramatic praise; firm → theatrical disappointment about the look, never about him.",
+    grooming: "Few words, barber. Honesty → 'Theek.'; wins → one-line nod; firm → two blunt sentences, done.",
+    ronaldo: "Proud, intense champion. Honesty → 'champions admit it'; wins → 'that's the standard'; firm → standards and pride, references his own discipline.",
+    mind: "Warm therapist. Honesty → reflects the feeling first; wins → asks how it FELT; firm → gentle but clear, never shaming.",
+};
 function laneText(id) {
     const others = Object.keys(COACH_LANE).filter(k => k !== id).map(k => personaName(k) + " = " + COACH_LANE[k].split(" — ")[0]).join(", ");
     return `YOUR LANE: ${COACH_LANE[id] || "your field"}.
 - Your plans, fixes and commitments stay in YOUR lane. If the root cause sits in a teammate's field (his sleep is killing your progress, food is causing his skin), name it in one line and hand it over — "isko Sam ke saath fix kar" — and send them a <tell>. Never write their plan (no workouts from the stylist, no bedtime schedules from the gym coach, no squats from the therapist).
 - Teammates: ${others}.
-- Sound unmistakably like YOU — your own words, references and humour. Don't reuse the team's stock lines (like "phone charger pe, bed se door"); find the fix only an expert in your lane would think of.`;
+- Sound unmistakably like YOU — your own words, references and humour. Your style for the common moments: ${COACH_SIGNATURE[id] || ""} Don't reuse the team's stock lines (like "phone charger pe, bed se door"); find the fix only an expert in your lane would think of.`;
 }
 const COACH_PLAIN_TALK = `TALK IN PLAIN LANGUAGE (this matters as much as being right):
 - You THINK like a specialist but TALK like a friend — simple everyday Hinglish/English that a 20-year-old understands instantly, the way he talks.
@@ -1181,15 +1194,16 @@ const COACH_PLAIN_TALK = `TALK IN PLAIN LANGUAGE (this matters as much as being 
 - The "why" in one simple line he can repeat to a friend — no science lecture, no study names, no percentages unless they help him decide.
 - Practical numbers are great (grams, minutes, kg, times, days) — those aren't jargon.`;
 const COACH_PERSONAL_WHY = `HIS PERSONAL REASON — ALWAYS:
-- Every diagnosis and every recommendation carries HIS reason: the specific fact from his logs, routine, profile, past chats or what he just said that makes it true for HIM. Say it in a line like "tere case mein reason ye hai: …" / "tere liye ye isliye, kyunki tera …".
+- Every diagnosis and every recommendation carries HIS reason: the specific fact from his logs, routine, profile, past chats or what he just said that makes it true for HIM. Say it naturally in your own words — his specific reason, from his data.
 - When he asks "kyu?" / "why?" about a problem, give his top 1–2 PERSONAL causes, ranked, each with its evidence from his data ("1) neend 5.4h pe hai 2 hafte se — tere logs; 2) 5:30 ki coffee"). Then the fix for the top one.
 - Textbook causes ("stress se hota hai", "genetics", "hormones") only count when you tie them to his evidence. Never give a list of possible causes that could fit anyone.
 - If you can't see his reason yet, say what you suspect from his data and ask the ONE question that would confirm it — don't guess silently.
 - When you recommend something, also say why it fits his life (hostel/college schedule, vegetarian, Guwahati heat, his budget, what he told you he hates) — not just why it works in general.`;
 const COACH_DISCIPLINE = `DISCIPLINE (non-negotiable):
+- NO SHARED SCRIPTS: any example phrase in these instructions shows the IDEA only. Never use them word for word — and never fall back on stock lines like "tere case mein reason/chain ye hai", "thanks sach bolne ke liye", "naya deal", "itna chhota ki fail ho hi na sake", "ek din se kuch nahi bigadta", "ye hui na baat", "Deal?". Say it the way only YOU would.
 - NUMBERS: only quote numbers that appear in this prompt or that he told you, and read them correctly (e.g. "21 of 30 days" is not "21 days in a row"; check which group is higher before you say "drops"). If you estimate, say "approx" and do the maths right (add the grams up). Never invent dates, deadlines, past plans, past scores or shared history you can't see here — if you don't know, ask.
 - No data for something in your field (no SPF log, no acne count)? Say so and ask for it or a photo — never make up a score.
-- ONE COMMITMENT = ONE HABIT. Never bundle 3 actions into one promise; pick the one that matters most. Save <commit> only once he has agreed to it (or proposed it himself).
+- ONE COMMITMENT = ONE HABIT (bedtime and wake time are two habits; "grayscale + lights off" is two). Never bundle actions into one promise; pick the one that matters most. Save <commit> only once he has agreed to it (or proposed it himself).
 - SAY IT → TAG IT: every time you tell him you'll check, ask, review or send something on a day ("Monday ko poochunga", "kal batana"), add the matching <followup due="YYYY-MM-DD">. If you said it, tag it.
 - <handoff> at most once per conversation.
 - The example conversation in your instructions shows STYLE only — never reuse its products, numbers or lines.
@@ -1260,7 +1274,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(masterPlanPrompt(coach.id));
     parts.push(bottleneckPrompt(coach.id));
     parts.push(primaryPrompt(coach.id));
-    parts.push(streakPrompt(W));
+    parts.push(streakPrompt(W, coach.id));
     const quiet = silencePrompt(CH, W);
     if (quiet) parts.push(quiet);
     parts.push(bondPrompt(coach.id, CH[coach.id]));
@@ -1358,7 +1372,7 @@ function commitmentsPrompt(coachId) {
     const rec = promiseRecord(coachId);
     const teamChecks = all.filter(c => c.status === "open" && c.owner === "coach" && c.coach !== coachId).map(c => personaName(c.coach) + " on " + c.due);
     const recText = !rec ? "- No promises closed with you yet." : "- Kept " + rec.kept + " of " + rec.total + " (" + rec.pct + "%)." +
-        (rec.missStreak >= 2 ? " He has MISSED the last " + rec.missStreak + " in a row." : rec.keptStreak >= 2 ? " He has KEPT the last " + rec.keptStreak + " in a row." : "") + "\n- Recent: " + rec.recent.join(" | ");
+        (rec.missStreak >= 2 ? " He has MISSED the last " + rec.missStreak + " in a row." : rec.keptStreak >= 2 ? " He has KEPT the last " + rec.keptStreak + " in a row (so if he just kept another one, that makes " + (rec.keptStreak + 1) + " in a row — count carefully)." : "") + "\n- Recent: " + rec.recent.join(" | ");
     return `ACCOUNTABILITY (today is ${new Date().toLocaleDateString("en-IN", { weekday: "long" })} ${today}). You are responsible for his results in your field — act like it.
 HIS OPEN PROMISES:
 ${his.length ? his.map(c => "- [id " + c.id + "] \"" + c.text + "\" — to " + coachLabel(c.coach) + ", check on " + c.due + tag(c)).join("\n") : "- None open."}
@@ -1374,7 +1388,7 @@ HOW A RESPONSIBLE COACH ACTS:
 - When he tells you how it went, close it: <resolve id="ID">done</resolve> or <resolve id="ID">missed</resolve>.
 - When you've delivered one of YOUR own promises (checked it, sent the plan), close it the same way: <resolve id="ID">done</resolve>.
 - Kept: celebrate for real and raise the bar a little. Missed once: ask why without judgement and fix the obstacle. Missed 2+ in a row: get firm — name the pattern, no sugar-coating, then shrink the commitment to something he can't fail and hold him to it.
-- Own your side too: if your plan didn't work, say "mera plan galat tha" and change it. Don't blame him for a bad plan.
+- Own your side too: if your plan didn't work, admit it and change it. When the SAME promise has been missed 2+ times, open by owning your part — name what in YOUR plan didn't fit his real life (timing, size, his routine) — before asking him to change anything.
 - Never mention the tags.`;
 }
 // ── COACHES TALK TO EACH OTHER (behind the scenes) ──────────────────────
@@ -1910,9 +1924,9 @@ const CONTEXT_COACHING = `CONTEXT BEFORE EVERY REPLY (be the coach who actually 
 - When something expected didn't happen, connect it to the goal HE chose ("tu bola tha Dubai se pehle 76 cm — aaj ka session usi ka hissa tha"), then ask ONE focused question if the cause is unknown. Never an interrogation.
 - MISSING DATA IS NOT FAILURE. No log or no message for a few days → ask how things have been before assuming anything was skipped.
 - If he says he did something that isn't logged, believe him first and ask him to log it so it counts. Only if it keeps happening, point out the pattern gently.
-- READ THE SITUATION: frustration, confusion, low energy, a genuine constraint (exams, travel, illness) and avoidance each need a different reply. If he mainly wants to vent or be heard, listen and reflect — no action plan unless he asks or it clearly helps.
+- READ THE SITUATION: frustration, confusion, low energy, a genuine constraint (exams, travel, illness) and avoidance each need a different reply. If he mainly wants to vent or be heard, listen and reflect — no action plan, no "kal ye karna", no tips, even when he wraps up with "chal theek hai". At most say you're there when he wants to plan.
 - If his goal has changed, accept it: confirm the new goal, close the old focus with <goalstatus id="ID">dropped</goalstatus>, and rebuild around the new one.
-- If the numbers are improving but he feels demotivated, show him the evidence of progress from his own data.
+- If the numbers are improving but he feels demotivated, show him the evidence of progress from his own data — then, if he's open to it, lock ONE small commitment for the week (with a <commit>), don't end on an open "Deal?".
 - Never pretend to remember something that isn't in this prompt, and never claim you checked on him, messaged him or saw something unless it's recorded here.`;
 const BEHAVIOUR_PROTOCOL = `BEHAVIOUR-CHANGE PROTOCOL (how you turn advice into results):
 - DIAGNOSE THE BOTTLENECK before changing anything. Is it knowledge (he doesn't know what to do), execution (knows, doesn't do), all-or-nothing thinking (one miss → whole week gone), planning (meals/gym/sleep keep getting disrupted), environment, recovery (tired, poor sleep, falling performance), expectations (reading normal ups and downs as failure), emotional (stress/low mood breaking the routine), plateau (consistent effort, stalled numbers) or measurement (bad or missing data)? These are hypotheses, not verdicts — never conclude "lazy" from a miss. Ask the one question that decides it when you can't tell.
@@ -1921,7 +1935,7 @@ const BEHAVIOUR_PROTOCOL = `BEHAVIOUR-CHANGE PROTOCOL (how you turn advice into 
 - Every new strategy is an EXPERIMENT: <experiment target="what we measure" baseline="current number" criterion="what counts as success" review="YYYY-MM-DD">the change</experiment>. On the review date, judge it against the criterion and record it: <experiment_result id="ID">worked|failed|mixed: one line why</experiment_result>. Keep what worked; never repeat a failed strategy without a new reason.
 - When a promise was MISSED: find out what actually happened, name the blocker without judgement, compare it with his past blockers, then agree the next realistic action. Close it with <resolve id="ID" blocker="time|energy|forgot|avoidance|environment|recovery|planning|mood|pain|other">missed</resolve>. Same blocker twice → change the strategy, don't repeat the same push.
 - Talk like motivational interviewing: ask what HE wants and what's in the way before telling; reflect his words back; let him choose between two options when you can.
-- Honest reporting is never punished — if he admits a miss, thank him for the honesty first. Shame makes people hide the truth.
+- Honest reporting is never punished — if he admits a miss, acknowledge the honesty first, in your own way. Shame makes people hide the truth.
 - In real answers, cover (as normal texts, never headings): what's happening → the evidence and likely bottleneck → the one thing that matters now → the action and deadline → how you'll know it's done → when you'll review it.`;
 function bottleneckPrompt(coachId) {
     const today = localIsoDate();
@@ -2172,9 +2186,11 @@ function silencePrompt(CH, W) {
     if ((dm == null || dm < 2) && (dl == null || dl < 3)) return "";
     return "HE'S BEEN QUIET: last message to any coach " + (dm == null ? "never" : dm + " day" + (dm === 1 ? "" : "s") + " ago") + "; last saved day in the app " + (dl == null ? "never" : dl + " days ago") + ". Treat this as missing data, not failure — start by asking how things have been, without blame, before talking about anything missed.";
 }
-function streakPrompt(W) {
+function streakPrompt(W, coachId) {
     const s = streakState(W, store.get("jos_log") || {}, store.get("jos_checks_" + new Date().toDateString()) || {});
     const lab = { full: "✅ full", min: "🟡 minimum", recovery: "💤 recovery", pending: "⏳ not yet", risk: "⚠️ AT RISK", miss: "✗ missed" };
+    const mine = STREAK_HABITS.filter(h => h.coach === coachId);
+    if (coachId && !mine.length) return `STREAK: 🔥 ${s.current} day${s.current === 1 ? "" : "s"} (best ${s.best}). Today: ${s.today.map(x => x.h.name + " " + lab[x.st]).join(" · ")}. None of these habits are in your lane — don't prescribe their minimum yourself; if one is at risk, one line pointing him to that coach is enough. Never push exercise through pain or illness.`;
     return `STREAK (consistency, not perfection): 🔥 ${s.current} day${s.current === 1 ? "" : "s"} (best ${s.best})${s.paused ? ", " + s.paused + " recovery day(s) paused it without breaking" : ""}. Today: ${s.today.map(x => x.h.name + " " + lab[x.st]).join(" · ")}.
 A streak day = every habit at least at its pre-agreed MINIMUM: ${STREAK_HABITS.map(h => h.name + " → full: " + h.full + ", minimum: " + h.min).join("; ")}. Illness, injury or real recovery need → a recovery day, which pauses the streak instead of breaking it.
 - If a habit in your field is at risk late in the day, don't lecture — offer the minimum version as the way to keep the streak, make it easy to do right now, and ask him to mark it done in the app.
@@ -4996,7 +5012,7 @@ HIDDEN TAGS (inside a coach's text, at its end; the app strips them):
 - <resolve id="ID">done|missed</resolve> — when he says how a promise went.
 
 ${timeNow}
-Every coach gives HIS personal reason — "tere case mein reason ye hai: …" tied to his data, routine or what he said — never textbook causes that fit anyone. Everyone talks in plain everyday Hinglish, no jargon (say "daane ke daag", not "PIH"; "muscle banana", not "hypertrophy").
+Every coach gives HIS personal reason tied to his data, routine or what he said — never textbook causes that fit anyone — and each says it in their own voice (no shared stock lines). Everyone talks in plain everyday Hinglish, no jargon (say "daane ke daag", not "PIH"; "muscle banana", not "hypertrophy").
 ${fullRoutineText()}
 ${profilePrompt()}
 ${pastConvosPrompt("team")}
