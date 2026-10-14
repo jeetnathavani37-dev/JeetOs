@@ -291,3 +291,11 @@ create table if not exists public.jeetos_claims (
 );
 alter table public.jeetos_claims enable row level security;
 create policy "allow all for anon" on public.jeetos_claims for all to public using (true) with check (true);
+
+-- iPhone / web push subscriptions.
+create table if not exists public.jeetos_push_subs (
+  endpoint text primary key, p256dh text not null, auth text not null, ua text,
+  created_at timestamptz not null default now(), last_ok_at timestamptz
+);
+alter table public.jeetos_push_subs enable row level security;
+create policy "allow all for anon" on public.jeetos_push_subs for all to public using (true) with check (true);
