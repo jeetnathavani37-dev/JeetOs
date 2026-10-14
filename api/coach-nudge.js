@@ -67,6 +67,7 @@ const SLOT_MOMENT = {
   afternoon: "It's early afternoon (around 1:45 pm).",
   evening: "It's evening (around 5 pm), usual gym time.",
   night: "It's night (around 10:30 pm), close to his bedtime.",
+  streak: "It's around 9:15 pm — the last chance today to protect his streak.",
 };
 
 // Same models as the chat (api/ai.js): the smart one, then the fast one if it fails.
@@ -181,7 +182,7 @@ module.exports = async function handler(req, res) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   const slot = (req.query && req.query.slot) || "evening";
-  if (!SLOT_MOMENT[slot] && slot !== "review") return res.status(400).json({ error: "slot must be morning|afternoon|evening|night|review" });
+  if (!SLOT_MOMENT[slot] && slot !== "review") return res.status(400).json({ error: "slot must be morning|afternoon|evening|night|streak|review" });
 
   const today = istIsoDate();
   const [logs, memory, commitments, goals, moments, profileRows] = await Promise.all([
@@ -211,6 +212,22 @@ module.exports = async function handler(req, res) {
     }
 
     const log = logs[0] || null;
+    // Streak rescue: only if something is actually at risk and he hasn't marked a minimum/recovery.
+    if (slot === "streak") {
+      const marks = await supaJson(`jeetos_streak_marks?date=eq.${today}&select=habit,kind`);
+      const marked = new Set(marks.map(m => m.habit));
+      const weekday = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][istNow().getUTCDay()];
+      const risks = [];
+      if (!(log && log.gym_done) && weekday !== "Sunday" && !marked.has("move")) risks.push({ coach: "fitness", habit: "workout", min: "a 20 min home workout or a brisk 30 min walk" });
+      if ((!log || (+log.total_protein || 0) < 100) && !marked.has("food")) risks.push({ coach: "nutrition", habit: "protein", min: "getting to 100g protein (e.g. a whey scoop + a bowl of curd or soya)" });
+      if (!risks.length) return res.status(200).json({ slot, skipped: "streak safe or already marked" });
+      const r = risks[0];
+      const result = await writeAndSend(r.coach, "streak",
+        `You're texting Jeet to protect his streak. It's about 9:15 pm and his ${r.habit} isn't logged today. Offer the minimum version — ${r.min} — as the way to keep the streak tonight, make it feel doable right now, and ask him to mark it in the app (Today → streak card) when done. If he's sick, injured or in pain, tell him to mark a recovery day instead — never push through pain. 1-2 short lines, warm but firm, no guilt.
+
+Today in his log: ${log ? logLine(log) : "nothing logged in the app yet today"}.`, shared);
+      return res.status(200).json(result);
+    }
     let coachId = (req.query && COACHES[req.query.coach] && req.query.coach) || pickCoach(slot, log, commitments);
     // Repeated misses with one coach → that coach does a bottleneck check instead of another reminder.
     let missNote = "";

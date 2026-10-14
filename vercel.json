@@ -47,6 +47,10 @@
     {
       "path": "/api/coach-nudge?slot=review",
       "schedule": "15 6 * * 0"
+    },
+    {
+      "path": "/api/coach-nudge?slot=streak",
+      "schedule": "45 15 * * *"
     }
   ]
 }
