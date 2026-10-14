@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-60";
+const APP_BUILD = "2026.10.14-61";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1232,6 +1232,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(COACH_DISCIPLINE);
     parts.push(COACH_PERSONAL_WHY);
     parts.push(COACH_PLAIN_TALK);
+    parts.push(BEHAVIOUR_PROTOCOL);
     parts.push("ABOUT THE NOTES IN YOUR PERSONA: the routine, products and profile written at the top of your instructions came from when the app was set up and may be out of date. WHO JEET IS, his logs and what he tells you now always win — if they differ, go with them (and confirm with him when it matters).");
     const stable = parts.splice(0).join("\n\n");
     const h = coach.id === "mind" ? freshMeherHandoff() : null;
@@ -1256,6 +1257,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(goalsPrompt(coach.id));
     parts.push(departmentPrompt(coach.id));
     parts.push(masterPlanPrompt(coach.id));
+    parts.push(bottleneckPrompt(coach.id));
     parts.push(bondPrompt(coach.id, CH[coach.id]));
     parts.push(coachNotesPrompt(coach.id));
     const intake = intakePrompt(coach.id, CH[coach.id]);
@@ -1281,7 +1283,7 @@ async function pushCommitment(c) {
         const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_commitments?on_conflict=id", {
             method: "POST",
             headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }),
-            body: JSON.stringify({ id: c.id, coach: c.coach, text: c.text, due: c.due, status: c.status, owner: c.owner || "jeet", resolved_at: c.status === "open" ? null : new Date().toISOString() }),
+            body: JSON.stringify({ id: c.id, coach: c.coach, text: c.text, due: c.due, status: c.status, owner: c.owner || "jeet", blocker: c.blocker || null, resolved_at: c.status === "open" ? null : new Date().toISOString() }),
         });
         if (r.ok) { const l = loadCommitments(); const f = l.find(x => x.id === c.id); if (f) { f.synced = true; saveCommitments(l); } }
     } catch (_a) { }
@@ -1289,7 +1291,7 @@ async function pushCommitment(c) {
 async function syncCommitments() {
     if (!supabaseReady()) return loadCommitments();
     try {
-        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_commitments?select=id,coach,text,due,status,owner&order=created_at.asc&limit=80", { headers: SUPA_HEADERS() });
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_commitments?select=id,coach,text,due,status,owner,blocker&order=created_at.asc&limit=80", { headers: SUPA_HEADERS() });
         const rows = await r.json();
         if (!r.ok || !Array.isArray(rows)) return loadCommitments();
         const merged = rows.map(x => Object.assign({}, x, { synced: true }));
@@ -1322,9 +1324,9 @@ function applyCommitTags(text, coachId) {
         }
         return "";
     });
-    clean = clean.replace(/<resolve\s+id="([^"]+)"\s*>\s*(done|missed)\s*<\/resolve>/gi, (_, id, st) => {
+    clean = clean.replace(/<resolve\s+id="([^"]+)"(?:\s+blocker="([^"]*)")?\s*>\s*(done|missed)\s*<\/resolve>/gi, (_, id, blocker, st) => {
         const c = list.find(x => x.id === id);
-        if (c && c.status === "open") { c.status = st.toLowerCase(); c.synced = false; changed.push(c); }
+        if (c && c.status === "open") { c.status = st.toLowerCase(); if (blocker && c.status === "missed") c.blocker = blocker.toLowerCase().slice(0, 40); c.synced = false; changed.push(c); }
         return "";
     }).replace(/<\/?(commit|resolve|followup)[^>]*>/gi, "").trim();
     if (changed.length) { saveCommitments(list); changed.forEach(pushCommitment); }
@@ -1552,7 +1554,8 @@ function MasterPlanSheet({ T, onClose }) {
     const who = id => { const c = COACHES.find(x => x.id === id) || {}; return React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 } }, React.createElement(CoachAvatar, { coachId: id, color: c.color, size: 26 }), React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: c.color || T.ivory } }, personaName(id))); };
     return React.createElement(ChatSheet, { T: T, title: "📋 Master plan · v" + planVersion(), onClose: onClose },
         React.createElement("div", { style: { fontFamily: font }, "data-tick": tick },
-            React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, lineHeight: 1.5 } }, "Coaches plan mein koi bhi badlaav sirf propose karte hain. Tum approve karoge tabhi wo plan ka hissa banega — har decision ka reason aur data yahan record hota hai. Head Coach roz departments ke beech takraav pakadta aur suljhata hai."),
+            React.createElement(ScorecardBlock, { T: T }),
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryM, lineHeight: 1.5, marginTop: 10 } }, "Coaches plan mein koi bhi badlaav sirf propose karte hain. Tum approve karoge tabhi wo plan ka hissa banega — har decision ka reason aur data yahan record hota hai. Head Coach roz departments ke beech takraav pakadta aur suljhata hai."),
             label("Approval chahiye (" + pending.length + ")"),
             !pending.length && React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryD } }, "Kuch pending nahi."),
             pending.map(d => React.createElement("div", { key: d.id, style: Object.assign({}, box, { border: "1px solid rgba(201,168,76,.35)" }) },
@@ -1596,6 +1599,8 @@ ${profilePrompt().split("How to use it:")[0]}
 ${fullRoutineText()}
 OPEN PROMISES:
 ${open || "- none"}
+ACCOUNTABILITY (30 days): ${(() => { const st = accountabilityStats(null); return (st.adherence != null ? st.adherence + "% promises kept" : "no closed promises") + (Object.keys(st.blockers).length ? "; blockers: " + Object.keys(st.blockers).map(k => k + " ×" + st.blockers[k]).join(", ") : "") + "; experiments " + st.worked + " worked / " + st.failed + " failed / " + st.running + " running"; })()}
+BOTTLENECK HYPOTHESES: ${BN.load().filter(b => b.status === "suspected" || b.status === "confirmed").map(b => b.coach + ": " + b.category + " — " + b.hypothesis + " (" + b.confidence + ", " + b.instances + "×)").join("; ") || "none yet"}
 RECENT CHATS (last 7 days):
 ${chats || "- no chats this week"}
 NOTES ALREADY SENT THIS WEEK (don't repeat): ${loadNotes().filter(n => n.at > Date.now() - 7 * 864e5).map(n => n.from + "→" + n.to + ": " + n.text).join(" | ") || "none"}
@@ -1685,7 +1690,7 @@ function processCoachReply(raw, coachId) {
     const mem = extractTeamMemory(raw);
     addTeamMemoryFacts(mem.facts, coachId);
     const ho = extractHandoff(mem.clean || raw);
-    const gl = applyGoalTags(applyDecisionTags(applyFlagTags(applyCommitTags(applyTellTags(ho.clean || mem.clean || raw, coachId), coachId), coachId), coachId), coachId);
+    const gl = applyGoalTags(applyBottleneckTags(applyDecisionTags(applyFlagTags(applyCommitTags(applyTellTags(ho.clean || mem.clean || raw, coachId), coachId), coachId), coachId), coachId), coachId);
     const clean = applyMomentTags(gl.clean, coachId) || String(raw).replace(/<[^>]+>/g, "").trim();
     let parts = clean.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
     if (parts.length > 3) parts = parts.slice(0, 2).concat([parts.slice(2).join("\n\n")]);
@@ -1804,6 +1809,134 @@ ${wins.length ? "Goals he already hit with you: " + wins.map(g => "\"" + g.text 
 - Use the log for perspective now and then: "3 hafte pehle 60 pe atka tha, aaj 70 — dekha?" Never mention the tags.`;
 }
 
+
+// ── BOTTLENECK ENGINE + EXPERIMENTS: learn what really blocks him and what works ──
+// Coaches log hypotheses about what's blocking progress (<bottleneck>), test one
+// change at a time as an experiment with a baseline, success criterion and review
+// date (<experiment>), and record the result (<experiment_result>). Missed promises
+// carry a blocker. All of it feeds back into every coach so failed strategies
+// aren't repeated and repeated blockers change the strategy.
+const BOTTLENECK_CATS = ["knowledge", "execution", "all_or_nothing", "planning", "environment", "recovery", "expectations", "emotional", "plateau", "measurement"];
+const BLOCKERS = ["time", "energy", "forgot", "avoidance", "environment", "recovery", "planning", "mood", "pain", "other"];
+function syncedList(key, table, max, toRow, fromRow) {
+    const load = () => { const l = store.get(key); return Array.isArray(l) ? l : []; };
+    const save = l => store.set(key, l.slice(-max));
+    const push = async (x) => {
+        if (!supabaseReady()) return;
+        try {
+            const r = await fetch(SUPABASE_URL + "/rest/v1/" + table + "?on_conflict=id", { method: "POST", headers: Object.assign(SUPA_HEADERS(), { Prefer: "resolution=merge-duplicates" }), body: JSON.stringify(toRow(x)) });
+            if (r.ok) { const l = load(); const f = l.find(y => y.id === x.id); if (f) { f.synced = true; save(l); } }
+        } catch (_a) { }
+    };
+    const sync = async () => {
+        if (!supabaseReady()) return load();
+        try {
+            const r = await fetch(SUPABASE_URL + "/rest/v1/" + table + "?select=*&order=created_at.asc&limit=" + max, { headers: SUPA_HEADERS() });
+            const rows = await r.json();
+            if (!r.ok || !Array.isArray(rows)) return load();
+            const pending = load().filter(x => !x.synced), ids = new Set(pending.map(x => x.id));
+            save(rows.filter(x => !ids.has(x.id)).map(x => Object.assign(fromRow(x), { synced: true })).concat(pending));
+            pending.forEach(push);
+            return load();
+        } catch (_a) { return load(); }
+    };
+    return { load, save, push, sync };
+}
+const BN = syncedList("jos_bottlenecks", "jeetos_bottlenecks", 80,
+    b => ({ id: b.id, coach: b.coach, category: b.category, hypothesis: b.hypothesis, evidence: b.evidence || null, instances: b.instances, confidence: b.confidence, status: b.status, created_at: new Date(b.at).toISOString(), updated_at: new Date(b.updated || b.at).toISOString() }),
+    x => ({ id: x.id, coach: x.coach, category: x.category, hypothesis: x.hypothesis, evidence: x.evidence, instances: x.instances, confidence: x.confidence, status: x.status, at: Date.parse(x.created_at) || Date.now(), updated: Date.parse(x.updated_at) || Date.now() }));
+const EXP = syncedList("jos_experiments", "jeetos_experiments", 80,
+    e => ({ id: e.id, coach: e.coach, action: e.action, target: e.target || null, baseline: e.baseline || null, criterion: e.criterion || null, review_date: e.review || null, status: e.status, outcome: e.outcome || null, created_at: new Date(e.at).toISOString(), updated_at: new Date().toISOString() }),
+    x => ({ id: x.id, coach: x.coach, action: x.action, target: x.target, baseline: x.baseline, criterion: x.criterion, review: x.review_date, status: x.status, outcome: x.outcome, at: Date.parse(x.created_at) || Date.now() }));
+function attrs(str) { const a = {}; String(str).replace(/(\w+)="([^"]*)"/g, (_, k, v) => { a[k.toLowerCase()] = v; }); return a; }
+function applyBottleneckTags(text, coachId) {
+    let clean = String(text).replace(/<bottleneck\b([^>]*)>([\s\S]*?)<\/bottleneck>/gi, (_, at, body) => {
+        const a = attrs(at), h = body.trim().slice(0, 200);
+        const cat = BOTTLENECK_CATS.includes((a.category || "").toLowerCase()) ? a.category.toLowerCase() : "execution";
+        const conf = ["low", "medium", "high"].includes((a.confidence || "").toLowerCase()) ? a.confidence.toLowerCase() : "low";
+        if (!h) return "";
+        const l = BN.load();
+        const same = l.find(b => b.coach === coachId && b.category === cat && (b.status === "suspected" || b.status === "confirmed"));
+        if (same) { same.instances = (same.instances || 1) + 1; same.hypothesis = h; same.evidence = String(a.evidence || same.evidence || "").slice(0, 300); same.confidence = conf; same.updated = Date.now(); same.synced = false; BN.save(l); BN.push(same); }
+        else { const b = { id: "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), coach: coachId, category: cat, hypothesis: h, evidence: String(a.evidence || "").slice(0, 300), instances: 1, confidence: conf, status: "suspected", at: Date.now(), updated: Date.now(), synced: false }; l.push(b); BN.save(l); BN.push(b); }
+        return "";
+    });
+    clean = clean.replace(/<bottleneck_status\s+id="([^"]+)"\s*>\s*(confirmed|rejected|resolved)\s*<\/bottleneck_status>/gi, (_, id, st) => {
+        const l = BN.load(), b = l.find(x => x.id === id);
+        if (b) { b.status = st.toLowerCase(); b.updated = Date.now(); b.synced = false; BN.save(l); BN.push(b); }
+        return "";
+    });
+    clean = clean.replace(/<experiment\b([^>]*)>([\s\S]*?)<\/experiment>/gi, (_, at, body) => {
+        const a = attrs(at), act = body.trim().slice(0, 200);
+        if (!act) return "";
+        const l = EXP.load();
+        if (l.some(e => e.coach === coachId && e.status === "running" && e.action.toLowerCase() === act.toLowerCase())) return "";
+        const e = { id: "x" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), coach: coachId, action: act, target: String(a.target || "").slice(0, 80), baseline: String(a.baseline || "").slice(0, 80), criterion: String(a.criterion || "").slice(0, 120),
+            review: /^\d{4}-\d{2}-\d{2}$/.test(a.review || "") ? a.review : localIsoDate(new Date(Date.now() + 14 * 864e5)), status: "running", at: Date.now(), synced: false };
+        l.push(e); EXP.save(l); EXP.push(e);
+        return "";
+    });
+    clean = clean.replace(/<experiment_result\s+id="([^"]+)"\s*>\s*(worked|failed|mixed)\s*:?\s*([\s\S]*?)<\/experiment_result>/gi, (_, id, st, out) => {
+        const l = EXP.load(), e = l.find(x => x.id === id);
+        if (e && e.status === "running") { e.status = st.toLowerCase(); e.outcome = out.trim().slice(0, 240); e.synced = false; EXP.save(l); EXP.push(e); }
+        return "";
+    });
+    return clean.replace(/<\/?(bottleneck|bottleneck_status|experiment|experiment_result)\b[^>]*>/gi, "").trim();
+}
+// Accountability numbers — the system's own report card.
+function accountabilityStats(coachId) {
+    const since = localIsoDate(new Date(Date.now() - 30 * 864e5)), today = localIsoDate();
+    const cs = loadCommitments().filter(c => c.owner !== "coach" && (!coachId || c.coach === coachId) && c.due >= since);
+    const done = cs.filter(c => c.status === "done").length, missed = cs.filter(c => c.status === "missed").length;
+    const overdue = cs.filter(c => c.status === "open" && c.due < today).length;
+    const own = loadCommitments().filter(c => c.owner === "coach" && (!coachId || c.coach === coachId) && c.due >= since && c.due <= today);
+    const blockers = {};
+    cs.filter(c => c.status === "missed" && c.blocker).forEach(c => { blockers[c.blocker] = (blockers[c.blocker] || 0) + 1; });
+    const ex = EXP.load().filter(e => !coachId || e.coach === coachId);
+    return { adherence: done + missed ? Math.round(done / (done + missed) * 100) : null, done: done, missed: missed, overdue: overdue,
+        followThrough: done + missed + overdue ? Math.round((done + missed) / (done + missed + overdue) * 100) : null,
+        coachKept: own.length ? Math.round(own.filter(c => c.status === "done").length / own.length * 100) : null,
+        blockers: blockers, worked: ex.filter(e => e.status === "worked").length, failed: ex.filter(e => e.status === "failed").length, running: ex.filter(e => e.status === "running").length };
+}
+const BEHAVIOUR_PROTOCOL = `BEHAVIOUR-CHANGE PROTOCOL (how you turn advice into results):
+- DIAGNOSE THE BOTTLENECK before changing anything. Is it knowledge (he doesn't know what to do), execution (knows, doesn't do), all-or-nothing thinking (one miss → whole week gone), planning (meals/gym/sleep keep getting disrupted), environment, recovery (tired, poor sleep, falling performance), expectations (reading normal ups and downs as failure), emotional (stress/low mood breaking the routine), plateau (consistent effort, stalled numbers) or measurement (bad or missing data)? These are hypotheses, not verdicts — never conclude "lazy" from a miss. Ask the one question that decides it when you can't tell.
+- Save a supported hypothesis at the end of your reply: <bottleneck category="planning" confidence="low|medium|high" evidence="what you saw, how many times">plain-words hypothesis</bottleneck>. Confirm, reject or close it later with <bottleneck_status id="ID">confirmed|rejected|resolved</bottleneck_status>.
+- The fix matches the bottleneck: knowledge → teach simply; execution → make the action smaller, schedule it, change the environment; all-or-nothing → name the thought, restart today with the minimum; planning → an if-then backup ("Agar 7 baje tak gym nahi gaya, toh ghar pe 20 min"); recovery → fix sleep/load before pushing harder; expectations → show the trend, not the day; emotional → kindness, smaller commitments, Dr. Meher.
+- Every new strategy is an EXPERIMENT: <experiment target="what we measure" baseline="current number" criterion="what counts as success" review="YYYY-MM-DD">the change</experiment>. On the review date, judge it against the criterion and record it: <experiment_result id="ID">worked|failed|mixed: one line why</experiment_result>. Keep what worked; never repeat a failed strategy without a new reason.
+- When a promise was MISSED: find out what actually happened, name the blocker without judgement, compare it with his past blockers, then agree the next realistic action. Close it with <resolve id="ID" blocker="time|energy|forgot|avoidance|environment|recovery|planning|mood|pain|other">missed</resolve>. Same blocker twice → change the strategy, don't repeat the same push.
+- Talk like motivational interviewing: ask what HE wants and what's in the way before telling; reflect his words back; let him choose between two options when you can.
+- Honest reporting is never punished — if he admits a miss, thank him for the honesty first. Shame makes people hide the truth.
+- In real answers, cover (as normal texts, never headings): what's happening → the evidence and likely bottleneck → the one thing that matters now → the action and deadline → how you'll know it's done → when you'll review it.`;
+function bottleneckPrompt(coachId) {
+    const today = localIsoDate();
+    const bns = BN.load().filter(b => (b.coach === coachId || b.confidence === "high") && (b.status === "suspected" || b.status === "confirmed")).slice(-8);
+    const ex = EXP.load().filter(e => e.coach === coachId);
+    const running = ex.filter(e => e.status === "running"), done = ex.filter(e => e.status !== "running").slice(-6);
+    const st = accountabilityStats(coachId), blk = Object.keys(st.blockers).sort((a, b) => st.blockers[b] - st.blockers[a]);
+    return `WHAT'S REALLY BLOCKING HIM (learned so far):
+${bns.length ? bns.map(b => "- [id " + b.id + "] " + b.category.replace(/_/g, " ").toUpperCase() + " (" + b.status + ", " + b.confidence + " confidence, seen " + b.instances + "×" + (b.coach !== coachId ? ", from " + personaName(b.coach) : "") + "): " + b.hypothesis + (b.evidence ? " — evidence: " + b.evidence : "")).join("\n") : "- No bottleneck hypotheses yet — find the first one."}
+${blk.length ? "Why his promises with you broke (last 30 days): " + blk.map(k => k + " ×" + st.blockers[k]).join(", ") + (st.blockers[blk[0]] >= 2 ? " — '" + blk[0] + "' keeps coming back: change the strategy, not the pep talk." : "") : ""}
+EXPERIMENTS: ${running.length ? running.map(e => "\n- RUNNING [id " + e.id + "] " + e.action + " — target " + (e.target || "?") + ", baseline " + (e.baseline || "?") + ", success = " + (e.criterion || "?") + ", review " + e.review + (e.review <= today ? " ⏰ DUE FOR REVIEW — judge it now" : "")).join("") : "none running."}${done.length ? "\nPast results: " + done.map(e => e.action + " → " + e.status.toUpperCase() + (e.outcome ? " (" + e.outcome + ")" : "")).join("; ") : ""}
+His accountability with you (30 days): ${st.adherence != null ? st.adherence + "% of promises kept (" + st.done + " kept, " + st.missed + " missed)" : "no closed promises yet"}${st.overdue ? ", " + st.overdue + " overdue and not checked yet — check them" : ""}.`;
+}
+function ScorecardBlock({ T }) {
+    const st = accountabilityStats(null);
+    const font = "Inter,system-ui,sans-serif";
+    const cell = (v, l, c) => React.createElement("div", { style: { flex: 1, textAlign: "center" } },
+        React.createElement("div", { style: { fontSize: 20, fontWeight: 800, color: c || T.ivory } }, v == null ? "—" : v),
+        React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD, marginTop: 2 } }, l));
+    const blk = Object.keys(st.blockers).sort((a, b) => st.blockers[b] - st.blockers[a]);
+    const bns = BN.load().filter(b => b.status === "suspected" || b.status === "confirmed").slice(-4);
+    return React.createElement("div", { style: { padding: 12, borderRadius: 14, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", marginTop: 12, fontFamily: font } },
+        React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: T.gold, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 8 } }, "Accountability scorecard · 30 din"),
+        React.createElement("div", { style: { display: "flex", gap: 6 } },
+            cell(st.adherence != null ? st.adherence + "%" : null, "promises kept", st.adherence >= 70 ? "#3DD68C" : st.adherence != null ? "#E0A23B" : null),
+            cell(st.followThrough != null ? st.followThrough + "%" : null, "follow-through"),
+            cell(st.coachKept != null ? st.coachKept + "%" : null, "coaches ne nibhaya"),
+            cell(st.worked + "/" + (st.worked + st.failed), "experiments worked")),
+        blk.length > 0 && React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 10 } }, "Promise kyun toote: " + blk.map(k => k + " ×" + st.blockers[k]).join(", ")),
+        bns.map(b => React.createElement("div", { key: b.id, style: { fontSize: 12, color: T.ivory, marginTop: 6 } }, "🔎 " + b.hypothesis, React.createElement("span", { style: { color: T.ivoryD, fontSize: 11 } }, " · " + b.category.replace(/_/g, " ") + " · " + b.confidence + " · " + b.instances + "×"))));
+}
 // ── FOCUS BOARD: every department flags his issues and drives ONE major focus ──
 // Coaches flag issues with <flag severity="high|med|low" evidence="…">…</flag>,
 // close them with <unflag id="…">fixed</unflag>, and keep one goal per department
@@ -8025,6 +8158,8 @@ function JeetOS() {
         syncGoals();
         syncFlags();
         syncDecisions();
+        BN.sync();
+        EXP.sync();
         syncMoments();
         // The team's private morning huddle (once a day).
         syncNotes().then(() => setTimeout(() => runTeamHuddle(keptCH), 4000));

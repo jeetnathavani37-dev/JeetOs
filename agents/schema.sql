@@ -254,3 +254,20 @@ create table if not exists public.jeetos_safety_events (
 );
 alter table public.jeetos_safety_events enable row level security;
 create policy "allow all for anon" on public.jeetos_safety_events for all to public using (true) with check (true);
+
+-- Bottleneck engine: blockers on missed promises, hypotheses, and experiments with outcomes.
+alter table public.jeetos_commitments add column if not exists blocker text;
+create table if not exists public.jeetos_bottlenecks (
+  id text primary key, coach text not null, category text not null, hypothesis text not null, evidence text,
+  instances int not null default 1, confidence text not null default 'low', status text not null default 'suspected',
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+);
+alter table public.jeetos_bottlenecks enable row level security;
+create policy "allow all for anon" on public.jeetos_bottlenecks for all to public using (true) with check (true);
+create table if not exists public.jeetos_experiments (
+  id text primary key, coach text not null, action text not null, target text, baseline text, criterion text,
+  review_date date, status text not null default 'running', outcome text,
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+);
+alter table public.jeetos_experiments enable row level security;
+create policy "allow all for anon" on public.jeetos_experiments for all to public using (true) with check (true);
