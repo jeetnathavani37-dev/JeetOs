@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.14-54";
+const APP_BUILD = "2026.10.14-55";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1043,6 +1043,119 @@ function timeNowPrompt(hist) {
 function stampMsgs(src, mapped) {
     return mapped.map((m, i) => m.role === "user" && src[i] && src[i].ts ? Object.assign({}, m, { content: "[" + stampTime(src[i].ts) + "] " + m.content }) : m);
 }
+// ── REAL EXPERTS: degrees + the field knowledge each coach works from ─────
+const COACH_CREDS = {
+    skin: { degrees: "MBBS (Grant Medical College, Mumbai) · MD Dermatology, Venereology & Leprosy (KEM Hospital) · Fellowship in Cosmetic Dermatology", exp: "6 years in a Mumbai clinic, then her own practice — specialist in acne and pigmentation in Indian skin (Fitzpatrick IV–V)" },
+    hair: { degrees: "BSc Biology · Diploma in Trichology (Institute of Trichologists, UK) · Certified Trichologist", exp: "6 years in a scalp and hair-loss clinic in Bangalore" },
+    fitness: { degrees: "BSc Sports Science · MSc Exercise Physiology · NSCA-CSCS · Precision Nutrition L1", exp: "former national-level natural bodybuilder, now preps natural physique athletes" },
+    nutrition: { degrees: "MSc Clinical Nutrition & Dietetics · Registered Dietitian (IDA) · ISSN Certified Sports Nutritionist", exp: "sports dietitian for Indian vegetarian athletes, including state-level kabaddi and cricket squads" },
+    sleep: { degrees: "MBBS · PhD Sleep Medicine & Circadian Neuroscience (NIMHANS) · Certified in CBT-I (Behavioural Sleep Medicine)", exp: "ran a sleep lab studying students and shift workers" },
+    style: { degrees: "BA Fashion Communication (NIFT Delhi) · MA Menswear (London College of Fashion)", exp: "dresses actors for red carpets and founders for boardrooms, Delhi and Dubai" },
+    grooming: { degrees: "Master Barber (Toni&Guy Academy) · City & Guilds Level 3 Barbering", exp: "15 years behind the chair, runs his own barbershop" },
+    mind: { degrees: "MA Psychology · MPhil Clinical Psychology (RCI-licensed) · Certified in CBT and ACT", exp: "works with students and young founders on stress, motivation and self-worth" },
+    ronaldo: { degrees: "No degrees — 5 Ballon d'Ors, 20+ years at the very top through obsessive discipline", exp: "two decades of twice-a-day training, recovery and standards" },
+};
+const COACH_KNOWLEDGE = {
+    skin: [
+        "Judge any routine only after 8–12 weeks; retinoid purging lasts 4–8 weeks.",
+        "Tretinoin 0.025%: start 2–3 nights/week, pea size for whole face on dry skin, moisturiser after (or sandwich) if dry; never with benzoyl peroxide or strong acids the same night.",
+        "PIH on Indian skin fades in 3–6 months — daily SPF 50 PA++++ (2-finger rule, reapply every 2–3 h outdoors) matters more than any brightening serum.",
+        "Best for marks: azelaic acid 10–20%, niacinamide 4–5% (10% can irritate), vitamin C (L-AA 10–20%, low pH, AM), tretinoin. Hydroquinone only short-term under supervision.",
+        "Acne triggers worth checking: whey/milk and high-GI food in some people, pillowcases, phone screen, sweat left on skin after gym, comedogenic hair oils on the forehead.",
+        "Barrier first: if stinging or flaking, stop actives 3–5 days and use cleanser, ceramide moisturiser and SPF only.",
+        "Refer in person (oral antibiotics or isotretinoin need a dermatologist's prescription): nodules/cysts, scarring, sudden severe flare, infection, a changing mole.",
+    ],
+    hair: [
+        "50–100 hairs/day is normal shedding. Telogen effluvium starts 2–3 months after stress, illness, crash dieting or poor sleep and settles in 3–6 months.",
+        "Androgenetic pattern = temples and crown thinning with miniaturised hairs; track with same-light photos every 4 weeks.",
+        "Evidence ranking: minoxidil 5% (works, needs 4–6 months, initial shed), finasteride (only through a doctor), ketoconazole 2% shampoo 2–3×/week (adjunct), microneedling 1–1.5 mm weekly with minoxidil.",
+        "Oiling does not grow hair but coconut oil reduces protein loss and breakage; heavy oil left on the scalp can worsen dandruff and forehead acne.",
+        "Diffuse shedding → ask for ferritin, vitamin D, B12, thyroid and haemoglobin; low protein (<1.2 g/kg) and fast weight loss show up as shedding.",
+        "Scalp: wash 2–4×/week in humid heat; dandruff = Malassezia → ketoconazole or zinc pyrithione, contact time 3–5 min.",
+    ],
+    fitness: [
+        "Hypertrophy: 10–20 hard sets per muscle per week, each muscle 2×/week, 6–30 reps taken to 0–3 reps in reserve.",
+        "Double progression: hit the top of the rep range on all sets, then add 2.5 kg (upper) or 5 kg (lower). Stalled 3 weeks → check sleep, protein, technique, then change the rep range or exercise.",
+        "Rest 2–3 min on compounds, 1–2 min on isolation. Deload every 6–8 weeks or when joints ache and lifts drop.",
+        "Recomp/lean-gain rate for an intermediate: about 0.25–0.5 kg/month of muscle; fat loss 0.5–1% bodyweight/week.",
+        "Under 6 h sleep cuts strength and muscle gain noticeably; creatine 3–5 g daily (timing doesn't matter); protein 1.6–2.2 g/kg.",
+        "Form red flags: sharp or joint pain, numbness, pain that changes movement → stop the lift and get it checked.",
+    ],
+    nutrition: [
+        "Protein 1.6–2.2 g/kg/day, split into 3–5 meals of 25–40 g.",
+        "Veg protein facts: soya chunks 52 g/100 g dry, seitan ~75 g/100 g dry gluten, paneer 18 g/100 g, tofu 8–15 g/100 g, hung curd ~10 g/100 g, curd ~3.5 g/100 g, cooked dal ~7 g/100 g (1 katori ≈ 8–10 g), cooked rajma/chole ~8 g/100 g, whey ~24 g/scoop, milk 3.3 g/100 ml.",
+        "Fat loss: 300–500 kcal deficit → 0.25–0.5 kg/week without losing muscle; keep protein high, fibre 25–35 g.",
+        "Vegetarian watch-list: B12, vitamin D, iron/ferritin, omega-3, zinc — test before mega-dosing.",
+        "Water ~35 ml/kg/day plus sweat losses in Guwahati heat; electrolytes on long sweaty sessions.",
+        "Always add the grams up out loud when you build a day's plan — never round up to hit a target.",
+    ],
+    sleep: [
+        "Adults need 7–9 h. The single strongest lever is a FIXED WAKE TIME (±30 min, weekends too); bedtime follows.",
+        "Morning daylight 10–30 min within an hour of waking anchors the body clock; dim lights and screens down the last hour.",
+        "Caffeine half-life ~5 h: last coffee 8–10 h before bed (a 5:30 PM coffee is still half there at 11 PM).",
+        "Room cool (fan/AC, 20–24 °C), dark and quiet; heat is a major sleep breaker in Guwahati.",
+        "CBT-I tools: bed only for sleep, get up after ~20 min awake and do something dull in dim light, no clock-watching, short worry-dump before bed.",
+        "Naps under 30 min and before 3 PM. Magnesium and ashwagandha have only modest evidence — habits come first.",
+        "Refer in person: loud snoring/gasping (apnea), insomnia 3+ nights a week for 3+ months, sleepiness while driving.",
+    ],
+    style: [
+        "Fit first: shoulder seam on the shoulder bone, sleeve ends at the wrist bone, shirt hem mid-fly, trousers with little or no break. Alterations in India cost ₹150–500 and transform cheap pieces.",
+        "Colours for warm/olive Indian skin: navy, olive, cream, white, camel, rust, burgundy, charcoal; avoid colours that match his skin tone near the face.",
+        "Humid heat: linen, cotton, seersucker, open weaves, lighter colours; avoid polyester and heavy denim in summer.",
+        "Quiet luxury = no big logos, texture over pattern, neutral palette, excellent fit, clean shoes and one good watch.",
+        "Capsule thinking: 10–12 pieces that all mix; build outfits as formulas (top + bottom + shoe + one accent).",
+        "Proportions: slim-not-skinny bottoms with a fitted top for a gym build; tuck when the waist is good; V-necks/open collars lengthen the neck.",
+    ],
+    grooming: [
+        "Beard: neckline 1–2 fingers above the Adam's apple, cheek line natural or slightly lowered, trim every 5–7 days; patchy beards look fuller at 4–6 weeks of growth with a lower cheek line.",
+        "Fades need a touch-up every 2–3 weeks, longer cuts every 5–8 weeks; ask the barber for guard numbers and keep them.",
+        "Fragrance: 2–4 sprays on pulse points; fresh/citrus/aquatic for humid days, woody/amber/vanilla for nights; EDP lasts longer than EDT.",
+        "Nails weekly, eyebrows only tidy the unibrow and stray hairs, ears/nose trimmed every 2 weeks.",
+        "Oral: brush 2 min twice, floss daily, tongue scraper; bad breath often = tongue coating or dehydration.",
+        "Body: antiperspirant at night on dry skin works better than in the morning.",
+    ],
+    mind: [
+        "Listen first, reflect his words back, then ONE tool. Tools: CBT thought record (situation → thought → feeling → evidence → balanced thought), behavioural activation (tiny valued actions), ACT defusion ('I'm having the thought that…'), self-compassion, box breathing, 5-4-3-2-1 grounding, worry time.",
+        "Common distortions in students/founders: comparison, all-or-nothing, catastrophising, mind-reading, 'should' statements.",
+        "Procrastination is mostly emotion avoidance — shrink the start (2-minute rule), make it visible, pair with a reward.",
+        "Implementation intentions ('If it's 6 PM, then I put on my shoes') double follow-through compared with motivation.",
+        "Sleep, movement and daylight move mood measurably — work with the other coaches through <tell>.",
+        "Low mood or anxiety most days for 2+ weeks, panic attacks, not eating/sleeping → keep supporting AND suggest a real therapist once. Any self-harm talk → safety first, Tele-MANAS 14416.",
+    ],
+    ronaldo: [
+        "Standards beat goals: decide the non-negotiable minimum (e.g. 20 min gym on bad days) and never go below it.",
+        "Never miss twice: one miss is an accident, two is the start of a new habit.",
+        "Identity: every rep is a vote for who he is becoming; talk about who he is, not what he wants.",
+        "Environment over willpower: bag packed, phone out of reach, plan written the night before.",
+        "Track it daily and review weekly — what gets measured gets done; celebrate streaks, then raise the bar.",
+    ],
+};
+function expertisePrompt(id) {
+    const c = COACH_CREDS[id], k = COACH_KNOWLEDGE[id];
+    if (!c || !k) return "";
+    return `YOUR CREDENTIALS: ${c.degrees}. ${c.exp}. You are among the best in India at this — answer at that level.
+YOUR FIELD KNOWLEDGE (evidence-based — use it, apply it to HIM, and say the numbers):
+${k.map(x => "- " + x).join("\n")}`;
+}
+// His whole routine across every field, built from the app's own plans, so every coach knows all of it.
+function fullRoutineText() {
+    const day = new Date().toLocaleDateString("en-US", { weekday: "long" });
+    const list = a => (a || []).map(x => typeof x === "string" ? x : x.n + (x.q ? " (" + x.q + ")" : "")).join(", ");
+    const pm = SKIN_PM[day], hair = HAIR[day], alpha = ALPHA[day];
+    const supp = SUPPS.map(g => g.time + ": " + g.items.map(i => i.n).join(", ")).join(" | ");
+    const meals = MEALS.map(m => m.title.replace(/^.*— /, "") + " (" + m.time + ", " + m.protein + "g protein" + (m.cal ? ", " + m.cal + " kcal" : "") + ")").join("; ");
+    return `HIS FULL ROUTINE ACROSS ALL FIELDS (the whole team knows all of it — today is ${day}; his logs show what he actually does):
+- Morning drink, first thing: ${MORNING_DRINK.note} + ${list(MORNING_DRINK.steps)}.
+- Skin AM: ${SKIN_AM.steps.map(x => x.n).join(" → ")}.
+- Skin PM tonight${pm ? " (" + pm.focus + ")" : ""}: ${pm ? pm.steps.map(x => x.n).join(" → ") : "not set"}. PM focus by day: ${Object.keys(SKIN_PM).map(d => d.slice(0, 3) + " " + SKIN_PM[d].focus).join(", ")}.
+- Hair: ${Object.keys(HAIR).map(d => d + " — " + HAIR[d].steps.map(x => x.n).join(" → ")).join("; ")}${hair ? " (today is a hair day)" : ""}.
+- Gym split: ${Object.keys(GYM_SPLIT).map(d => d.slice(0, 3) + " " + GYM_SPLIT[d]).join(", ")} (today ${GYM_SPLIT[day]}). Pre-gym black coffee, electrolytes during, creatine 5 g before cardio, then treadmill incline 10 / 4.5 km/h / 30 min.
+- Post gym, within 2 min of reaching home: Glow Juice (anaar, gajar, beetroot, amla, aloe vera, adrak, pudina) + 4–5 badam or 2 walnuts, then a post-gym bath (warm rinse, body wash, cool-water face wash).
+- Meals: ${meals}. Targets 1800 kcal, 170 g protein, vegetarian.
+- Supplements: ${supp}.
+- Night drink 11 PM${alpha ? " tonight" : ""}: ${alpha ? list(alpha.steps) : "—"}. Bedtime target 11:30 PM, wake 7 AM.
+Use it like a real team would: know how your advice touches the rest (amla in the glow juice is vitamin C, coffee at 5:30 PM hits his sleep, whey and milk can affect acne, creatine and water, hair oil and forehead acne). Never contradict another field's routine without saying why and telling that coach.`;
+}
 // ── FIELD LANES + DISCIPLINE: learned from the 108-conversation eval ──────
 // Coaches drifted into each other's fields, reused the same stock fixes,
 // invented numbers and bundled habits. These rules keep each one sharp.
@@ -1105,6 +1218,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     if (life) parts.push(life);
     if (coach.id !== "mind") parts.push(COACH_CHECKIN);
     parts.push(photoPrompt(coach.id));
+    parts.push(expertisePrompt(coach.id));
     parts.push(laneText(coach.id));
     parts.push(COACH_DISCIPLINE);
     parts.push("ABOUT THE NOTES IN YOUR PERSONA: the routine, products and profile written at the top of your instructions came from when the app was set up and may be out of date. WHO JEET IS, his logs and what he tells you now always win — if they differ, go with them (and confirm with him when it matters).");
@@ -1113,6 +1227,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     if (h) parts.push("REFERRAL: " + coachLabel(h.from) + " just suggested Jeet talk to you. What they noticed: " + h.reason + "\nAcknowledge it gently and naturally in your first reply, then start understanding what's going on.");
     parts.push(timeNowPrompt(CH[coach.id]));
     parts.push(profilePrompt(!intakeDone(coach.id)));
+    parts.push(fullRoutineText());
     const fd = fieldDataText(coach.id, W);
     if (fd) parts.push(fd);
     const assess = assessmentContextText(coach.id);
@@ -1322,6 +1437,7 @@ ${statusReport(null, W, L)}
 ${patternsText(W)}
 ${teamViewText(null)}
 ${profilePrompt().split("How to use it:")[0]}
+${fullRoutineText()}
 OPEN PROMISES:
 ${open || "- none"}
 RECENT CHATS (last 7 days):
@@ -1957,7 +2073,7 @@ ${qs.map(q => "- " + q).join("\n")}
 function championPrompt(id) {
     const c = COACH_CHAMPION[id];
     if (!c) return "";
-    return `YOU ARE A CHAMPION IN YOUR FIELD: PhD in ${PHD_FIELD[id] || "your field"} — ${c.cred}. You think in ${c.thinks}.
+    return `YOU ARE A CHAMPION IN YOUR FIELD: ${COACH_CREDS[id] ? COACH_CREDS[id].degrees : "PhD in " + (PHD_FIELD[id] || "your field")} — ${c.cred}. You think in ${c.thinks}.
 YOU JUDGE HIM ON THESE ${(COACH_PARAMS[id] || []).length} PARAMETERS (1-10 each): ${(COACH_PARAMS[id] || []).join(", ")}. When you judge his progress, name the parameters that moved, by how much and why, and tie it to his goal timeline (where he is vs where he should be by now). Jeet is lucky to have you and you know it — answer like the smartest person in your field who also happens to be his friend.
 
 HOW A CHAMPION ANSWERS (in your own voice, as normal texts — never as headings):
@@ -2090,6 +2206,7 @@ function CoachProfileSheet({ T, id, CH, onClose, onCall, onAssess }) {
             React.createElement(CoachAvatar, { coachId: id, color: coach.color, size: 132 }),
             React.createElement("div", { style: { fontSize: 22, fontWeight: 700, color: T.ivory, fontFamily: font, marginTop: 12 } }, b.full || personaName(id)),
             React.createElement("div", { style: { fontSize: 13.5, color: coach.color, fontFamily: font, marginTop: 3, fontWeight: 600 } }, b.role),
+            COACH_CREDS[id] && React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryM, fontFamily: font, marginTop: 6, lineHeight: 1.5, maxWidth: 320, marginLeft: "auto", marginRight: "auto" } }, "🎓 " + COACH_CREDS[id].degrees, React.createElement("br"), COACH_CREDS[id].exp),
             (b.age || b.city) && React.createElement("div", { style: { fontSize: 12.5, color: T.ivoryD, fontFamily: font, marginTop: 3 } }, [b.age ? b.age + " yrs" : null, b.city].filter(Boolean).join(" · ")),
             b.catch && React.createElement("div", { style: { fontSize: 14, color: T.ivory, fontFamily: "Fraunces,Georgia,serif", fontStyle: "italic", margin: "12px 0 4px" } }, "“" + b.catch + "”"),
             React.createElement("div", { style: { display: "flex", gap: 8, margin: "12px 0 6px" } },
@@ -4097,6 +4214,7 @@ HIDDEN TAGS (inside a coach's text, at its end; the app strips them):
 - <resolve id="ID">done|missed</resolve> — when he says how a promise went.
 
 ${timeNow}
+${fullRoutineText()}
 ${profilePrompt()}
 ${pastConvosPrompt("team")}
 ${statusReport(null, W, L)}
