@@ -17,6 +17,7 @@
 const { POLICY_V1, istAt, addDays, weightTrend, WEIGHT_RULES } = require("./_penalty");
 const { visibleTo, label, KIND_LABEL } = require("./_memory");
 const { graphHealth } = require("./_goals");
+const { planToday } = require("./_planner");
 
 const SUPABASE_URL = "https://qzripzgbstvxkfobzhyv.supabase.co";
 const PUBLIC_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
@@ -219,6 +220,26 @@ function nextAction(raw, anchors, now, today) {
 }
 
 // ── Packet ─────────────────────────────────────────────────────────────
+// Today's adaptive plan (api/_planner.js) from the same rows every coach sees.
+function todayPlan(raw, now, anchors) {
+  const day = planDay(now);
+  anchors = anchors || anchorStatus(raw, now);
+  const graph = (raw.graph || []).length ? graphHealth(raw.graph, raw, day) : null;
+  const health = {};
+  if (graph) graph.goals.forEach(g => { if (g.kind === "supporting") health[g.id] = g.state; });
+  const gs = raw.goalState;
+  const wi = (raw.weighins || []).filter(w => w.fasted && w.morning).map(w => String(w.day).slice(0, 10)).sort().pop() || null;
+  return planToday({
+    day, now, anchors, health,
+    promises: raw.openPromises || [],
+    todayPriority: gs && gs.today && gs.today.date === day ? gs.today : null,
+    recovery: (raw.marks || []).some(m => m.kind === "recovery" && String(m.date).slice(0, 10) === day),
+    checkin: (raw.dailyCheckins || []).find(c => String(c.day).slice(0, 10) === day && c.kind === "morning") || null,
+    log: (raw.logs || []).find(l => String(l.day).slice(0, 10) === day) || null,
+    lastWeighinDay: wi,
+  });
+}
+
 function buildPacket(raw, opts) {
   opts = opts || {};
   const now = opts.now || Date.now();
@@ -338,6 +359,8 @@ function buildPacket(raw, opts) {
   add("memory", "WHAT THE TEAM KNOWS (dated; older or unconfirmed items — confirm before relying on them)", memLines, 10);
 
   // Unknowns + next action.
+  const plan = todayPlan(raw, now, anchors);
+  add("plan", "TODAY'S PLAN (computed — don't invent other time slots)", plan.top3.map((t, i) => `${i + 1}. ${t.title} — ${t.why}`).concat(plan.changes.map(c => "changed: " + c.text)), 2);
   const na = nextAction(raw, anchors, now, today);
   add("unknowns", "UNKNOWN / MISSING (ask, don't assume)", unknowns.length ? unknowns.slice(0, 10) : ["nothing important missing"], 3);
   add("next", "NEXT ACTION", [na], 1);
@@ -346,7 +369,7 @@ function buildPacket(raw, opts) {
   const header = `=== TEAM CONTEXT for ${COACH_NAMES[coach]} (built by the server; every coach sees the same facts). "unknown"/"not logged"/"no check-in" means NO DATA — never treat it as failure. ===`
     + (failed.length ? `\n!! The server couldn't read part of his data right now (${failed.join(", ")}). Treat those parts as UNKNOWN, not empty — don't tell him he has no goals/promises/logs.` : "");
   const text = render(header, sections, BUDGET[purpose]);
-  return { coach, purpose, day: today, text, failed, graph: graph ? graph.goals.map(g => ({ id: g.id, state: g.state })) : null, sections, unknowns, nextAction: na, anchors: anchors.map(a => ({ key: a.key, state: a.state })) };
+  return { coach, purpose, day: today, text, failed, plan, graph: graph ? graph.goals.map(g => ({ id: g.id, state: g.state })) : null, sections, unknowns, nextAction: na, anchors: anchors.map(a => ({ key: a.key, state: a.state })) };
 }
 
 // Fit the packet into the budget: trim the lowest-priority sections' tails
@@ -377,4 +400,4 @@ async function contextFor(opts, deps) {
   return buildPacket(raw, Object.assign({}, opts, { now }));
 }
 
-module.exports = { buildPacket, loadContextData, contextFor, makeDb, anchorStatus, planDay, nextAction, ACCESS, BUDGET, COACH_IDS };
+module.exports = { buildPacket, loadContextData, contextFor, makeDb, anchorStatus, planDay, nextAction, todayPlan, ACCESS, BUDGET, COACH_IDS };

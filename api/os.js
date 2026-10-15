@@ -5,6 +5,7 @@
 //   GET  /api/os?action=memories&id=<id>    one memory's history
 //   POST /api/os { action: "memory.propose", coach, source, items: [...] }
 //   POST /api/os { action: "memory.act", id, op: confirm|retract|keep|edit|share, text? }
+//   GET  /api/os?action=today               Command Centre: plan, next action, goals, promises
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -14,7 +15,7 @@
 const { requireOwner, bearer, SUPABASE_URL, PUBLIC_KEY } = require("./_auth");
 const { planPropose, planAct } = require("./_memory");
 const { PLAN, graphHealth, approvalRows, cleanTarget } = require("./_goals");
-const { loadContextData, planDay } = require("./_context");
+const { loadContextData, planDay, buildPacket } = require("./_context");
 
 // The server key when configured; otherwise act as the logged-in owner (RLS allows the owner).
 function makeDb(req) {
@@ -59,6 +60,13 @@ module.exports = async function handler(req, res) {
   const db = makeDb(req);
   const q = req.query || {};
   try {
+    if (req.method === "GET" && q.action === "today") {
+      const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
+      const pk = buildPacket(raw, { coach: "head", purpose: "chat" });
+      const health = (raw.graph || []).length ? graphHealth(raw.graph, raw, pk.day) : null;
+      const promises = (raw.openPromises || []).filter(c => c.owner !== "coach").map(c => ({ id: c.id, text: c.text, due: c.due, coach: c.coach, staked: !!c.staked, overdue: !!(c.due && c.due < pk.day) }));
+      return res.status(200).json({ day: pk.day, nextAction: pk.nextAction, plan: pk.plan, anchors: pk.anchors, primary: health && health.primary, goals: health ? health.goals : [], promises, unknowns: pk.unknowns, unreadable: raw.failed });
+    }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
       const all = await db("jeetos_goals?select=id,kind,parent_id,title,why,owner_coach,metric,target,status,approved_at,updated_at&order=created_at.asc");

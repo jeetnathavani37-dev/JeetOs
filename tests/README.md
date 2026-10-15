@@ -9,6 +9,7 @@ node tests/context.test.js       # shared context engine (api/_context.js): pack
 node tests/ai-context.test.js    # api/ai.js: owner-only context, packet in the live prompt block, DB-down fallback
 node tests/coach-nudge.test.js   # cron coaches use the same packet (newest memory, scoped ledger)
 node tests/memory.test.js        # Memory v2: rules, api/os.js against an in-memory table, what coaches see
+node tests/planner.test.js       # adaptive daily plan: misses re-slotted, minimum versions, priorities, /api/os?action=today
 node tests/goals.test.js         # goal graph: health maths, roll-up, approval, target limits, endpoint, packet
 ```
 
