@@ -106,6 +106,10 @@
     {
       "path": "/api/coach-nudge?slot=anchor&anchor=sleep",
       "schedule": "10 19 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=huddle",
+      "schedule": "10 2 * * *"
     }
   ],
   "headers": [

@@ -12,6 +12,8 @@ const { COACHES, personaPrompt } = require("./_coach-personas");
 const { sendToAll } = require("./_push");
 const { POLICY_V1, anchorsOn, istAt, addDays } = require("./_penalty");
 const { buildPacket, loadContextData } = require("./_context");
+const { ensureHuddle } = require("./_huddle");
+const { callClaude: claudeText } = require("./_claude");
 // Which coach nudges him when an anchor of his day slips.
 const ANCHOR_COACH = { wake: "sleep", gym: "fitness", breakfast: "nutrition", work: "ronaldo", lunch: "nutrition", snack: "nutrition", leave: "ronaldo", dinner: "nutrition", sleep: "sleep" };
 
@@ -175,7 +177,14 @@ module.exports = async function handler(req, res) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   const slot = (req.query && req.query.slot) || "evening";
-  if (!SLOT_MOMENT[slot] && slot !== "review" && slot !== "anchor") return res.status(400).json({ error: "slot must be morning|afternoon|evening|night|streak|review|anchor" });
+  // The Head Coach's morning huddle (stored once per day; the app runs it on open if this didn't).
+  if (slot === "huddle") {
+    try {
+      const out = await ensureHuddle({ q: supaJson, write: async (p, body, headers) => { const r = await supa(p, { method: "POST", headers, body: JSON.stringify(body) }); let b = null; try { b = await r.json(); } catch (_) { } return { ok: r.ok, status: r.status, body: b }; }, callClaude: claudeText, source: "cron" });
+      return res.status(out.error ? 502 : 200).json(out);
+    } catch (e) { return res.status(502).json({ error: e.message }); }
+  }
+  if (!SLOT_MOMENT[slot] && slot !== "review" && slot !== "anchor") return res.status(400).json({ error: "slot must be morning|afternoon|evening|night|streak|review|anchor|huddle" });
 
   const today = istIsoDate();
   const [logs, commitments, goals, moments, raw] = await Promise.all([

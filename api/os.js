@@ -17,6 +17,8 @@
 //   POST /api/os { action: "journal.outcome", id, verdict: worked|didnt|unclear, actual? }
 //   GET  /api/os?action=repair              schedule-change proposals for anchors that keep slipping
 //   POST /api/os { action: "repair.approve" | "repair.reject", id }  /  { action: "repair.revert", anchor }
+//   GET  /api/os?action=huddle              today's Head Coach huddle (null if not run yet)
+//   POST /api/os { action: "huddle.run" }   run it now if today's doesn't exist (idempotent)
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -32,6 +34,8 @@ const { questionsFor, cleanAnswers, due: checkinDue } = require("./_checkin");
 const { habitReport } = require("./_habits");
 const { insightReport } = require("./_insights");
 const repair = require("./_repair");
+const { ensureHuddle } = require("./_huddle");
+const { callClaude } = require("./_claude");
 
 // The server key when configured; otherwise act as the logged-in owner (RLS allows the owner).
 function makeDb(req) {
@@ -150,6 +154,16 @@ module.exports = async function handler(req, res) {
         change: `${pr.label}: ${pr.from_time} → ${pr.to_time} from ${next.overrides.slice(-1)[0].from}`, reason: pr.text.slice(0, 300), evidence: JSON.stringify(pr.evidence).slice(0, 300),
         expected_outcome: `on time for ${pr.label} most days`, source: "repair", status: "approved", created_at: nowIso, decided_at: nowIso }) });
       return res.status(200).json({ ok: true, from: next.overrides.slice(-1)[0].from });
+    }
+    if ((req.method === "GET" && q.action === "huddle") || (req.method === "POST" && (req.body || {}).action === "huddle.run")) {
+      const qq = async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; };
+      if (req.method === "GET") {
+        const day = planDay(Date.now()), rows = await qq(`jeetos_huddles?day=eq.${day}&select=*`);
+        return res.status(200).json({ day, huddle: rows && rows[0] || null });
+      }
+      const out = await ensureHuddle({ q: qq, write: (p, body, headers) => db(p, { method: "POST", headers, body: JSON.stringify(body) }), callClaude, source: "app" });
+      if (out.error) return res.status(502).json(out);
+      return res.status(200).json(out);
     }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });

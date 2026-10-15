@@ -435,3 +435,11 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 -- An approved shift applies from tomorrow in: the penalty engine (anchorsOn), the context
 -- packet, the planner, the alarm cron (moved-later anchors aren't pinged at the old time)
 -- and the app's schedule card. Each approval is also a journal decision (source 'repair').
+
+-- ── Head Coach huddle on the server (2026-10-16) ───────────────────────
+-- jeetos_huddles: one row per IST day (focus, priority, conflicts jsonb, notes jsonb, source
+--   server|cron|app). Owner read/insert RLS; no updates or deletes.
+-- Built by api/_huddle.js: Claude suggests from the head-scope packet; code keeps the
+-- priority only if it's in today's plan (or his morning priority) and resolves conflicts
+-- with a fixed ladder (safety > primary goal > sleep > commitments > preferences; a tie
+-- goes to Jeet). Notes go to jeetos_coach_notes from 'head'. Cron 07:40 IST, else the app on open.
