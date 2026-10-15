@@ -5,10 +5,16 @@
 //   GET  /api/os?action=memories&id=<id>    one memory's history
 //   POST /api/os { action: "memory.propose", coach, source, items: [...] }
 //   POST /api/os { action: "memory.act", id, op: confirm|retract|keep|edit|share, text? }
+//   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
+//   POST /api/os { action: "goals.approve" }                 create the proposed graph
+//   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
+//   POST /api/os { action: "goals.cancel" | "goals.resume", id }
 //
 // Rules live in api/_memory.js; this file only reads, applies and audits.
 const { requireOwner, bearer, SUPABASE_URL, PUBLIC_KEY } = require("./_auth");
-const { planPropose, planAct, classify } = require("./_memory");
+const { planPropose, planAct } = require("./_memory");
+const { PLAN, graphHealth, approvalRows, cleanTarget } = require("./_goals");
+const { loadContextData, planDay } = require("./_context");
 
 // The server key when configured; otherwise act as the logged-in owner (RLS allows the owner).
 function makeDb(req) {
@@ -53,6 +59,14 @@ module.exports = async function handler(req, res) {
   const db = makeDb(req);
   const q = req.query || {};
   try {
+    if (req.method === "GET" && q.action === "goals") {
+      const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
+      const all = await db("jeetos_goals?select=id,kind,parent_id,title,why,owner_coach,metric,target,status,approved_at,updated_at&order=created_at.asc");
+      if (!all.ok) return res.status(502).json({ error: "couldn't read goals (" + all.status + ")" });
+      const health = graphHealth(all.body, raw, planDay(Date.now()));
+      const hasPrimary = all.body.some(g => g.kind === "primary" && g.status === "active");
+      return res.status(200).json({ goals: all.body, health: health.goals, primary: health.primary, proposal: hasPrimary ? null : PLAN, unreadable: raw.failed });
+    }
     if (req.method === "GET") {
       if (q.action !== "memories") return res.status(400).json({ error: "unknown action" });
       if (q.id) {
@@ -92,6 +106,41 @@ module.exports = async function handler(req, res) {
       const out = await apply(db, plan);
       if (plan.inserts.length && !out.created.length) return res.status(409).json({ error: "that fact already exists" });
       return res.status(200).json(Object.assign({ ok: true }, out));
+    }
+    if (b.action === "goals.approve") {
+      const all = await db("jeetos_goals?select=id,status");
+      if (!all.ok) return res.status(502).json({ error: "couldn't read goals (" + all.status + ")" });
+      const now = new Date().toISOString();
+      const rows = approvalRows(all.body, now);
+      // Primary first (the supporting goals point at it).
+      const made = [];
+      for (const row of rows.sort((a, c) => (a.kind === "primary" ? -1 : 1) - (c.kind === "primary" ? -1 : 1))) {
+        const r = await db("jeetos_goals", { method: "POST", body: JSON.stringify(row) });
+        if (r.ok) made.push(row.id);
+      }
+      if (made.length) await db("jeetos_goal_events", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(made.map(id => ({ goal_id: id, action: "approve", actor: "jeet", detail: {} }))) });
+      return res.status(200).json({ ok: true, created: made });
+    }
+    if (b.action === "goals.target" || b.action === "goals.cancel" || b.action === "goals.resume") {
+      const id = String(b.id || "").replace(/[^a-z0-9_]/g, "").slice(0, 40);
+      const g = ((await db(`jeetos_goals?id=eq.${id}&select=id,kind,status,target`)).body || [])[0];
+      if (!g) return res.status(404).json({ error: "not found" });
+      let patch, detail;
+      if (b.action === "goals.target") {
+        const t = cleanTarget(g, b.target);
+        if (!t) return res.status(400).json({ error: "target out of range" });
+        patch = { target: t }; detail = { from: g.target, to: t };
+      } else if (b.action === "goals.cancel") {
+        if (g.status !== "active") return res.status(400).json({ error: "not active" });
+        patch = { status: "cancelled" }; detail = { reason: String(b.reason || "").slice(0, 200) || null };
+      } else {
+        if (g.status !== "cancelled") return res.status(400).json({ error: "not cancelled" });
+        patch = { status: "active" }; detail = {};
+      }
+      const r = await db(`jeetos_goals?id=eq.${id}`, { method: "PATCH", body: JSON.stringify(Object.assign(patch, { updated_at: new Date().toISOString() })) });
+      if (!r.ok) return res.status(502).json({ error: "update failed (" + r.status + ")" });
+      await db("jeetos_goal_events", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify([{ goal_id: id, action: b.action.split(".")[1], actor: "jeet", detail }]) });
+      return res.status(200).json({ ok: true });
     }
     return res.status(400).json({ error: "unknown action" });
   } catch (e) {

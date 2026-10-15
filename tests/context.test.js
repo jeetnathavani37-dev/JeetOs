@@ -108,7 +108,7 @@ ok('30 due promise is the next action once gym is done', /Promise due today: "Le
   const paths = [];
   await loadContextData(async p => { paths.push(p); return []; }, NOW);
   ok('31 loader asks for memory newest-first', paths.some(p => p.startsWith('jeetos_team_memory') && p.includes('order=created_at.desc')));
-  ok('32 loader keys logs on the IST plan day', paths.some(p => p.startsWith('jeetos_logs?day=in.(2026-10-20,2026-10-19)')), paths[0]);
+  ok('32 loader keys logs on the IST plan day', paths.some(p => p.startsWith('jeetos_logs?day=gte.2026-10-13')), paths[0]);
   ok('33 loader never reads safety events or photos', !paths.some(p => /safety_events|photo_vault/.test(p)));
   const half = await loadContextData(async p => (p.startsWith('jeetos_commitments') ? null : []), NOW);
   const hp = buildPacket(half, { coach: 'fitness', now: NOW });

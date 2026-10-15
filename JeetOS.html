@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.16-80";
+const APP_BUILD = "2026.10.16-81";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -10103,6 +10103,7 @@ function JeetOS() {
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, background: "rgba(91,141,239,.08)", border: "1px solid rgba(91,141,239,.22)", borderRadius: 12, padding: "10px 12px" } },
                     React.createElement("span", { style: { fontSize: 14 } }, "📷"),
                     React.createElement("span", { style: { fontSize: 10, color: "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, lineHeight: 1.5 } }, "Every task needs one photo as proof — finish the steps, then add a photo inside the card to mark it complete."))),
+            React.createElement(GoalGraphCard, null),
             React.createElement(PrimaryGoalCard, { T: T, onChange: () => setStreakTick(t => t + 1) }),
             React.createElement(StreakCard, { T: T, W: W, L: L, checks: checks, onChange: () => setStreakTick(t => t + 1) }),
             React.createElement(AnchorsCard, { T: T }),
@@ -11258,7 +11259,7 @@ function MemoryCard() {
             btn("History", () => showHist(m.id), "h")),
         hist && hist.id === m.id && React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryM, marginTop: 4 } },
             hist.events.map((e, i) => React.createElement("div", { key: i }, String(e.at).slice(0, 16).replace("T", " ") + " — " + e.action + " (" + e.actor + ")" + (e.detail && e.detail.new_text ? ": → " + e.detail.new_text : "")))));
-    const live = (data && data.live) || [];
+    const live = data && Array.isArray(data.live) ? data.live : [];
     const guesses = live.filter(m => m.status === "unconfirmed");
     const pending = live.filter(m => m.pending === "retract");
     const rest = live.filter(m => m.status === "active" && !m.pending);
@@ -11276,6 +11277,50 @@ function MemoryCard() {
                     React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 10 } },
                         React.createElement("input", { "aria-label": "Add memory", placeholder: "Khud kuch add karo (e.g. Exams 30 Oct tak)", value: adding, onChange: e => setAdding(e.target.value), style: { flex: 1, background: T.ink, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "5px 8px", fontSize: 12 } }),
                         btn("Add", add, "add", T.green))));
+}
+// Goal graph — one primary goal with supporting department goals. Health is
+// computed on the server from his real data; nothing exists until he approves
+// the plan, and only he can change a target or cancel a goal.
+const GOAL_STATE = { on_track: ["✓ On track", "green"], behind: ["↘ Peeche", "gold"], at_risk: ["⚠ Risk", "red"], unknown: ["? Data kam", "ivoryM"] };
+const GOAL_TUNE = { diet: ["kcal", "Roz max calories (1400-3500)"], gym: ["per_week", "Hafte mein gym din (1-6)"], sleep: ["hours", "Kam se kam neend ghante (5-10)"], weighin: ["per_days", "Kitne din mein ek weigh-in (3-14)"] };
+function GoalGraphCard() {
+    const [d, setD] = React.useState(null);
+    const [err, setErr] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const load = () => fetch("/api/os?action=goals").then(r => r.json().then(x => { if (r.ok) { setD(x); setErr(""); } else setErr(x.error || "error"); })).catch(() => setErr("offline"));
+    React.useEffect(() => { if (authSession()) load(); }, []);
+    const post = body => { setBusy(true); return fetch("/api/os", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json().then(x => { if (!r.ok) alert(x.error || "error"); })).then(load).finally(() => setBusy(false)); };
+    // Anything unexpected from the server → just don't show the card (never break Today).
+    if (!d || err || !Array.isArray(d.goals) || (d.proposal != null && !Array.isArray(d.proposal))) return null;
+    const box = { background: T.card, border: "1px solid " + T.border, borderRadius: 16, padding: "12px 16px", marginBottom: 14, fontFamily: "Inter,system-ui,sans-serif" };
+    const badge = st => { const [t, c] = GOAL_STATE[st] || GOAL_STATE.unknown; return React.createElement("span", { style: { fontSize: 10.5, padding: "2px 7px", borderRadius: 8, border: "1px solid " + (T[c] || T.border2), color: T[c] || T.ivoryM, whiteSpace: "nowrap" } }, t); };
+    const small = (label, onClick) => React.createElement("button", { onClick, disabled: busy, style: { padding: "2px 8px", marginLeft: 6, borderRadius: 8, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM, fontSize: 10.5, cursor: "pointer" } }, label);
+    if (d.proposal) return React.createElement("div", { style: box, "data-testid": "goal-proposal" },
+        React.createElement("div", { style: { fontSize: 11, letterSpacing: 1, color: T.gold, marginBottom: 6 } }, "🎯 TEAM KA GOAL PLAN — APPROVE KARO"),
+        d.proposal.map(g => React.createElement("div", { key: g.id, style: { padding: "5px 0", borderTop: "1px solid " + T.border } },
+            React.createElement("div", { style: { fontSize: g.kind === "primary" ? 13.5 : 12.5, color: T.ivory, fontWeight: g.kind === "primary" ? 600 : 400 } }, (g.kind === "primary" ? "★ " : "↳ ") + g.title),
+            React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryM } }, personaName(g.owner_coach) + " · " + g.why))),
+        React.createElement("div", { style: { fontSize: 11, color: T.ivoryM, marginTop: 8 } }, "Approve karne se team in goals ko track karegi. Targets sirf tum badal sakte ho. Isse koi paisa ya fine shuru nahi hota."),
+        React.createElement("button", { onClick: () => post({ action: "goals.approve" }), disabled: busy, style: { marginTop: 8, padding: "7px 14px", borderRadius: 10, border: "none", background: T.gold, color: T.ink, fontWeight: 600, fontSize: 12.5, cursor: "pointer" } }, "✓ Approve plan"));
+    const H = Object.fromEntries((Array.isArray(d.health) ? d.health : []).map(h => [h.id, h]));
+    const prim = d.goals.find(g => g.kind === "primary" && g.status === "active");
+    if (!prim) return null;
+    const kids = d.goals.filter(g => g.parent_id === prim.id);
+    const ph = H[prim.id] || {};
+    return React.createElement("div", { style: box, "data-testid": "goal-graph" },
+        React.createElement("div", { style: { fontSize: 11, letterSpacing: 1, color: T.gold, marginBottom: 4 } }, "🎯 PRIMARY GOAL"),
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" } },
+            React.createElement("div", { style: { fontSize: 14, color: T.ivory, fontWeight: 600 } }, prim.title), badge(ph.state)),
+        ph.detail && React.createElement("div", { style: { fontSize: 11, color: T.ivoryM, marginTop: 2 } }, ph.detail),
+        (d.primary && d.primary.flags || []).map((f, i) => React.createElement("div", { key: i, style: { fontSize: 11, color: d.primary.needs_review ? T.gold : T.ivoryM, marginTop: 3 } }, "⚑ " + f)),
+        kids.map(g => { const h = H[g.id] || {}; const tune = GOAL_TUNE[g.id];
+            return React.createElement("div", { key: g.id, "data-testid": "goal-" + g.id, style: { padding: "6px 0", borderTop: "1px solid " + T.border, marginTop: 6, opacity: g.status === "active" ? 1 : 0.5 } },
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8 } },
+                    React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, "↳ " + g.title), g.status === "active" ? badge(h.state) : React.createElement("span", { style: { fontSize: 10.5, color: T.ivoryM } }, "band hai")),
+                React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryM, marginTop: 1 } }, personaName(g.owner_coach) + (h.detail ? " · " + h.detail : ""),
+                    g.status === "active" && tune && small("⚙️", () => { const v = prompt(tune[1], (g.target || {})[tune[0]]); if (v != null && v !== "") post({ action: "goals.target", id: g.id, target: { [tune[0]]: Number(v) } }); }),
+                    g.status === "active" ? small("Band karo", () => { const why = prompt("Ye goal kuch time ke liye band karna hai? Wajah (optional):", ""); if (why != null) post({ action: "goals.cancel", id: g.id, reason: why }); })
+                        : small("Wapas chalu", () => post({ action: "goals.resume", id: g.id })))); }));
 }
 // Shows the app only to the logged-in owner. Offline with a saved session → the app still opens.
 function AuthGate() {

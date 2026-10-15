@@ -16,6 +16,7 @@
 //  - Each purpose has a size budget; low-priority lines are trimmed first.
 const { POLICY_V1, istAt, addDays, weightTrend, WEIGHT_RULES } = require("./_penalty");
 const { visibleTo, label, KIND_LABEL } = require("./_memory");
+const { graphHealth } = require("./_goals");
 
 const SUPABASE_URL = "https://qzripzgbstvxkfobzhyv.supabase.co";
 const PUBLIC_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
@@ -92,12 +93,12 @@ function makeDb(env, ownerToken) {
 
 async function loadContextData(q, now) {
   now = now || Date.now();
-  const day = planDay(now), prev = addDays(day, -1), week = addDays(day, -6), month = day.slice(0, 7);
+  const day = planDay(now), week = addDays(day, -7), month = day.slice(0, 7);
   const since4 = new Date(now - 4 * 864e5).toISOString(), since7 = new Date(now - 7 * 864e5).toISOString();
-  const keys = ["logs", "checkins", "marks", "openPromises", "closedPromises", "goals", "goalState", "weightGoal", "weighins", "memory", "profile", "notes", "inbox", "passes", "incidents", "disputes", "decisions", "memories"];
+  const keys = ["logs", "checkins", "marks", "openPromises", "closedPromises", "goals", "goalState", "weightGoal", "weighins", "memory", "profile", "notes", "inbox", "passes", "incidents", "disputes", "decisions", "memories", "graph"];
   const rows = await Promise.all([
-    q(`jeetos_logs?day=in.(${day},${prev})&select=*`),
-    q(`jeetos_anchor_checkins?day=in.(${day},${prev})&select=anchor,day,at,verified`),
+    q(`jeetos_logs?day=gte.${week}&select=*&order=day.desc&limit=10`),
+    q(`jeetos_anchor_checkins?day=gte.${week}&select=anchor,day,at,verified&limit=120`),
     q(`jeetos_streak_marks?date=gte.${week}&select=date,habit,kind,reason&order=date.desc&limit=50`),
     q("jeetos_commitments?status=eq.open&select=id,coach,text,due,owner,staked,deadline_at&order=due.asc&limit=40"),
     q(`jeetos_commitments?status=in.(done,missed)&resolved_at=gte.${encodeURIComponent(since7)}&select=coach,text,status,owner,blocker,resolved_at&order=resolved_at.desc&limit=20`),
@@ -114,6 +115,7 @@ async function loadContextData(q, now) {
     q("jeetos_disputes?status=eq.open&select=id,incident_id,category&limit=10"),
     q("jeetos_decisions?status=eq.approved&select=coach,area,change,decided_at&order=decided_at.desc&limit=6"),
     q("jeetos_memories?status=in.(active,unconfirmed)&select=id,kind,text,scope,source_type,coach,confidence,status,pending,observed_at,review_after&order=observed_at.desc&limit=80"),
+    q("jeetos_goals?status=eq.active&select=id,kind,parent_id,title,owner_coach,metric,target,status,approved_at"),
   ]);
   const raw = { failed: [] };
   keys.forEach((k, i) => { if (!Array.isArray(rows[i])) raw.failed.push(k); raw[k] = Array.isArray(rows[i]) ? rows[i] : []; });
@@ -233,7 +235,14 @@ function buildPacket(raw, opts) {
   const gs = raw.goalState;
   const primary = gs && gs.goalId ? goals.find(g => g.id === gs.goalId) : null;
   const pLines = [];
-  if (primary) pLines.push(goalLine(primary, today));
+  const graph = (raw.graph || []).length ? graphHealth(raw.graph, raw, today) : null;
+  const ST = { on_track: "ON TRACK", behind: "BEHIND", at_risk: "AT RISK", unknown: "UNKNOWN (not enough data)" };
+  if (graph && graph.primary) {
+    const gp = graph.primary;
+    pLines.push(`${gp.title} — ${ST[gp.state]}${can(coach, "weight") || coach === "head" ? `: ${gp.detail}` : ""}`);
+    (gp.flags || []).forEach(f => pLines.push(`⚑ ${f}${gp.needs_review ? " → plan may need adjustment; Head Coach proposes, Jeet approves (never change targets yourself)" : ""}`));
+    graph.goals.filter(g => g.parent_id === gp.id).forEach(g => pLines.push(`supporting${g.owner_coach === coach ? " (YOURS)" : ""}: ${g.title} [${COACH_NAMES[g.owner_coach] || g.owner_coach}] — ${ST[g.state]}: ${g.detail}`));
+  } else if (primary) pLines.push(goalLine(primary, today));
   else if (raw.weightGoal) pLines.push("Weight goal (the ledger's 10 kg plan) — no other primary goal is set.");
   else pLines.push("No primary goal set yet (unknown) — don't invent one; ask Head Coach / Jeet to set it.");
   if (gs && gs.today && gs.today.date === today) pLines.push(`Today's one priority: "${gs.today.text}" — ${gs.today.done ? "done" : "not done yet"}.`);
@@ -337,7 +346,7 @@ function buildPacket(raw, opts) {
   const header = `=== TEAM CONTEXT for ${COACH_NAMES[coach]} (built by the server; every coach sees the same facts). "unknown"/"not logged"/"no check-in" means NO DATA — never treat it as failure. ===`
     + (failed.length ? `\n!! The server couldn't read part of his data right now (${failed.join(", ")}). Treat those parts as UNKNOWN, not empty — don't tell him he has no goals/promises/logs.` : "");
   const text = render(header, sections, BUDGET[purpose]);
-  return { coach, purpose, day: today, text, failed, sections, unknowns, nextAction: na, anchors: anchors.map(a => ({ key: a.key, state: a.state })) };
+  return { coach, purpose, day: today, text, failed, graph: graph ? graph.goals.map(g => ({ id: g.id, state: g.state })) : null, sections, unknowns, nextAction: na, anchors: anchors.map(a => ({ key: a.key, state: a.state })) };
 }
 
 // Fit the packet into the budget: trim the lowest-priority sections' tails
