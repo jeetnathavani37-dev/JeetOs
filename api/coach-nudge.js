@@ -2,8 +2,8 @@
 // Coaches text first. Vercel Cron hits this at fixed times of day
 // (?slot=morning|afternoon|evening|night, see vercel.json). Each slot picks
 // the coach who'd naturally reach out right then, writes one short message
-// in their voice using today's log, the shared team memory and open
-// commitments, saves it to jeetos_coach_inbox (the app shows it as an unread
+// in their voice using the shared team context (api/_context.js: goals,
+// schedule, promises, memory, unknowns), saves it to jeetos_coach_inbox (the app shows it as an unread
 // message from that coach) and also sends it to Telegram when configured.
 // One message per coach per slot per day — re-runs are no-ops. On Sundays
 // (?slot=review) every coach with an active goal sends a 2-line weekly review.
@@ -11,6 +11,7 @@
 const { COACHES, personaPrompt } = require("./_coach-personas");
 const { sendToAll } = require("./_push");
 const { POLICY_V1 } = require("./_penalty");
+const { buildPacket, loadContextData } = require("./_context");
 // Which coach nudges him when an anchor of his day slips.
 const ANCHOR_COACH = { wake: "sleep", gym: "fitness", breakfast: "nutrition", work: "ronaldo", lunch: "nutrition", snack: "nutrition", leave: "ronaldo", dinner: "nutrition", sleep: "sleep" };
 
@@ -103,17 +104,6 @@ function agoText(iso, today) {
   if (days < 60) return Math.round(days / 7) + " weeks ago";
   return Math.round(days / 30) + " months ago";
 }
-function goalText(g, today) {
-  const u = g.unit ? " " + g.unit : "";
-  const hist = (g.history || []).slice(-4).map(h => `${h.v}${u} (${agoText(h.d, today)})`).join(" → ");
-  return `"${g.text}"` + (g.target != null ? `: started ${g.start_value}${u}, now ${g.current_value}${u}, target ${g.target}${u}` : "")
-    + (g.deadline ? `, by ${g.deadline}` : "") + (hist ? `. Log: ${hist}` : "");
-}
-const PROFILE_LABELS = { about: "who he is", goals: "what he wants", routine: "routine & constraints", preferences: "likes/dislikes", struggles: "what gets in the way", wins: "wins", style: "how to coach him", life: "life & people" };
-function profileText(p) {
-  if (!p) return "";
-  return Object.keys(PROFILE_LABELS).filter(k => Array.isArray(p[k]) && p[k].length).map(k => PROFILE_LABELS[k] + ": " + p[k].map(x => x.t).join("; ")).join(" | ");
-}
 // null = he didn't enter it (not the same as 0 / skipped).
 const shown = (v, u) => (v == null ? "not logged" : v + u);
 function logLine(log) {
@@ -137,35 +127,29 @@ async function sendTelegram(coachId, text) {
 // Writes one text in a coach's voice, saves it to the inbox (once per coach
 // per slot per day) and forwards it to Telegram.
 async function writeAndSend(coachId, slot, task, shared, opts) {
-  const { today, memory, commitments, goals, moments, profile, primary, todayPriority } = shared;
-  const since = new Date(Date.now() - 4 * 864e5).toISOString();
-  const [recent, past, notes] = await Promise.all([
+  const { today, commitments, moments } = shared;
+  const [recent, past] = await Promise.all([
     supaJson(`jeetos_coach_inbox?coach=eq.${coachId}&select=text,created_on&order=created_at.desc&limit=5`),
     supaJson(`jeetos_convo_summaries?coach=eq.${coachId}&select=summary,to_ts&order=to_ts.desc&limit=4`),
-    supaJson(`jeetos_coach_notes?to_coach=in.(${coachId},team)&from_coach=neq.${coachId}&created_at=gte.${encodeURIComponent(since)}&select=from_coach,text&order=created_at.desc&limit=4`),
   ]);
-  const his = commitments.filter(c => c.owner !== "coach");
-  const mine = his.filter(c => c.coach === coachId);
   // Things this coach promised to do for him that are due now — the text must deliver them.
   // An anchor alarm is just a ping — it never delivers (or closes) a coach's promise.
   const ownDue = opts && opts.alarm ? [] : commitments.filter(c => c.owner === "coach" && c.coach === coachId && c.due <= today);
-  const myGoals = goals.filter(g => g.coach === coachId);
   const myMoments = moments.filter(m => m.coach === coachId).slice(-8);
   const nick = [...myMoments].reverse().find(m => m.kind === "nickname");
+  // The shared, scoped team context (same builder as the chat) — goals, schedule, promises, memory, unknowns.
+  const packet = shared.raw ? buildPacket(shared.raw, { coach: coachId, purpose: "nudge" }).text : "";
   const system = `${personaPrompt(coachId)}
 
 ${task}
 Sound like a person, not a notification: no "Reminder:", no lists, no greetings like "Hello Jeet!". Hinglish like he talks. Never mention being an AI, apps, data or memory.${coachId === "mind" ? " You're gently checking in — warm, no pressure, no advice dump." : ""}
+Make the text fit what he wants and his routine — like someone who knows him. Plain everyday Hinglish, no jargon or technical terms. If you point out a problem or ask him to do something, give HIS personal reason in a few words (from his log, promises or history), never a generic one. Anything marked unknown / not logged / no check-in is missing data — ask, never accuse. Tie your text to his primary goal when it fits; don't push a competing new project.
 
-Who he is (built up from all his chats): ${profileText(profile) || "still getting to know him"}.
+${packet}
+
 What you two talked about before: ${past.map(x => `(${agoText(new Date(+x.to_ts + 330 * 60000).toISOString().slice(0, 10), today)}) ${x.summary}`).join(" | ") || "nothing older yet"}.
-Other notes: ${memory.length ? memory.map(m => m.fact).join("; ") : "none"}.
-Make the text fit what he wants and his routine — like someone who knows him. Plain everyday Hinglish, no jargon or technical terms. If you point out a problem or ask him to do something, give HIS personal reason in a few words (from his log, promises or history), never a generic one.
-His open promises${mine.length ? " to you" : ""}: ${(mine.length ? mine : his).map(c => `"${c.text}" (check on ${c.due})`).join("; ") || "none"}.
-${ownDue.length ? `YOU PROMISED HIM, AND IT'S DUE NOW — this text must do it (check it, send it, review it; ask for the one number/photo you need): ${ownDue.map(c => `"${c.text}" (by ${c.due})`).join("; ")}.\n` : ""}
-${primary ? `HIS ONE PRIMARY GOAL (the whole team supports it first): ${goalText(primary, today)}.${todayPriority ? ` Today's one priority: "${todayPriority.text}" — ${todayPriority.done ? "done" : "not done yet"}.` : ""} Tie your text to it when it fits; don't push a competing new project.\n` : ""}Your goal${myGoals.length === 1 ? "" : "s"} with him: ${myGoals.map(g => goalText(g, today)).join("; ") || "none yet"}.
-${nick ? `Your nickname for him: "${nick.text}" (use it if it fits).\n` : ""}Things that happened between you two: ${myMoments.map(m => `(${agoText(m.created_on, today)}) ${m.text}`).join("; ") || "nothing special yet"}.
-${notes.length ? `Your teammates told you privately (act on it, you can mention them by name): ${notes.map(n => `${(COACHES[n.from_coach] && COACHES[n.from_coach].name) || n.from_coach}: ${n.text}`).join(" | ")}.\n` : ""}Your last few texts to him (don't repeat these): ${recent.map(r => r.text).join(" | ") || "none"}.`;
+${ownDue.length ? `YOU PROMISED HIM, AND IT'S DUE NOW — this text must do it (check it, send it, review it; ask for the one number/photo you need): ${ownDue.map(c => `"${c.text}" (by ${c.due})`).join("; ")}.\n` : ""}${nick ? `Your nickname for him: "${nick.text}" (use it if it fits).\n` : ""}Things that happened between you two: ${myMoments.map(m => `(${agoText(m.created_on, today)}) ${m.text}`).join("; ") || "nothing special yet"}.
+Your last few texts to him (don't repeat these): ${recent.map(r => r.text).join(" | ") || "none"}.`;
 
   const text = await callClaude(system, "Write the text now. Only the message itself.");
   // Save first; the unique (coach, slot, created_on) key makes cron retries no-ops.
@@ -194,18 +178,14 @@ module.exports = async function handler(req, res) {
   if (!SLOT_MOMENT[slot] && slot !== "review" && slot !== "anchor") return res.status(400).json({ error: "slot must be morning|afternoon|evening|night|streak|review|anchor" });
 
   const today = istIsoDate();
-  const [logs, memory, commitments, goals, moments, profileRows, goalState] = await Promise.all([
+  const [logs, commitments, goals, moments, raw] = await Promise.all([
     supaJson(`jeetos_logs?date=eq.${encodeURIComponent(istDateString())}&select=*`),
-    supaJson("jeetos_team_memory?select=fact&order=created_at.asc&limit=60"),
     supaJson("jeetos_commitments?status=eq.open&select=id,coach,text,due,owner&order=due.asc&limit=30"),
-    supaJson("jeetos_coach_goals?status=eq.active&select=id,focus,coach,text,unit,start_value,target,current_value,deadline,history&order=created_at.asc&limit=20"),
-    supaJson("jeetos_coach_moments?select=coach,kind,text,created_on&order=created_at.asc&limit=120"),
-    supaJson("jeetos_profile?id=eq.jeet&select=data"),
-    supaJson("jeetos_goal_state?id=eq.jeet&select=data"),
+    supaJson("jeetos_coach_goals?status=eq.active&select=coach&order=created_at.desc&limit=40"),
+    supaJson("jeetos_coach_moments?select=coach,kind,text,created_on&order=created_at.desc&limit=120").then(r => r.reverse()),
+    loadContextData(supaJson),
   ]);
-  const gs = goalState[0] && goalState[0].data;
-  const primary = gs && gs.goalId ? goals.find(g => g.id === gs.goalId) || null : null;
-  const shared = { today, memory, commitments, goals, moments, profile: profileRows[0] && profileRows[0].data, primary, todayPriority: gs && gs.today && gs.today.date === today ? gs.today : null };
+  const shared = { today, commitments, moments, raw };
 
   try {
     // Anchor alarm: a few minutes after one of his times, if it isn't done yet, the right coach pings him.
