@@ -385,3 +385,17 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 --                          the saved place when one is set.
 --   jeetos_places(id gym|work, lat, lng, accuracy_m, set_at)
 -- jeetos_allowance_uses.category check → ^(gym|diet|sleep|a_[a-z]+)$; incidents.category += anchor.
+
+-- ── Memory v2 (2026-10-16) ─────────────────────────────────────────────
+-- jeetos_memories: one row per fact about Jeet, with provenance.
+--   kind (fact/preference/constraint/goal_context/struggle/win/life/lesson/style),
+--   scope (team | private:mind | coach:<id>), source_type (jeet_said / jeet_confirmed /
+--   coach_inferred / log / system / migrated), confidence (high/med/low),
+--   status (active / unconfirmed / superseded / retracted), pending ('retract' = a coach
+--   suggests it's no longer true; Jeet decides), review_after (after it: "may be outdated"),
+--   supersedes / superseded_by (history chain). Unique norm among live rows.
+-- jeetos_memory_events: append-only audit (create/confirm/edit/supersede/retract/
+--   retract_proposed/retract_rejected/share/migrate) with actor.
+-- RLS: owner select/insert/update; no delete for anon/authenticated (retract is a status).
+-- Writes go through api/os.js (rules in api/_memory.js). Read by api/_context.js.
+-- Migrated: 7 profile items + 2 team-memory facts → source_type 'migrated'.

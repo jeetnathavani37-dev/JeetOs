@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.16-79";
+const APP_BUILD = "2026.10.16-80";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -925,8 +925,17 @@ function saveTeamMemory(list) {
 function teamMemoryKey(text) {
     return String(text).toLowerCase().replace(/\s+/g, " ").trim();
 }
+// Memory v2: every new fact also goes to the server (api/os.js), which decides
+// confidence/status/scope, keeps history and feeds the shared team context.
+function proposeMemories(items, coachId, source) {
+    if (!items || !items.length || !authSession()) return;
+    fetch("/api/os", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "memory.propose", coach: coachId || null, source: source, items: items.slice(0, 8) }) }).catch(() => { });
+}
 function addTeamMemoryFacts(facts, coachId) {
     if (!facts.length) return;
+    proposeMemories(facts.map(t => ({ text: t })), coachId, "tag");
+    // Dr. Meher's notes stay private to her (Memory v2 keeps them in her scope only).
+    if (coachId === "mind") return;
     const list = loadTeamMemory();
     const seen = new Set(list.map(f => teamMemoryKey(f.text)));
     const date = new Date().toISOString().slice(0, 10);
@@ -3482,7 +3491,8 @@ async function runMemoryPass(CH, force) {
     if (memoryBusy) return 0;
     const st = store.get(MEMSTATE_KEY) || { lastTs: 0 };
     const fresh = [];
-    Object.keys(CH || {}).forEach(k => (CH[k] || []).forEach(m => { if (m && m.ts > st.lastTs && !m.error && m.content) fresh.push({ k: k, m: m }); }));
+    // Dr. Meher's chats are private — the shared memory pass never reads them.
+    Object.keys(CH || {}).filter(k => k !== "mind").forEach(k => (CH[k] || []).forEach(m => { if (m && m.ts > st.lastTs && !m.error && m.content) fresh.push({ k: k, m: m }); }));
     if (fresh.filter(x => x.m.role === "user").length < (force ? 1 : 3)) return 0;
     fresh.sort((a, b) => a.m.ts - b.m.ts);
     const slice = fresh.slice(-80);
@@ -3509,6 +3519,11 @@ Reply with ONLY JSON: {"add":[{"section":"goals","text":"..."}],"update":[{"sect
         const ops = parseJsonLoose(raw);
         if (!ops) return 0;
         const n = applyProfileOps(ops, "memory");
+        proposeMemories([].concat(
+            (ops.add || []).map(o => ({ text: o.text, section: o.section })),
+            (ops.update || []).map(o => ({ text: o.new, replaces: o.old, section: o.section })),
+            (ops.remove || []).map(o => ({ text: o.text, remove: true, reason: "the team's memory pass thinks this is no longer true" }))
+        ).filter(x => x.text), null, "memory_pass");
         store.set(MEMSTATE_KEY, { lastTs: slice[slice.length - 1].m.ts, at: Date.now() });
         return n;
     } catch (_a) { return 0; }
@@ -10564,7 +10579,7 @@ function JeetOS() {
             React.createElement("div", { style: { padding: "12px 20px" } },
                 React.createElement(GroupEntryCard, { T: T, CH: CH, onOpen: () => setScreen("group") }),
                 React.createElement(PushCard, { T: T }),
-                React.createElement(AccountCard, null), React.createElement(TeamContextPeek, null),
+                React.createElement(AccountCard, null), React.createElement(TeamContextPeek, null), React.createElement(MemoryCard, null),
                 React.createElement(MasterPlanCard, { T: T, onOpen: () => setPlanOpen(true) }),
                 planOpen && React.createElement(MasterPlanSheet, { T: T, onClose: () => setPlanOpen(false) }),
                 React.createElement(FocusBoardCard, { T: T, onOpen: () => setFocusOpen(true) }),
@@ -11192,6 +11207,75 @@ function TeamContextPeek() {
                 : React.createElement(React.Fragment, null,
                     React.createElement("div", { style: { fontSize: 12.5, color: T.ivory, marginBottom: 6 } }, "👉 " + pk.nextAction),
                     React.createElement("pre", { "data-testid": "team-context", style: { whiteSpace: "pre-wrap", fontSize: 10.5, lineHeight: 1.45, color: T.ivoryM, maxHeight: 320, overflow: "auto", margin: 0 } }, pk.text)));
+}
+// Memory v2 — everything the team remembers about Jeet, with where it came from,
+// how sure the team is, and its history. He confirms guesses, fixes or removes
+// facts, and decides on a coach's "this is no longer true" suggestion.
+const MEM_KIND_LABEL = { fact: "About", goal_context: "Goals", constraint: "Routine", preference: "Likes", struggle: "Struggles", win: "Wins", style: "Coaching style", life: "Life", lesson: "Lessons" };
+const MEM_SRC_LABEL = { jeet_confirmed: "tumne confirm kiya", jeet_said: "tumne bataya", coach_inferred: "coach ka andaaza", migrated: "purana note", log: "log se", system: "system" };
+async function memApi(body) {
+    const r = await fetch("/api/os" + (body ? "" : "?action=memories"), body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ("error " + r.status));
+    return d;
+}
+function MemoryCard() {
+    const [open, setOpen] = React.useState(false);
+    const [data, setData] = React.useState(null);
+    const [err, setErr] = React.useState("");
+    const [busy, setBusy] = React.useState("");
+    const [editing, setEditing] = React.useState(null);
+    const [draft, setDraft] = React.useState("");
+    const [hist, setHist] = React.useState(null);
+    const [adding, setAdding] = React.useState("");
+    const load = () => memApi().then(d => { setData(d); setErr(""); }).catch(e => setErr(e.message));
+    React.useEffect(() => { if (open) load(); }, [open]);
+    const act = (id, op, text) => { setBusy(id + op); memApi({ action: "memory.act", id, op, text }).then(() => { setEditing(null); return load(); }).catch(e => alert(e.message)).finally(() => setBusy("")); };
+    const add = () => { const t = adding.trim(); if (t.length < 4) return; setBusy("add"); memApi({ action: "memory.propose", source: "user", items: [{ text: t }] }).then(() => { setAdding(""); return load(); }).catch(e => alert(e.message)).finally(() => setBusy("")); };
+    const showHist = id => fetch("/api/os?action=memories&id=" + id).then(r => r.json()).then(d => setHist({ id, events: d.events || [] })).catch(() => { });
+    const box = { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "10px 16px", marginBottom: 16, fontFamily: "Inter,system-ui,sans-serif" };
+    const btn = (label, onClick, key, color) => React.createElement("button", { key: key || label, onClick, disabled: !!busy, style: { padding: "3px 9px", marginRight: 6, marginTop: 4, borderRadius: 8, border: "1px solid " + T.border2, background: "transparent", color: color || T.ivoryM, fontSize: 11, cursor: "pointer" } }, label);
+    if (!open) return React.createElement("button", { onClick: () => setOpen(true), style: Object.assign({}, box, { width: "100%", textAlign: "left", color: T.ivoryM, fontSize: 12, cursor: "pointer" }) }, "📒 Team ko mere baare mein kya yaad hai? (Memory)");
+    const today = new Date().toISOString().slice(0, 10);
+    const item = m => React.createElement("div", { key: m.id, "data-testid": "mem-" + m.id, style: { padding: "7px 0", borderTop: "1px solid " + T.border } },
+        editing === m.id
+            ? React.createElement("div", null,
+                React.createElement("input", { "aria-label": "Edit memory", value: draft, onChange: e => setDraft(e.target.value), style: { width: "100%", background: T.ink, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "5px 8px", fontSize: 12 } }),
+                btn("Save", () => act(m.id, "edit", draft), "s", T.green), btn("Cancel", () => setEditing(null), "c"))
+            : React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, m.text),
+        React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryM, marginTop: 2 } },
+            (MEM_KIND_LABEL[m.kind] || m.kind) + " · " + (MEM_SRC_LABEL[m.source_type] || m.source_type) + (m.coach ? " · " + personaName(m.coach) : "") + " · " + String(m.observed_at).slice(0, 10)
+            + (m.status === "unconfirmed" ? " · 🤔 andaaza" : "") + (m.review_after && m.review_after < today ? " · ⏳ purana ho sakta hai" : "") + (m.scope === "private:mind" ? " · 🔒 sirf Dr. Meher" : "")),
+        m.pending === "retract" && React.createElement("div", { style: { fontSize: 11, color: T.gold, marginTop: 3 } }, "⚠️ " + (m.pending_reason || "Coach ko lagta hai ye ab sach nahi")),
+        editing !== m.id && React.createElement("div", null,
+            m.status === "unconfirmed" && btn("✓ Sahi hai", () => act(m.id, "confirm"), "cf", T.green),
+            m.pending === "retract" && btn("Haan, hatao", () => act(m.id, "retract"), "ry", T.gold),
+            m.pending === "retract" && btn("Nahi, sahi hai", () => act(m.id, "keep"), "rn"),
+            m.status === "active" && !m.pending && m.review_after && m.review_after < today && btn("✓ Abhi bhi sahi", () => act(m.id, "confirm"), "still", T.green),
+            btn("✏️", () => { setEditing(m.id); setDraft(m.text); }, "e"),
+            !m.pending && btn("🗑 Galat hai", () => { if (confirm("Ye yaad hata dein? (History mein rahegi)")) act(m.id, "retract"); }, "d"),
+            m.scope === "private:mind" && btn("Team ko batao", () => act(m.id, "share"), "sh"),
+            btn("History", () => showHist(m.id), "h")),
+        hist && hist.id === m.id && React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryM, marginTop: 4 } },
+            hist.events.map((e, i) => React.createElement("div", { key: i }, String(e.at).slice(0, 16).replace("T", " ") + " — " + e.action + " (" + e.actor + ")" + (e.detail && e.detail.new_text ? ": → " + e.detail.new_text : "")))));
+    const live = (data && data.live) || [];
+    const guesses = live.filter(m => m.status === "unconfirmed");
+    const pending = live.filter(m => m.pending === "retract");
+    const rest = live.filter(m => m.status === "active" && !m.pending);
+    const head = t => React.createElement("div", { style: { fontSize: 11, letterSpacing: 1, color: T.gold, marginTop: 10, marginBottom: 2 } }, t);
+    return React.createElement("div", { style: box },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, "📒 Memory" + (data ? " · " + live.length : "")),
+            React.createElement("button", { onClick: () => setOpen(false), style: { background: "transparent", border: "none", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Band karo")),
+        err ? React.createElement("div", { style: { fontSize: 12, color: T.gold, marginTop: 6 } }, err)
+            : !data ? React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 6 } }, "Load ho raha hai…")
+                : React.createElement(React.Fragment, null,
+                    guesses.length > 0 && head("🤔 CONFIRM KARO — COACH KA ANDAAZA"), guesses.map(item),
+                    pending.length > 0 && head("⚠️ COACH KO LAGTA HAI YE AB SACH NAHI"), pending.map(item),
+                    head("YAADEIN"), rest.length ? rest.map(item) : React.createElement("div", { style: { fontSize: 12, color: T.ivoryM } }, "Abhi kuch nahi. Coaches se baat karoge toh yahan bhar jayega."),
+                    React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 10 } },
+                        React.createElement("input", { "aria-label": "Add memory", placeholder: "Khud kuch add karo (e.g. Exams 30 Oct tak)", value: adding, onChange: e => setAdding(e.target.value), style: { flex: 1, background: T.ink, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "5px 8px", fontSize: 12 } }),
+                        btn("Add", add, "add", T.green))));
 }
 // Shows the app only to the logged-in owner. Offline with a saved session → the app still opens.
 function AuthGate() {

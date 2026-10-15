@@ -147,14 +147,14 @@ function redact(msg) {
   return String(msg || "").replace(/(sk-|gsk_|AIza)[\w-]{6,}/g, "$1***");
 }
 
-const { isOwner, requireOwner, serverKeyStatus } = require("./_auth");
+const { isOwner, requireOwner, serverKeyStatus, bearer } = require("./_auth");
 const { contextFor, COACH_IDS } = require("./_context");
 
 // The shared team context for a coach (api/_context.js). Appended to the live
 // part of the system prompt, so chat and cron coaches work from the same facts.
-async function teamContext(ctx) {
+async function teamContext(ctx, req) {
   if (!ctx || !COACH_IDS.includes(ctx.coach)) return null;
-  try { return await contextFor({ coach: ctx.coach, purpose: ctx.purpose === "huddle" ? "huddle" : "chat" }); }
+  try { return await contextFor({ coach: ctx.coach, purpose: ctx.purpose === "huddle" ? "huddle" : "chat" }, { ownerToken: bearer(req) }); }
   catch (_) { return null; }
 }
 
@@ -166,7 +166,7 @@ module.exports = async function handler(req, res) {
     // ?context=<coach> (owner only): exactly what that coach gets from the server — no AI call.
     if (req.query && req.query.context) {
       if (!(await requireOwner(req, res))) return;
-      const pk = await teamContext({ coach: String(req.query.context), purpose: req.query.purpose });
+      const pk = await teamContext({ coach: String(req.query.context), purpose: req.query.purpose }, req);
       if (!pk) return res.status(400).json({ error: "unknown coach" });
       return res.status(200).json(pk);
     }
@@ -208,7 +208,7 @@ module.exports = async function handler(req, res) {
   }
   // Coach chats ask for the shared team context; it goes after everything else
   // (the live, uncached part). If it can't be built the chat still works.
-  const pk = await teamContext(context);
+  const pk = await teamContext(context, req);
   if (pk) system = String(system) + "\n\n" + pk.text + "\n(This team context is the shared record every coach uses. If it disagrees with the app data above, the app may not have synced yet — go with what he tells you now, and don't accuse him over a gap.)";
   // Coaches can send several texts in a row (and text first), so the chat can
   // hold consecutive assistant messages — fold same-role runs into one turn.
