@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.15-72";
+const APP_BUILD = "2026.10.15-73";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -2573,7 +2573,8 @@ async function loadLedger() {
             q("jeetos_payees?id=eq.charity&select=name,vpa"),
             q("jeetos_payments?select=id,kind,amount_paise,payee_name,payee_vpa,status,utr,created_at,reported_at&order=created_at.desc&limit=5"),
         ]);
-        const l = { policy: pol[0] || null, incidents: inc, entries: ent, payee: payee[0] || null, payments: pays, at: Date.now() };
+        const d = await ledgerAction({ action: "dues" }).catch(() => null);
+        const l = { policy: pol[0] || null, incidents: inc, entries: ent, payee: payee[0] || null, payments: pays, dues: d, at: Date.now() };
         store.set(LEDGER_KEY, l);
         return l;
     } catch (_a) { return ledgerCache(); }
@@ -2593,6 +2594,7 @@ function ledgerPrompt() {
     return "ACCOUNTABILITY LEDGER (" + (l.policy.mode === "live" ? "LIVE" : "SIMULATION — no real money moves") + "): this month " + paiseText(t.month) + ", today " + paiseText(t.today) + "."
         + (staked.length ? " Staked promises: " + staked.map(c => "\"" + c.text + "\" (by " + new Date(c.deadline_at).toLocaleString("en-IN", { weekday: "short", hour: "numeric", minute: "2-digit" }) + ")").join("; ") + "." : "")
         + (open.length ? " Open: " + open.map(i => i.title + " [" + i.status + "]").join("; ") + "." : "")
+        + (l.dues && l.dues.live ? " Owed to " + ((l.payee && l.payee.name) || "charity") + ": " + paiseText(l.dues.dues_paise) + " (he pays it himself by UPI; remind calmly on Sundays, never shame)." : "")
         + "\nLedger rules: the app's rules engine alone decides amounts. Never state, threaten or invent a fine or amount the ledger doesn't show, never stake a promise for him (only he can, in the app), and never push unsafe compensation (starving, extra cardio, skipping sleep) to avoid a fine. If something looks unfair or he had a real reason, tell him to dispute it in the ledger.";
 }
 async function ledgerAction(body) {
@@ -2635,7 +2637,9 @@ function PaymentBox({ T, l, act, busy }) {
     return box([
         note("Payee: " + payee.name + " · " + payee.vpa),
         last && note("✓ " + paiseText(last.amount_paise) + " " + (last.kind === "test" ? "test " : "") + "paid (tumhari report, UTR " + last.utr + ") · " + new Date(last.reported_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) + ". Bank se app ko confirmation nahi milta — ye self-reported hai."),
-        b("₹1 test pay karo", () => act("pstart", { action: "pay_test_start" }), "pstart", true)]);
+        l && l.dues && l.dues.live && note("Baaki: " + paiseText(l.dues.dues_paise) + " (total fines " + paiseText(l.dues.assessed_paise) + " − paid " + paiseText(l.dues.paid_paise) + ")"),
+        l && l.dues && l.dues.live && l.dues.dues_paise > 0 && b(paiseText(l.dues.dues_paise) + " " + payee.name.split(" ")[0] + " ko pay karo", () => act("settle", { action: "settle_start" }), "settle", true),
+        b("₹1 test pay karo", () => act("pstart", { action: "pay_test_start" }), "pstart", !(l && l.dues && l.dues.dues_paise > 0))]);
 }
 function LedgerCard({ T, onChange }) {
     const font = "Inter,system-ui,sans-serif";
@@ -2689,7 +2693,11 @@ function LedgerCard({ T, onChange }) {
             const last = ((l && l.entries) || []).find(e => e.incident_id === i.id);
             return row(i.title || i.id, React.createElement("span", { style: { fontSize: 12, color: sum ? T.gold : T.ivoryD } }, sum ? paiseText(sum) : i.status === "review" ? "review" : i.status === "overlap_suppressed" ? "₹0 (dup)" : "₹0"), "i" + i.id, (last && last.calc && last.calc.why) || (i.detail && i.detail.why) || i.status);
         }),
-        React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" } }, btn("Abhi check karo", () => act("run", { action: "run" }), "run")),
+        React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" } }, btn("Abhi check karo", () => act("run", { action: "run" }), "run"),
+            l.policy.mode !== "live" && btn("🔴 Asli paise mode ON", () => {
+                const t = prompt("Ab se lagne wale fines ASLI paise mein " + ((l.payee && l.payee.name) || "charity") + " ko dene honge (tum khud UPI se pay karoge, har Sunday).\nCaps: ₹1,750 per promise · ₹1,000 per din · ₹5,000 per mahina.\nSimulation ke purane fines payable nahi honge, aur pehle stake kiye promises dobara stake karne honge.\n\nPakka? Confirm ke liye LIVE type karo:");
+                if (t === "LIVE") act("live", { action: "go_live", confirm: "LIVE" });
+            }, "live")),
         React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD, marginTop: 8, lineHeight: 1.4 } }, "Amount sirf rules engine tay karta hai. Galat lage toh coach ko bolo — dispute ka button agle update mein aa raha hai."));
     if (open) body = React.createElement("div", null, body, React.createElement(PaymentBox, { T: T, l: l, act: act, busy: busy }));
     return React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 16px", marginBottom: 16, fontFamily: font } },
