@@ -416,3 +416,9 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 -- Rules in api/_notify.js, enforced inside api/_push.js sendToAll for every sender.
 -- Until SUPABASE_SERVICE_ROLE_KEY is set the cron can't read the log → cap fails open,
 -- quiet hours still apply.
+
+-- ── Daily check-ins (2026-10-16) ───────────────────────────────────────
+-- jeetos_daily_checkins: id 'YYYY-MM-DD:morning|evening', day, kind, answers jsonb (<4 KB).
+-- Owner RLS select/insert/update, no deletes. Questions + validation in api/_checkin.js;
+-- morning answers fill gaps in that day's log for goal health and the planner (never
+-- overwrite his log); evening answers (done / not_done / blocker / tomorrow) go to coaches.

@@ -8,6 +8,8 @@
 //   GET  /api/os?action=today               Command Centre: plan, next action, goals, promises
 //   GET  /api/os?action=notify              notification budget settings + today's push log
 //   POST /api/os { action: "notify.set", settings: { daily_cap, quiet_from, quiet_to, nudge_gap_min } }
+//   GET  /api/os?action=checkin             which check-in is due now + its questions
+//   POST /api/os { action: "checkin.save", kind: morning|evening, answers }
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -18,7 +20,8 @@ const { requireOwner, bearer, SUPABASE_URL, PUBLIC_KEY } = require("./_auth");
 const { planPropose, planAct } = require("./_memory");
 const { PLAN, graphHealth, approvalRows, cleanTarget } = require("./_goals");
 const { settingsOf, DEFAULTS: NOTIFY_DEFAULTS, LIMITS: NOTIFY_LIMITS } = require("./_notify");
-const { loadContextData, planDay, buildPacket } = require("./_context");
+const { loadContextData, planDay, buildPacket, todayPlan } = require("./_context");
+const { questionsFor, cleanAnswers, due: checkinDue } = require("./_checkin");
 
 // The server key when configured; otherwise act as the logged-in owner (RLS allows the owner).
 function makeDb(req) {
@@ -74,6 +77,28 @@ module.exports = async function handler(req, res) {
       const day = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
       const [st, log] = await Promise.all([db("jeetos_settings?id=eq.notify&select=data"), db(`jeetos_push_log?day=eq.${day}&select=tag,cls,decision,reason,at&order=at.desc&limit=40`)]);
       return res.status(200).json({ settings: settingsOf(st.ok && st.body && st.body[0] && st.body[0].data), defaults: NOTIFY_DEFAULTS, today: log.ok ? log.body : [] });
+    }
+    if ((req.method === "GET" && q.action === "checkin") || (req.method === "POST" && (req.body || {}).action === "checkin.save")) {
+      const now = Date.now(), day = planDay(now), hour = new Date(now + 330 * 60000).getUTCHours();
+      const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; }, now);
+      const log = (raw.logs || []).find(l => String(l.day).slice(0, 10) === day) || null;
+      const gs = raw.goalState, ctx = { log, todayPriority: gs && gs.today && gs.today.date === day ? gs.today : null, plan: todayPlan(raw, now) };
+      const have = k => (raw.dailyCheckins || []).find(c => String(c.day).slice(0, 10) === day && c.kind === k);
+      if (req.method === "GET") {
+        const kind = ["morning", "evening"].find(k => checkinDue(k, hour) && !have(k)) || null;
+        return res.status(200).json({ day, kind, questions: kind ? questionsFor(kind, ctx) : [], done: { morning: !!have("morning"), evening: !!have("evening") } });
+      }
+      const b = req.body, kind = b.kind;
+      if (!["morning", "evening"].includes(kind)) return res.status(400).json({ error: "kind must be morning or evening" });
+      // Validate against every question of that kind (he may have logged something meanwhile);
+      // only the ones still being asked are required.
+      const all = questionsFor(kind, { plan: ctx.plan }, true), asked = questionsFor(kind, ctx).map(x => x.id);
+      const c = cleanAnswers(kind, all, b.answers, asked);
+      if (c.error) return res.status(400).json({ error: c.error });
+      const r = await db("jeetos_daily_checkins?on_conflict=id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+        body: JSON.stringify({ id: day + ":" + kind, day, kind, answers: c.answers, updated_at: new Date().toISOString() }) });
+      if (!r.ok) return res.status(502).json({ error: "couldn't save (" + r.status + ")" });
+      return res.status(200).json({ ok: true, day, kind, answers: c.answers });
     }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
