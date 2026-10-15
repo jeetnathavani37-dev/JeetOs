@@ -10,6 +10,7 @@
 //   POST /api/os { action: "notify.set", settings: { daily_cap, quiet_from, quiet_to, nudge_gap_min } }
 //   GET  /api/os?action=checkin             which check-in is due now + its questions
 //   POST /api/os { action: "checkin.save", kind: morning|evening, answers }
+//   GET  /api/os?action=habits              7/30-day consistency + why things get missed
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -22,6 +23,7 @@ const { PLAN, graphHealth, approvalRows, cleanTarget } = require("./_goals");
 const { settingsOf, DEFAULTS: NOTIFY_DEFAULTS, LIMITS: NOTIFY_LIMITS } = require("./_notify");
 const { loadContextData, planDay, buildPacket, todayPlan } = require("./_context");
 const { questionsFor, cleanAnswers, due: checkinDue } = require("./_checkin");
+const { habitReport } = require("./_habits");
 
 // The server key when configured; otherwise act as the logged-in owner (RLS allows the owner).
 function makeDb(req) {
@@ -99,6 +101,10 @@ module.exports = async function handler(req, res) {
         body: JSON.stringify({ id: day + ":" + kind, day, kind, answers: c.answers, updated_at: new Date().toISOString() }) });
       if (!r.ok) return res.status(502).json({ error: "couldn't save (" + r.status + ")" });
       return res.status(200).json({ ok: true, day, kind, answers: c.answers });
+    }
+    if (req.method === "GET" && q.action === "habits") {
+      const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
+      return res.status(200).json(Object.assign({ day: planDay(Date.now()), unreadable: raw.failed }, habitReport(raw, planDay(Date.now()))));
     }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });

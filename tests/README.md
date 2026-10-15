@@ -12,6 +12,7 @@ node tests/memory.test.js        # Memory v2: rules, api/os.js against an in-mem
 node tests/planner.test.js       # adaptive daily plan: misses re-slotted, minimum versions, priorities, /api/os?action=today
 node tests/notify.test.js        # notification budget: cap, quiet hours, nudge gap, alarms always ring, settings endpoint
 node tests/checkin.test.js       # daily check-in: adaptive questions, validation, log overlay, plan + packet, endpoint
+node tests/habits.test.js        # habit consistency: 7/30-day %, unknown ≠ miss, recovery excused, minimum credited, blockers
 node tests/goals.test.js         # goal graph: health maths, roll-up, approval, target limits, endpoint, packet
 ```
 
