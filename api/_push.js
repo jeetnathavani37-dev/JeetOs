@@ -4,6 +4,7 @@
 // so no new secret has to be created or pasted anywhere. If that secret
 // changes, the public key changes and the app re-subscribes automatically.
 const crypto = require("crypto");
+const { decide } = require("./_notify");
 
 const b64u = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const fromB64u = (s) => Buffer.from(String(s).replace(/-/g, "+").replace(/_/g, "/"), "base64");
@@ -65,9 +66,28 @@ async function sendPush(sub, data) {
   return r.status;
 }
 
-// Sends to every saved device; drops subscriptions the push service says are gone.
+const istDay = t => new Date(t + 330 * 60000).toISOString().slice(0, 10);
+async function rows(supa, path) {
+  try { const r = await supa(path); if (!r || !r.ok) return null; const d = await r.json(); return Array.isArray(d) ? d : null; } catch (_) { return null; }
+}
+async function logPush(supa, row) {
+  try { await supa("jeetos_push_log", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(row) }); } catch (_) { }
+}
+
+// Sends to every saved device — after the notification budget (api/_notify.js)
+// says yes — and drops subscriptions the push service says are gone.
 async function sendToAll(supa, data) {
   if (!vapidKeys()) return { sent: 0, error: "no VAPID seed configured" };
+  const now = Date.now(), day = istDay(now), tag = String((data && data.tag) || "");
+  const [sentToday, settings] = await Promise.all([
+    rows(supa, `jeetos_push_log?day=eq.${day}&decision=eq.sent&select=cls,at&limit=50`),
+    rows(supa, "jeetos_settings?id=eq.notify&select=data"),
+  ]);
+  const d = decide({ tag, now, sentToday, settings: settings && settings[0] && settings[0].data });
+  if (!d.ok) {
+    await logPush(supa, { day, tag: tag.slice(0, 80), cls: d.cls, decision: "held", reason: d.reason.slice(0, 120) });
+    return { sent: 0, held: d.reason };
+  }
   let subs = [];
   try { const r = await supa("jeetos_push_subs?select=endpoint,p256dh,auth"); subs = r.ok ? await r.json() : []; } catch (_) { }
   let sent = 0;
@@ -78,7 +98,8 @@ async function sendToAll(supa, data) {
       else if (st >= 200 && st < 300) { sent++; await supa(`jeetos_push_subs?endpoint=eq.${encodeURIComponent(s.endpoint)}`, { method: "PATCH", body: JSON.stringify({ last_ok_at: new Date().toISOString() }) }); }
     } catch (_) { }
   }
-  return { sent, devices: subs.length };
+  if (d.cls !== "test") await logPush(supa, { day, tag: tag.slice(0, 80), cls: d.cls, decision: sent ? "sent" : "held", reason: sent ? null : "no device accepted it" });
+  return { sent, devices: subs.length, cls: d.cls };
 }
 
 module.exports = { vapidKeys, sendPush, sendToAll, encrypt, b64u, fromB64u };

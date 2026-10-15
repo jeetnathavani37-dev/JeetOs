@@ -6,6 +6,8 @@
 //   POST /api/os { action: "memory.propose", coach, source, items: [...] }
 //   POST /api/os { action: "memory.act", id, op: confirm|retract|keep|edit|share, text? }
 //   GET  /api/os?action=today               Command Centre: plan, next action, goals, promises
+//   GET  /api/os?action=notify              notification budget settings + today's push log
+//   POST /api/os { action: "notify.set", settings: { daily_cap, quiet_from, quiet_to, nudge_gap_min } }
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -15,6 +17,7 @@
 const { requireOwner, bearer, SUPABASE_URL, PUBLIC_KEY } = require("./_auth");
 const { planPropose, planAct } = require("./_memory");
 const { PLAN, graphHealth, approvalRows, cleanTarget } = require("./_goals");
+const { settingsOf, DEFAULTS: NOTIFY_DEFAULTS, LIMITS: NOTIFY_LIMITS } = require("./_notify");
 const { loadContextData, planDay, buildPacket } = require("./_context");
 
 // The server key when configured; otherwise act as the logged-in owner (RLS allows the owner).
@@ -67,6 +70,11 @@ module.exports = async function handler(req, res) {
       const promises = (raw.openPromises || []).filter(c => c.owner !== "coach").map(c => ({ id: c.id, text: c.text, due: c.due, coach: c.coach, staked: !!c.staked, overdue: !!(c.due && c.due < pk.day) }));
       return res.status(200).json({ day: pk.day, nextAction: pk.nextAction, plan: pk.plan, anchors: pk.anchors, primary: health && health.primary, goals: health ? health.goals : [], promises, unknowns: pk.unknowns, unreadable: raw.failed });
     }
+    if (req.method === "GET" && q.action === "notify") {
+      const day = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+      const [st, log] = await Promise.all([db("jeetos_settings?id=eq.notify&select=data"), db(`jeetos_push_log?day=eq.${day}&select=tag,cls,decision,reason,at&order=at.desc&limit=40`)]);
+      return res.status(200).json({ settings: settingsOf(st.ok && st.body && st.body[0] && st.body[0].data), defaults: NOTIFY_DEFAULTS, today: log.ok ? log.body : [] });
+    }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
       const all = await db("jeetos_goals?select=id,kind,parent_id,title,why,owner_coach,metric,target,status,approved_at,updated_at&order=created_at.asc");
@@ -114,6 +122,16 @@ module.exports = async function handler(req, res) {
       const out = await apply(db, plan);
       if (plan.inserts.length && !out.created.length) return res.status(409).json({ error: "that fact already exists" });
       return res.status(200).json(Object.assign({ ok: true }, out));
+    }
+    if (b.action === "notify.set") {
+      const want = b.settings || {}, clean = settingsOf(want);
+      // Reject instead of silently falling back, so he knows the value didn't stick.
+      for (const k of Object.keys(want)) {
+        if (!(k in NOTIFY_DEFAULTS) || String(clean[k]) !== String(k in NOTIFY_LIMITS ? Math.round(Number(want[k])) : want[k])) return res.status(400).json({ error: "invalid " + k });
+      }
+      const r = await db("jeetos_settings?on_conflict=id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=representation" }, body: JSON.stringify({ id: "notify", data: clean, updated_at: new Date().toISOString() }) });
+      if (!r.ok) return res.status(502).json({ error: "couldn't save (" + r.status + ")" });
+      return res.status(200).json({ ok: true, settings: clean });
     }
     if (b.action === "goals.approve") {
       const all = await db("jeetos_goals?select=id,status");
