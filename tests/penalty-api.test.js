@@ -11,7 +11,8 @@ function filt(rows, qs) {
   return rows.filter(r => [...qs.entries()].every(([k, v]) => {
     if (['select', 'order', 'limit', 'on_conflict'].includes(k)) return true;
     const [op, ...rest] = v.split('.'); const val = rest.join('.');
-    if (op === 'eq') return String(r[k]) === val; if (op === 'lt') return String(r[k]) < val; if (op === 'gte') return String(r[k]) >= val; return true;
+    if (op === 'eq') return String(r[k]) === val; if (op === 'lt') return String(r[k]) < val; if (op === 'gte') return String(r[k]) >= val;
+    if (op === 'in') return val.replace(/^\(|\)$/g, '').split(',').includes(String(r[k])); return true;
   }));
 }
 global.fetch = async (url, init = {}) => {
@@ -101,4 +102,42 @@ const RealNow = Date.now;
   r = await call({ method: 'POST', headers: owner, body: { action: 'pay_report', payment_id: pay.id, utr: '432156789012' } });
   ok('cannot report the same payment twice', r.c === 409);
   ok('audit says self-reported', DB.jeetos_audit_events.some(a => a.action === 'reported_paid' && /self-reported/.test(a.detail.verification)));
+})();
+
+// ── Going live + weekly settlement ──
+(async () => {
+  await new Promise(r => setTimeout(r, 300));
+  DB.jeetos_coach_inbox = []; DB.jeetos_push_subs = [];
+  DB.jeetos_payees = [{ id: 'charity', name: 'Akshaya Patra Foundation', vpa: 'Akshayapatra@kotak' }];
+  DB.jeetos_payments = [];
+  const simEntries = DB.jeetos_penalty_entries.length;
+  let r = await call({ method: 'POST', headers: owner, body: { action: 'dues' } });
+  ok('live: simulation fines are not owed', r.b.live === false && r.b.dues_paise === 0 && simEntries > 0);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'go_live' } });
+  ok('live: refused without typing LIVE', r.c === 400);
+  Date.now = () => Date.parse('2026-10-24T10:00:00+05:30');
+  r = await call({ method: 'POST', headers: owner, body: { action: 'go_live', confirm: 'LIVE' } });
+  const v = DB.jeetos_penalty_policies;
+  ok('live: new version active in live mode, old retired', r.c === 200 && v.find(p => p.version === 1).status === 'retired' && v.find(p => p.version === 2).mode === 'live' && v.find(p => p.version === 2).status === 'active', v.map(p => [p.version, p.mode, p.status]));
+  DB.jeetos_commitments.push({ id: 'c9', coach: 'fitness', text: 'Meal prep', due: '2026-10-24', status: 'open', owner: 'jeet', staked: false });
+  r = await call({ method: 'POST', headers: owner, body: { action: 'stake', commitment_id: 'c9', time: '23:00' } });
+  ok('live: staking under the live policy', r.c === 200 && DB.jeetos_commitments.find(c => c.id === 'c9').policy_version === 2);
+  // all of 25 Oct's logs present so only the promise counts
+  DB.jeetos_logs = [{ day: '2026-10-24', entries: {}, entries_seen: { breakfast: '2026-10-24T09:00:00+05:30', lunch: '2026-10-24T13:00:00+05:30', dinner: '2026-10-24T21:00:00+05:30', sleep: '2026-10-24T08:00:00+05:30' } },
+                   { day: '2026-10-25', entries: {}, entries_seen: { breakfast: '2026-10-25T09:00:00+05:30', lunch: '2026-10-25T13:00:00+05:30', sleep: '2026-10-25T08:00:00+05:30' } }];
+  Date.now = () => Date.parse('2026-10-25T18:30:00+05:30'); // Sunday evening
+  r = await call({ method: 'GET', headers: { authorization: 'Bearer cron' } });
+  r = await call({ method: 'POST', headers: owner, body: { action: 'dues' } });
+  ok('live: missed live promise → ₹250 owed', r.b.live && r.b.dues_paise === 25000, r.b);
+  ok('live: Sunday settle-up notice sent once', DB.jeetos_coach_inbox.length === 1 && /₹250/.test(DB.jeetos_coach_inbox[0].text));
+  await call({ method: 'GET', headers: { authorization: 'Bearer cron' } });
+  ok('live: second Sunday run → no second notice', DB.jeetos_coach_inbox.length === 1);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'settle_start', amount_paise: 1 } });
+  const pay = r.b.payment;
+  ok('settle: payment = server-computed dues (₹250) to Akshaya Patra', pay && pay.kind === 'settlement' && pay.amount_paise === 25000 && pay.payee_vpa === 'Akshayapatra@kotak', pay);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'pay_report', payment_id: pay.id, utr: '111122223333' } });
+  r = await call({ method: 'POST', headers: owner, body: { action: 'dues' } });
+  ok('settle: after paying, nothing owed', r.b.dues_paise === 0 && r.b.paid_paise === 25000, r.b);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'settle_start' } });
+  ok('settle: nothing to pay → refused', r.c === 409);
 })();

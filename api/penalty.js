@@ -4,12 +4,15 @@
 //   POST { action: "stake", commitment_id, time } → stake one of his own open promises
 //   POST { action: "unstake", commitment_id }     → undo within 10 min of staking
 //   POST { action: "run" }             (owner)    → run the engine now
+//   POST { action: "go_live", confirm: "LIVE" }    → real-money mode (new policy version from now)
+//   POST { action: "dues" | "settle_start" }      → what's owed (live entries − paid) / pay it
 //   POST { action: "set_payee" | "pay_test_start" | "pay_report" | "pay_cancel" } → manual UPI
 //        (₹1 test to the charity; he pays in his own UPI app; status is self-reported)
 // The client can only read the ledger; every write happens here with the
 // server key, and amounts come only from api/_penalty.js.
 const { requireOwner, SUPABASE_URL } = require("./_auth");
 const { POLICY_V1, plan, istDate, istAt, rupees } = require("./_penalty");
+const { sendToAll } = require("./_push");
 
 const KEY = () => (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "").trim();
 async function db(path, init = {}) {
@@ -29,6 +32,36 @@ async function activePolicy() {
   const rows = await db("jeetos_penalty_policies?status=eq.active&order=version.desc&limit=1&select=*");
   const p = rows && rows[0];
   return p ? Object.assign({}, p.rules, { version: p.version, mode: p.mode, effective_from: p.effective_from }) : null;
+}
+
+// Money owed = entries assessed under a LIVE policy − settlements he reported paid.
+// Simulation-mode entries are never payable.
+async function dues() {
+  const live = await db("jeetos_penalty_policies?mode=eq.live&select=version");
+  const vers = (live || []).map(p => p.version);
+  if (!vers.length) return { live: false, assessed_paise: 0, paid_paise: 0, dues_paise: 0 };
+  const [ent, pays] = await Promise.all([
+    db(`jeetos_penalty_entries?policy_version=in.(${vers.join(",")})&select=amount_paise&limit=10000`),
+    db("jeetos_payments?kind=eq.settlement&status=in.(reported_paid,verified)&select=amount_paise"),
+  ]);
+  const assessed = ent.reduce((a, e) => a + Number(e.amount_paise), 0), paid = pays.reduce((a, x) => a + Number(x.amount_paise), 0);
+  return { live: true, assessed_paise: assessed, paid_paise: paid, dues_paise: Math.max(0, assessed - paid) };
+}
+// For _push.sendToAll, which expects a fetch-style helper.
+const rawDb = (path, init = {}) => { const key = KEY(); return fetch(`${SUPABASE_URL}/rest/v1/${path}`, Object.assign({}, init, { headers: Object.assign({ apikey: key, Authorization: "Bearer " + key, "Content-Type": "application/json" }, init.headers || {}) })); };
+// Sunday (after noon IST): one settle-up notice per day if anything is unpaid.
+async function sundayNotice(now) {
+  const ist = new Date(now + 330 * 60000);
+  if (ist.getUTCDay() !== 0 || ist.getUTCHours() < 12) return null;
+  const d = await dues();
+  if (!d.dues_paise) return null;
+  const [payee] = await db("jeetos_payees?id=eq.charity&select=name") || [];
+  const text = `Hafte ka hisaab: ${rupees(d.dues_paise)} ${payee ? payee.name : "charity"} ko dena baaki hai. Today → ⚖️ Ledger → Pay karo, phir UTR daal do. Koi galat fine lage toh pehle bata — dispute kar lenge.`;
+  const ins = await db("jeetos_coach_inbox?on_conflict=coach,slot,created_on", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
+    body: JSON.stringify({ coach: "ronaldo", slot: "settle", text, created_on: istDate(now) }) }).catch(() => []);
+  if (!ins || !ins.length) return { notice: "already sent today" };
+  const push = await sendToAll(rawDb, { title: "⚖️ Ledger", body: text.slice(0, 180), url: "/", tag: "settle-" + istDate(now) }).catch(e => ({ error: e.message }));
+  return { notice: "sent", dues: rupees(d.dues_paise), push };
 }
 
 async function runEngine(now = Date.now()) {
@@ -56,7 +89,8 @@ async function runEngine(now = Date.now()) {
     let inserted = [];
     if (fresh.length) inserted = await db("jeetos_penalty_entries?on_conflict=incident_id,kind,local_date", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=representation" }, body: JSON.stringify(fresh) }) || [];
     for (const e of inserted) await audit("penalty_entry", String(e.id), "assessed", { incident_id: e.incident_id, amount_paise: e.amount_paise, local_date: e.local_date, mode: policy.mode });
-    return { policy: policy.version, mode: policy.mode, incidents: incRows.length, assessed: inserted.map(e => ({ incident: e.incident_id, date: e.local_date, amount: rupees(Number(e.amount_paise)) })) };
+    const notice = policy.mode === "live" ? await sundayNotice(now).catch(e => ({ error: e.message })) : null;
+    return { policy: policy.version, mode: policy.mode, incidents: incRows.length, assessed: inserted.map(e => ({ incident: e.incident_id, date: e.local_date, amount: rupees(Number(e.amount_paise)) })), notice };
   } finally {
     await db("jeetos_engine_lock?id=eq.penalty", { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ locked_until: "1970-01-01T00:00:00Z" }) }).catch(() => {});
   }
@@ -115,7 +149,7 @@ module.exports = async function handler(req, res) {
     const { name, vpa, source_confirmed, payment_id, utr } = req.body || {};
     if (action === "set_payee") {
       const v = String(vpa || "").trim(), n = String(name || "").trim().slice(0, 80);
-      if (!/^[A-Za-z0-9._-]{2,256}@[A-Za-z][A-Za-z0-9.]{1,63}$/.test(v)) return res.status(400).json({ error: "UPI ID sahi format mein nahi hai (jaise name@bank)" });
+      if (!/^[A-Za-z0-9._-]{2,255}@[A-Za-z][A-Za-z0-9.]{1,63}$/.test(v)) return res.status(400).json({ error: "UPI ID sahi format mein nahi hai (jaise name@bank)" });
       if (!n) return res.status(400).json({ error: "Charity ka naam daalo" });
       if (source_confirmed !== true) return res.status(400).json({ error: "Confirm karo ki UPI ID charity ki official site se liya hai" });
       const pending = await db("jeetos_payments?status=eq.initiated&select=id");
@@ -123,6 +157,37 @@ module.exports = async function handler(req, res) {
       await db("jeetos_payees?on_conflict=id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify({ id: "charity", name: n, vpa: v, source_confirmed: true, updated_at: new Date(now).toISOString() }) });
       await audit("payee", "charity", "set", { name: n, vpa: v }, "owner");
       return res.status(200).json({ ok: true });
+    }
+    if (action === "dues") return res.status(200).json(await dues());
+    // Switching to real money needs his explicit typed confirmation. A new policy version starts now;
+    // nothing assessed in simulation becomes payable, and promises staked before need re-staking.
+    if (action === "go_live") {
+      if ((req.body || {}).confirm !== "LIVE") return res.status(400).json({ error: "Confirm karne ke liye LIVE type karo" });
+      const cur = await activePolicy();
+      if (!cur) return res.status(409).json({ error: "Pehle rules confirm karo" });
+      if (cur.mode === "live") return res.status(200).json({ ok: true, already: true, version: cur.version });
+      const [payee] = await db("jeetos_payees?id=eq.charity&select=name") || [];
+      if (!payee) return res.status(409).json({ error: "Pehle charity save karo" });
+      const all = await db("jeetos_penalty_policies?select=version&order=version.desc&limit=1");
+      const version = (all[0] ? all[0].version : 0) + 1, ts = new Date(now).toISOString();
+      await db(`jeetos_penalty_policies?version=eq.${cur.version}`, { method: "PATCH", body: JSON.stringify({ status: "retired" }) });
+      await db("jeetos_penalty_policies", { method: "POST", headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ version, mode: "live", rules: Object.assign({}, POLICY_V1, { version, mode: "live" }), status: "active", confirmed_at: ts, effective_from: ts }) });
+      await audit("penalty_policy", String(version), "went_live", { from_version: cur.version, caps: POLICY_V1.caps, payee: payee.name }, "owner");
+      return res.status(200).json({ ok: true, version });
+    }
+    if (action === "settle_start") {
+      const d = await dues();
+      if (!d.live) return res.status(409).json({ error: "Abhi simulation mode hai — koi asli dues nahi" });
+      const pending = await db("jeetos_payments?status=eq.initiated&select=*");
+      if (pending.length) return res.status(200).json({ payment: pending[0] });
+      if (!d.dues_paise) return res.status(409).json({ error: "Kuch baaki nahi hai 🎉" });
+      const [payee] = await db("jeetos_payees?id=eq.charity&select=*") || [];
+      if (!payee) return res.status(409).json({ error: "Pehle charity save karo" });
+      const row = { id: "pay_" + now.toString(36) + Math.random().toString(36).slice(2, 6), kind: "settlement", amount_paise: d.dues_paise, payee_name: payee.name, payee_vpa: payee.vpa, status: "initiated", note: "ledger dues" };
+      await db("jeetos_payments", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(row) });
+      await audit("payment", row.id, "initiated", { amount_paise: row.amount_paise, kind: "settlement", payee: payee.vpa }, "owner");
+      return res.status(200).json({ payment: row });
     }
     if (action === "pay_test_start") {
       const [payee] = await db("jeetos_payees?id=eq.charity&select=*") || [];

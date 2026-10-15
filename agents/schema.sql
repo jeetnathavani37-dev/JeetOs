@@ -344,3 +344,8 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 --   jeetos_payments(id, kind test|settlement, amount_paise >0, payee_name, payee_vpa,
 --                   status initiated|reported_paid|verified|failed|cancelled, utr unique, ...)
 --   owner read only; writes via api/penalty.js (set_payee, pay_test_start, pay_report, pay_cancel).
+
+-- Weekly settlement (build -73): jeetos_payees vpa check uses {2,255} (Postgres max repeat 255).
+-- Real money only under a policy with mode='live' (go_live needs the owner to type LIVE; it adds a
+-- new policy version from now). dues = live-policy entries − settlement payments reported paid.
+-- Sunday after 12:00 IST the ledger cron sends one settle-up notice (inbox coach=ronaldo slot=settle + push).
