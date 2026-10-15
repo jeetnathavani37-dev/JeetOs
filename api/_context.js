@@ -99,7 +99,7 @@ async function loadContextData(q, now) {
   now = now || Date.now();
   const day = planDay(now), since = addDays(day, -31), month = day.slice(0, 7);   // 31 days: habits need a month
   const since4 = new Date(now - 4 * 864e5).toISOString(), since7 = new Date(now - 7 * 864e5).toISOString();
-  const keys = ["logs", "checkins", "marks", "openPromises", "closedPromises", "goals", "goalState", "weightGoal", "weighins", "memory", "profile", "notes", "inbox", "passes", "incidents", "disputes", "decisions", "memories", "graph", "dailyCheckins", "schedule"];
+  const keys = ["logs", "checkins", "marks", "openPromises", "closedPromises", "goals", "goalState", "weightGoal", "weighins", "memory", "profile", "notes", "inbox", "passes", "incidents", "disputes", "decisions", "memories", "graph", "dailyCheckins", "schedule", "huddle"];
   const rows = await Promise.all([
     q(`jeetos_logs?day=gte.${since}&select=*&order=day.desc&limit=35`),
     q(`jeetos_anchor_checkins?day=gte.${since}&select=anchor,day,at,verified&order=day.desc&limit=320`),
@@ -122,6 +122,7 @@ async function loadContextData(q, now) {
     q("jeetos_goals?status=eq.active&select=id,kind,parent_id,title,owner_coach,metric,target,status,approved_at"),
     q(`jeetos_daily_checkins?day=gte.${since}&select=day,kind,answers,updated_at&order=day.desc&limit=70`),
     q("jeetos_settings?id=eq.schedule&select=data"),
+    q(`jeetos_huddles?day=eq.${day}&select=day,focus,priority,conflicts`),
   ]);
   const raw = { failed: [] };
   keys.forEach((k, i) => { if (!Array.isArray(rows[i])) raw.failed.push(k); raw[k] = Array.isArray(rows[i]) ? rows[i] : []; });
@@ -131,6 +132,7 @@ async function loadContextData(q, now) {
     const merged = overlayLog(i >= 0 ? raw.logs[i] : { day: d }, Object.assign({}, c, { day: d }));
     if (i >= 0) raw.logs[i] = merged; else raw.logs.push(merged);
   });
+  raw.huddle = raw.huddle[0] || null;
   raw.schedule = (raw.schedule[0] && raw.schedule[0].data) || {};
   raw.scheduleOverrides = Array.isArray(raw.schedule.overrides) ? raw.schedule.overrides : [];
   raw.goalState = raw.goalState[0] ? raw.goalState[0].data : null;
@@ -251,7 +253,7 @@ function todayPlan(raw, now, anchors) {
   return planToday({
     day, now, anchors, health, AN: anchorsOn(POLICY_V1.anchors, raw.scheduleOverrides, day),
     promises: raw.openPromises || [],
-    todayPriority: gs && gs.today && gs.today.date === day ? gs.today : morningPriority(raw, day),
+    todayPriority: gs && gs.today && gs.today.date === day ? gs.today : morningPriority(raw, day) || (raw.huddle && raw.huddle.priority && String(raw.huddle.day).slice(0, 10) === day ? { text: raw.huddle.priority, done: false, from: "huddle" } : null),
     recovery: (raw.marks || []).some(m => m.kind === "recovery" && String(m.date).slice(0, 10) === day),
     checkin: ((raw.dailyCheckins || []).find(c => String(c.day).slice(0, 10) === day && c.kind === "morning") || {}).answers || null,
     log: (raw.logs || []).find(l => String(l.day).slice(0, 10) === day) || null,
@@ -384,6 +386,13 @@ function buildPacket(raw, opts) {
   else unknowns.push("no morning check-in yet");
   if (ev) { const a = ev.answers || {}; cLines.push(`last evening check-in (${ago(String(ev.day).slice(0, 10), today)}): done ${(a.done || []).join("; ") || "nothing ticked"}; not done ${(a.not_done || []).join("; ") || "—"}${a.blocker ? `; why: ${a.blocker}${a.blocker_note ? " — " + a.blocker_note : ""}` : ""}${a.tomorrow ? `; he'll change: "${a.tomorrow}"` : ""}`); }
   add("checkins", "CHECK-INS (his own words — use them, don't re-ask)", cLines, 4);
+  if (raw.huddle && String(raw.huddle.day).slice(0, 10) === today) {
+    const h = raw.huddle, hl = [];
+    if (h.focus) hl.push(`focus: ${h.focus}`);
+    if (h.priority) hl.push(`today's priority: ${h.priority}`);
+    (Array.isArray(h.conflicts) ? h.conflicts : []).forEach(c => hl.push(`conflict ${(c.between || []).join(" vs ")}: ${c.issue} → ${c.resolution}${c.needs_jeet ? " (ask Jeet)" : ` [rule: ${c.rule}]`}`));
+    add("huddle", "HEAD COACH HUDDLE TODAY (the team follows this; don't contradict a resolved conflict)", hl, 1);
+  }
   add("insights", "PATTERNS IN HIS DATA (with sample sizes — correlation, never cause; don't over-claim)", insightLines(insightReport(raw, today)), 7);
   const dueReview = (raw.decisions || []).filter(x => !x.verdict && reviewDay(x) && reviewDay(x) <= today).slice(0, 3);
   add("reviews", "DECISIONS DUE FOR REVIEW (ask him: did it work?)", dueReview.map(x => `"${x.change}" (decided ${String(x.decided_at).slice(0, 10)}${x.expected_outcome ? `, expected: ${x.expected_outcome}` : ""})`), 5);

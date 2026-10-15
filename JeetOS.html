@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.16-87";
+const APP_BUILD = "2026.10.16-88";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1663,6 +1663,21 @@ async function runTeamHuddle(CH) {
     const today = localIsoDate();
     const h = store.get(HUDDLE_KEY);
     if (h && h.date === today) return null;
+    // The server's huddle (same facts every coach sees, conflicts resolved by fixed rules) wins;
+    // run it now if the morning cron didn't. Offline / error → the in-app huddle below.
+    if (authSession()) {
+        try {
+            let sv = await fetch("/api/os?action=huddle").then(r => r.ok ? r.json() : null);
+            if (sv && !sv.huddle) sv = await fetch("/api/os", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "huddle.run" }) }).then(r => r.ok ? r.json() : null);
+            const hh = sv && sv.huddle;
+            if (hh) {
+                store.set(HUDDLE_KEY, { date: today, focus: hh.focus || "", server: true, conflicts: (Array.isArray(hh.conflicts) ? hh.conflicts : []).map(c => ({ between: c.between || [], issue: c.issue || "", resolution: (c.resolution || "") + (c.rule ? " (" + c.rule + ")" : "") })) });
+                if (hh.priority) setTodayPriority(hh.priority, "head");
+                try { syncNotes(); } catch (_b) { }
+                return { focus: hh.focus, notes: [] };
+            }
+        } catch (_a) { }
+    }
     const W = store.get("jos_history") || [], L = todayLog();
     const active = COACHES.filter(c => (CH[c.id] || []).some(m => m.ts && Date.now() - m.ts < 7 * 864e5));
     if (W.length < 3 && !active.length) return null;
