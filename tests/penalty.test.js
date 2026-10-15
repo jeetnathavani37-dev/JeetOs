@@ -69,3 +69,55 @@ const pe = r.entries.find(e => e.incident_id === 'promise:c1');
 ok('11 IST month boundary → entry dated 2026-11-01', pe && pe.local_date === '2026-11-01');
 // every entry explains itself
 ok('   every entry has calc + why + caps', r.entries.every(e => e.calc && e.calc.why && e.calc.caps && Number.isInteger(e.amount_paise)));
+
+// ── Phase 2: gym / diet / sleep exceptions with monthly passes ──
+{
+  const { exceptionCandidates, exceptionExtras, bedMinutes } = require('../api/_penalty.js');
+  const X = Object.assign({}, P, { effective_from: '2026-10-19T00:00:00+05:30' }); // Mon 19 Oct
+  const now = T('2026-10-25T13:00:00+05:30'); // Sun noon
+  const good = d => ({ day: d, gym_done: true, total_cal: 1700, junk_meals: 0, sleep_hours: 7.5, bedtime: '11:30 PM',
+    entries: {}, entries_seen: { workout: d + 'T18:00:00+05:30' } });
+  const week = ['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25'];
+  const st = (c, cat, d) => (c.find(x => x.category === cat && x.date === d) || {}).state;
+  let c = exceptionCandidates({ policy: X, logs: week.map(good), marks: [], uses: [], now });
+  ok('P2 all good → every gym/diet/sleep day ok or pending', c.every(x => x.state === 'ok' || x.state === 'pending'));
+  ok('P2 Sunday is not a gym day', !c.some(x => x.category === 'gym' && x.date === '2026-10-25'));
+  const lg = week.map(good); lg[1].entries_seen = {}; lg[1].gym_done = false;           // Tue: no workout
+  lg[2].junk_meals = 1;                                                                // Wed: junk meal
+  lg[3].total_cal = 2600;                                                              // Thu: over calories
+  lg[4].sleep_hours = 5;                                                               // Fri: short sleep
+  lg[5].bedtime = '1:15 am';                                                           // Sat: late bedtime
+  c = exceptionCandidates({ policy: X, logs: lg, marks: [], uses: [], now });
+  ok('P2 missed gym day → needs a pass', st(c, 'gym', '2026-10-20') === 'needs_allowance');
+  ok('P2 junk meal → diet exception', st(c, 'diet', '2026-10-21') === 'needs_allowance');
+  ok('P2 2600 kcal → diet exception', st(c, 'diet', '2026-10-22') === 'needs_allowance');
+  ok('P2 5h sleep → sleep exception', st(c, 'sleep', '2026-10-23') === 'needs_allowance');
+  ok('P2 bed 1:15 am → sleep exception', st(c, 'sleep', '2026-10-24') === 'needs_allowance');
+  const none = exceptionCandidates({ policy: X, logs: [], marks: [], uses: [], now });
+  ok('P2 no data → no diet/sleep exception (missing ≠ violation)', none.filter(x => x.category !== 'gym').every(x => x.state === 'ok' || x.state === 'pending'));
+  c = exceptionCandidates({ policy: X, logs: lg, marks: [{ date: '2026-10-20', habit: 'move', kind: 'recovery', reason: 'fever' }], uses: [], now });
+  ok('12 recovery day (ill) → excused, no pass used', st(c, 'gym', '2026-10-20') === 'excused');
+  c = exceptionCandidates({ policy: X, logs: lg, marks: [{ date: '2026-10-20', habit: 'move', kind: 'min' }], uses: [], now });
+  ok('P2 minimum workout marked → counts as done', st(c, 'gym', '2026-10-20') === 'ok');
+  const rec = ['2026-10-17', '2026-10-18', '2026-10-19', '2026-10-20'].map(d => ({ date: d, habit: 'move', kind: 'recovery' }));
+  c = exceptionCandidates({ policy: X, logs: lg, marks: rec, uses: [], now });
+  ok('P2 4 recovery days in a week → review, not auto-excused', st(c, 'gym', '2026-10-20') === 'review');
+  c = exceptionCandidates({ policy: X, logs: lg, marks: [], uses: [{ category: 'gym', day: '2026-10-20', kind: 'planned', status: 'used' }], now });
+  ok('8 planned rest day → covered by its pass', st(c, 'gym', '2026-10-20') === 'covered');
+  const lg2 = week.map(good); lg2[1].entries_seen = {}; lg2[1].entries = { workout: '2026-10-20T19:00:00+05:30' };
+  c = exceptionCandidates({ policy: X, logs: lg2, marks: [], uses: [], now });
+  ok('14 workout logged in time but synced late → review', st(c, 'gym', '2026-10-20') === 'review');
+  // pass decisions → incidents / money
+  c = exceptionCandidates({ policy: X, logs: lg, marks: [], uses: [], now });
+  const idx = c.findIndex(x => x.category === 'gym' && x.date === '2026-10-20');
+  let dec = []; dec[idx] = { allowance: { ok: true, used: 3 } };
+  let ex = exceptionExtras(X, c, dec).find(e => e.incident.id === 'gym:2026-10-20');
+  ok('8 pass available → status allowance, no money', ex && ex.incident.status === 'allowance' && !ex.want && ex.incident.detail.pass === '3/7');
+  dec[idx] = { allowance: { ok: false, used: 7 } };
+  ex = exceptionExtras(X, c, dec).find(e => e.incident.id === 'gym:2026-10-20');
+  ok('P2 passes used up → ₹250 once', ex && ex.want && ex.want.raw === 25000 && /all 7 passes/.test(ex.want.why));
+  const r = plan({ policy: X, commitments: [], logs: allLogs(week), entries: [], incidents: [], now, extra: [ex] });
+  ok('P2 exception money goes through caps + ledger', r.entries.length === 1 && r.entries[0].incident_id === 'gym:2026-10-20' && r.entries[0].amount_paise === 25000 && /passes ran out/.test(r.entries[0].calc.formula));
+  ok('P2 undecided pass → nothing written', exceptionExtras(X, c, []).every(e => e.incident.id !== 'gym:2026-10-20'));
+  ok('P2 bedtime parser', bedMinutes('11:30 PM') === 1410 && bedMinutes('1:15 am') === 75 && bedMinutes('00:45') === 45 && bedMinutes('12 am') === 0 && bedMinutes('soon') === null);
+}

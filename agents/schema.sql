@@ -349,3 +349,11 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 -- Real money only under a policy with mode='live' (go_live needs the owner to type LIVE; it adds a
 -- new policy version from now). dues = live-policy entries − settlement payments reported paid.
 -- Sunday after 12:00 IST the ledger cron sends one settle-up notice (inbox coach=ronaldo slot=settle + push).
+
+-- Phase 2 (build -74): monthly passes for gym rest (7, Mon–Sat), diet (4), sleep (4); IST month, no rollover.
+-- jeetos_penalty_incidents: category += gym|diet|sleep; status += allowance.
+-- jeetos_logs: + junk_meals int, bedtime text (as entered); entries.workout stamped like the other entries.
+-- jeetos_allowance_uses(id, category, month, day, kind planned|auto, status used|released, incident_id, ...)
+--   unique (category, day) where status='used'; owner read only.
+-- jeetos_use_allowance(category, day, kind, incident, limit) / jeetos_release_allowance(category, day):
+--   security definer, advisory lock per category+month, service_role only.

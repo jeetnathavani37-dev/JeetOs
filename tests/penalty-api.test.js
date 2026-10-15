@@ -5,7 +5,7 @@ const DB = { jeetos_penalty_policies: [], jeetos_penalty_incidents: [], jeetos_p
   jeetos_commitments: [
     { id: 'c1', coach: 'fitness', text: 'Send deck', due: '2026-10-20', status: 'open', owner: 'jeet', staked: false },
     { id: 'c2', coach: 'sleep', text: 'Coach checks sleep', due: '2026-10-20', status: 'open', owner: 'coach', staked: false }],
-  jeetos_logs: [] };
+  jeetos_logs: [], jeetos_streak_marks: [], jeetos_allowance_uses: [] };
 let seq = 1, keysUsed = new Set();
 function filt(rows, qs) {
   return rows.filter(r => [...qs.entries()].every(([k, v]) => {
@@ -19,6 +19,17 @@ global.fetch = async (url, init = {}) => {
   const u = new URL(url), auth = init.headers && init.headers.Authorization;
   const j = (b, st = 200) => ({ ok: st < 300, status: st, json: async () => b, text: async () => JSON.stringify(b) });
   if (u.pathname.endsWith('rpc/jeetos_is_owner')) return j(auth === 'Bearer h.p.owner');
+  if (u.pathname.endsWith('rpc/jeetos_use_allowance') || u.pathname.endsWith('rpc/jeetos_release_allowance')) {
+    const a = JSON.parse(init.body); DB.jeetos_allowance_uses = DB.jeetos_allowance_uses || [];
+    const U = DB.jeetos_allowance_uses, live = U.filter(x => x.status === 'used');
+    const ex = live.find(x => x.category === a.p_category && x.day === a.p_day);
+    if (u.pathname.endsWith('release_allowance')) { if (!ex) return j({ ok: true, none: true }); if (ex.kind !== 'planned' || ex.incident_id) return j({ ok: false }); ex.status = 'released'; return j({ ok: true }); }
+    if (ex) return j({ ok: true, existing: true });
+    const n = live.filter(x => x.category === a.p_category && x.day.slice(0, 7) === a.p_day.slice(0, 7)).length;
+    if (n >= a.p_limit) return j({ ok: false, used: n, limit: a.p_limit });
+    U.push({ id: a.p_category + ':' + a.p_day, category: a.p_category, day: a.p_day, kind: a.p_kind, status: 'used', incident_id: a.p_incident });
+    return j({ ok: true, used: n + 1, limit: a.p_limit });
+  }
   keysUsed.add(auth);
   const t = u.pathname.split('/').pop(), rows = DB[t], qs = u.searchParams, m = init.method || 'GET';
   if (m === 'GET') return j(filt(rows, qs));
@@ -140,4 +151,33 @@ const RealNow = Date.now;
   ok('settle: after paying, nothing owed', r.b.dues_paise === 0 && r.b.paid_paise === 25000, r.b);
   r = await call({ method: 'POST', headers: owner, body: { action: 'settle_start' } });
   ok('settle: nothing to pay → refused', r.c === 409);
+})();
+
+// ── Phase 2: passes through the API ──
+(async () => {
+  await new Promise(r => setTimeout(r, 700));
+  DB.jeetos_streak_marks = []; DB.jeetos_allowance_uses = [];
+  // fresh live policy so exceptions start at a known date
+  DB.jeetos_penalty_policies.forEach(p => { p.status = 'retired'; });
+  DB.jeetos_penalty_policies.push({ version: 3, mode: 'simulation', status: 'active', effective_from: '2026-11-01T00:00:00+05:30', rules: require('../api/_penalty.js').POLICY_V1 });
+  Date.now = () => Date.parse('2026-11-02T10:00:00+05:30');
+  let r = await call({ method: 'POST', headers: owner, body: { action: 'plan_rest', date: '2026-11-08' } });
+  ok('rest: Sunday refused (already a rest day)', r.c === 400);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'plan_rest', date: '2026-11-04' } });
+  ok('rest: planned Wednesday uses a pass', r.c === 200 && DB.jeetos_allowance_uses.length === 1 && DB.jeetos_allowance_uses[0].kind === 'planned');
+  r = await call({ method: 'POST', headers: owner, body: { action: 'cancel_rest', date: '2026-11-04' } });
+  ok('rest: unused planned rest can be cancelled', r.c === 200 && DB.jeetos_allowance_uses[0].status === 'released');
+  r = await call({ method: 'POST', headers: owner, body: { action: 'plan_rest', date: '2026-10-01' } });
+  ok('rest: past dates refused', r.c === 400);
+  // 9 missed gym days in Nov (Mon–Sat, no workouts logged) → 7 passes, then ₹250 each
+  DB.jeetos_logs = [];
+  Date.now = () => Date.parse('2026-11-12T09:00:00+05:30');
+  r = await call({ method: 'GET', headers: { authorization: 'Bearer cron' } });
+  const gymInc = DB.jeetos_penalty_incidents.filter(i => i.category === 'gym' && /2026-11/.test(i.id));
+  const gymMoney = DB.jeetos_penalty_entries.filter(e => /^gym:2026-11/.test(e.incident_id));
+  ok('passes: first 7 gym misses use passes', gymInc.filter(i => i.status === 'allowance').length === 7, gymInc.map(i => i.id + ':' + i.status));
+  ok('passes: misses after the 7th cost ₹250 each', gymMoney.length === gymInc.length - 7 && gymMoney.every(e => e.amount_paise === 25000), gymMoney.map(e => e.incident_id));
+  const n = DB.jeetos_penalty_entries.length, uses = DB.jeetos_allowance_uses.filter(x => x.status === 'used').length;
+  await call({ method: 'GET', headers: { authorization: 'Bearer cron' } });
+  ok('passes: re-run → no extra passes or fines', DB.jeetos_penalty_entries.length === n && DB.jeetos_allowance_uses.filter(x => x.status === 'used').length === uses);
 })();

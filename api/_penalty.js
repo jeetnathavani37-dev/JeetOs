@@ -25,6 +25,15 @@ const POLICY_V1 = {
       sleep: { deadline: "12:00", label: "Sleep log (last night)" },
     },
   },
+  // Monthly passes (IST calendar month, no rollover). A miss first uses a pass; only
+  // when the month's passes are gone does it cost money (once — no doubling).
+  // A "recovery" mark (ill / injured / real recovery need) excuses it without a pass.
+  exceptions: {
+    gym: { label: "Gym day missed", days: [1, 2, 3, 4, 5, 6], deadline: "23:59", grace_min: 120, monthly_allowance: 7, after_paise: 25000, habit: "move" },
+    diet: { label: "Diet exception", deadline: "23:59", grace_min: 120, monthly_allowance: 4, after_paise: 10000, cal_limit: 2100, habit: "food" },
+    sleep: { label: "Sleep exception", deadline: "12:00", grace_min: 120, monthly_allowance: 4, after_paise: 10000, min_hours: 6, latest_bed: "00:30", habit: "sleep" },
+    recovery_review_after: 3,   // more than 3 recovery days in 7 → review (and a doctor nudge), not auto-excused
+  },
   caps: { incident_paise: 175000, day_paise: 100000, month_paise: 500000 },
   overlap: "suppress",          // one underlying omission → one fine
 };
@@ -69,6 +78,73 @@ function logStatus(key, date, row, policy, now) {
   return { state: "missing", checkpoint: cp, lateBy: seen != null ? seen - cp : null };
 }
 
+// "11:30 PM", "1 am", "00:45", "1:15" → minutes after midnight (null if unreadable).
+function bedMinutes(t) {
+  const m = /^\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?\s*$/i.exec(String(t || ""));
+  if (!m) return null;
+  let h = +m[1] % 24; const min = +(m[2] || 0), ap = (m[3] || "").toLowerCase();
+  if (ap === "pm" && h < 12) h += 12;
+  if (ap === "am" && h === 12) h = 0;
+  return h * 60 + min;
+}
+// Gym / diet / sleep exceptions per day. State: ok | pending | excused | review | covered | needs_allowance.
+// Missing data is never a violation here (missing logs are the log rules' job).
+function exceptionCandidates({ policy, logs, marks, uses, now }) {
+  const X = policy.exceptions;
+  if (!X) return [];
+  const from = policy.effective_from ? istDate(policy.effective_from) : istDate(now);
+  const markOf = (date, habit) => (marks || []).find(m => String(m.date).slice(0, 10) === date && m.habit === habit) || null;
+  const recoveryDays = date => new Set((marks || []).filter(m => m.kind === "recovery" && String(m.date) <= date && String(m.date) > addDays(date, -7)).map(m => String(m.date).slice(0, 10))).size;
+  const used = (cat, date) => (uses || []).find(u => u.category === cat && String(u.day) === date && u.status === "used") || null;
+  const out = [];
+  for (let date = from; date <= istDate(now); date = addDays(date, 1)) {
+    const row = (logs || []).find(r => r.day === date || r.date === date) || null;
+    const weekday = new Date(date + "T12:00:00Z").getUTCDay();
+    for (const cat of ["gym", "diet", "sleep"]) {
+      const R = X[cat];
+      if (cat === "gym" && !R.days.includes(weekday)) continue;
+      const deadline = istAt(date, R.deadline), cp = deadline + R.grace_min * 60000;
+      if (policy.effective_from && deadline <= Date.parse(policy.effective_from)) continue;
+      const base = { category: cat, date, checkpoint: cp, root_key: cat + ":" + date, label: R.label };
+      if (cp > now) { out.push(Object.assign(base, { state: "pending" })); continue; }
+      let bad = false, why = "", review = false;
+      if (cat === "gym") {
+        const seen = row && row.entries_seen && row.entries_seen.workout ? Date.parse(row.entries_seen.workout) : null;
+        const client = row && row.entries && row.entries.workout ? Date.parse(row.entries.workout) : null;
+        if (seen != null && seen <= cp) bad = false;
+        else if (client != null && client <= cp) { review = true; why = "workout logged on the phone in time, synced late"; }
+        else if (seen == null && row && row.gym_done) bad = false;
+        else { bad = true; why = seen != null ? "workout logged after the day ended" : "no workout logged on a " + ["", "Push", "Pull", "Legs", "Push", "Pull", "Legs"][weekday] + " day"; }
+        const mk = markOf(date, R.habit);
+        if (bad && mk && mk.kind === "min") { bad = false; why = ""; }      // the agreed minimum (20 min home workout / 30 min walk)
+      } else if (cat === "diet") {
+        const junk = row ? +row.junk_meals || 0 : 0, cal = row && row.total_cal != null ? +row.total_cal : null;
+        if (junk > 0) { bad = true; why = junk + " junk meal" + (junk > 1 ? "s" : "") + " logged"; }
+        else if (cal != null && cal > R.cal_limit) { bad = true; why = cal + " kcal logged (limit " + R.cal_limit + ")"; }
+      } else {
+        const hrs = row && row.sleep_hours != null ? +row.sleep_hours : null, bed = bedMinutes(row && row.bedtime);
+        const latest = bedMinutes(R.latest_bed);
+        if (hrs != null && hrs < R.min_hours) { bad = true; why = hrs + "h sleep logged (minimum " + R.min_hours + "h)"; }
+        else if (bed != null && bed > latest && bed < 6 * 60) { bad = true; why = "bedtime " + row.bedtime + " logged (after " + R.latest_bed + " AM)"; }
+      }
+      if (review) { out.push(Object.assign(base, { state: "review", why })); continue; }
+      if (!bad) { out.push(Object.assign(base, { state: "ok" })); continue; }
+      const mk = markOf(date, R.habit);
+      if (mk && mk.kind === "recovery") {
+        const n = recoveryDays(date);
+        out.push(Object.assign(base, n > X.recovery_review_after
+          ? { state: "review", why: why + " — " + n + " recovery days in a week, needs a real review (see a doctor if unwell)" }
+          : { state: "excused", why: why + " — recovery day" + (mk.reason ? " (" + mk.reason + ")" : "") }));
+        continue;
+      }
+      const u = used(cat, date);
+      if (u) { out.push(Object.assign(base, { state: "covered", why: why + " — " + (u.kind === "planned" ? "planned rest day" : "monthly pass used") })); continue; }
+      out.push(Object.assign(base, { state: "needs_allowance", why }));
+    }
+  }
+  return out;
+}
+
 // Trims an amount to the remaining incident / day / month allowance.
 function capTrim(raw, sums, caps) {
   const room = Math.min(caps.incident_paise - sums.incident, caps.day_paise - sums.day, caps.month_paise - sums.month);
@@ -76,7 +152,8 @@ function capTrim(raw, sums, caps) {
 }
 
 // Everything the ledger should contain now. `entries` = existing ledger rows.
-function plan({ policy, commitments, logs, entries, incidents, now }) {
+// `extra` = already-decided exception incidents ({ incident, want? }) that share the cap logic.
+function plan({ policy, commitments, logs, entries, incidents, now, extra }) {
   const ver = policy.version, caps = policy.caps;
   const have = new Set(entries.map(e => e.incident_id + "|" + e.kind + "|" + e.local_date));
   const net = (f) => entries.filter(f).reduce((a, e) => a + Number(e.amount_paise), 0);
@@ -115,6 +192,7 @@ function plan({ policy, commitments, logs, entries, incidents, now }) {
     }
   }
 
+  for (const x of extra || []) { incOut.set(x.incident.id, x.incident); if (x.want) want.push(x.want); }
   want.sort((a, b) => a.checkpoint - b.checkpoint);
   for (const w of want) {
     if (have.has(w.incident_id + "|" + w.kind + "|" + w.local_date)) continue;
@@ -129,7 +207,7 @@ function plan({ policy, commitments, logs, entries, incidents, now }) {
     if (amount < w.raw) inc.status = "capped";
     if (amount <= 0) continue;
     added.push({ incident_id: w.incident_id, kind: w.kind, day_n: w.day_n, local_date: w.local_date, amount_paise: amount, policy_version: ver, created_by: "engine",
-      calc: { formula: w.kind === "escalation" || w.day_n > 1 ? "base × 2^(n-1)" : (inc.category === "log" ? "flat per missing entry" : "base"), raw_paise: w.raw, trimmed_by_cap: amount < w.raw,
+      calc: { formula: w.kind === "escalation" || w.day_n > 1 ? "base × 2^(n-1)" : inc.category === "log" ? "flat per missing entry" : inc.category === "promise" ? "base" : "flat, after the month's passes ran out", raw_paise: w.raw, trimmed_by_cap: amount < w.raw,
         sums_before: sums, caps, checkpoint: new Date(w.checkpoint).toISOString(), why: w.why, mode: policy.mode } });
   }
   // An incident that has used its whole per-incident cap stays capped.
@@ -137,4 +215,30 @@ function plan({ policy, commitments, logs, entries, incidents, now }) {
   return { incidents: [...incOut.values()], entries: added };
 }
 
-module.exports = { POLICY_V1, plan, promiseDue, logStatus, capTrim, istDate, istAt, addDays, rupees };
+// Turns exception candidates (after allowance decisions) into incidents + wants for plan().
+// decided[i] = { allowance: { ok } } for needs_allowance items.
+function exceptionExtras(policy, cands, decided) {
+  const X = policy.exceptions, out = [];
+  cands.forEach((c, i) => {
+    if (c.state === "ok" || c.state === "pending") return;
+    const id = c.category + ":" + c.date;
+    const inc = { id, source_key: id, commitment_id: null, category: c.category, root_key: c.root_key, policy_version: policy.version, title: c.label + " — " + c.date, overlap_of: null, detail: { date: c.date, why: c.why || null } };
+    if (c.state === "excused") inc.status = "excused";
+    else if (c.state === "review") inc.status = "review";
+    else if (c.state === "covered") inc.status = "allowance";
+    else {
+      const a = decided && decided[i] && decided[i].allowance;
+      if (a && a.ok) { inc.status = "allowance"; inc.detail.pass = (a.used || "?") + "/" + X[c.category].monthly_allowance; }
+      else if (a) {
+        inc.status = "resolved";
+        out.push({ incident: inc, want: { incident_id: id, kind: "assessment", day_n: 1, local_date: c.date, raw: X[c.category].after_paise, checkpoint: c.checkpoint,
+          why: c.why + " — all " + X[c.category].monthly_allowance + " passes used this month" } });
+        return;
+      } else return; // no decision yet → nothing written
+    }
+    out.push({ incident: inc });
+  });
+  return out;
+}
+
+module.exports = { POLICY_V1, plan, promiseDue, logStatus, capTrim, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, bedMinutes };
