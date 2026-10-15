@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.16-81";
+const APP_BUILD = "2026.10.16-82";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -10103,6 +10103,7 @@ function JeetOS() {
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, background: "rgba(91,141,239,.08)", border: "1px solid rgba(91,141,239,.22)", borderRadius: 12, padding: "10px 12px" } },
                     React.createElement("span", { style: { fontSize: 14 } }, "📷"),
                     React.createElement("span", { style: { fontSize: 10, color: "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, lineHeight: 1.5 } }, "Every task needs one photo as proof — finish the steps, then add a photo inside the card to mark it complete."))),
+            React.createElement(CommandCentreCard, null),
             React.createElement(GoalGraphCard, null),
             React.createElement(PrimaryGoalCard, { T: T, onChange: () => setStreakTick(t => t + 1) }),
             React.createElement(StreakCard, { T: T, W: W, L: L, checks: checks, onChange: () => setStreakTick(t => t + 1) }),
@@ -11321,6 +11322,35 @@ function GoalGraphCard() {
                     g.status === "active" && tune && small("⚙️", () => { const v = prompt(tune[1], (g.target || {})[tune[0]]); if (v != null && v !== "") post({ action: "goals.target", id: g.id, target: { [tune[0]]: Number(v) } }); }),
                     g.status === "active" ? small("Band karo", () => { const why = prompt("Ye goal kuch time ke liye band karna hai? Wajah (optional):", ""); if (why != null) post({ action: "goals.cancel", id: g.id, reason: why }); })
                         : small("Wapas chalu", () => post({ action: "goals.resume", id: g.id })))); }));
+}
+// Command Centre — the first thing on Today: what to do right now, today's top 3,
+// what moved after a miss, open promises and what's at risk. Everything comes
+// from the server's plan (api/_planner.js), so it matches what the coaches see.
+function CommandCentreCard() {
+    const [d, setD] = React.useState(null);
+    const load = () => fetch("/api/os?action=today").then(r => r.ok ? r.json() : null).then(x => setD(x)).catch(() => { });
+    React.useEffect(() => { if (!authSession()) return; load(); const t = setInterval(load, 5 * 60000); const f = () => { if (!document.hidden) load(); }; document.addEventListener("visibilitychange", f); return () => { clearInterval(t); document.removeEventListener("visibilitychange", f); }; }, []);
+    if (!d || !d.plan || !Array.isArray(d.plan.top3)) return null;
+    const box = { background: "linear-gradient(135deg," + T.card + "," + T.ink + ")", border: "1px solid " + T.gold, borderRadius: 16, padding: "12px 16px", marginBottom: 14, fontFamily: "Inter,system-ui,sans-serif" };
+    const sub = t => React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold, marginTop: 10, marginBottom: 3 } }, t);
+    const promises = Array.isArray(d.promises) ? d.promises.filter(c => c.due && c.due <= d.day).slice(0, 4) : [];
+    const changes = Array.isArray(d.plan.changes) ? d.plan.changes : [];
+    const risks = Array.isArray(d.plan.risks) ? d.plan.risks : [];
+    return React.createElement("div", { style: box, "data-testid": "command-centre" },
+        React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold } }, "⚡ COMMAND CENTRE"),
+        React.createElement("div", { style: { fontSize: 15, color: T.ivory, fontWeight: 600, marginTop: 4, lineHeight: 1.35 } }, "👉 " + (d.nextAction || "Abhi kuch urgent nahi.")),
+        d.plan.message && React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryM, marginTop: 3 } }, d.plan.message),
+        sub("AAJ KE TOP 3"),
+        d.plan.top3.map((t, i) => React.createElement("div", { key: i, style: { display: "flex", gap: 8, padding: "3px 0" } },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.gold, width: 14 } }, String(i + 1)),
+            React.createElement("div", null,
+                React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, t.title),
+                React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryM } }, t.why)))),
+        changes.length > 0 && sub("🔁 PLAN BADLA"),
+        changes.map((c, i) => React.createElement("div", { key: i, style: { fontSize: 11.5, color: c.type === "dropped" ? T.gold : T.ivory, padding: "2px 0" } }, c.text)),
+        promises.length > 0 && sub("🤝 AAJ KE PROMISES"),
+        promises.map(c => React.createElement("div", { key: c.id, style: { fontSize: 11.5, color: c.overdue ? T.gold : T.ivory, padding: "2px 0" } }, (c.overdue ? "⏰ " : "• ") + c.text + (c.overdue ? " (overdue)" : "") + (c.staked ? " 💰" : ""))),
+        risks.length > 0 && React.createElement("div", { style: { fontSize: 11, color: T.gold, marginTop: 8 } }, "⚠ " + risks.join(" · ")));
 }
 // Shows the app only to the logged-in owner. Offline with a saved session → the app still opens.
 function AuthGate() {
