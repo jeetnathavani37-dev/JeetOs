@@ -81,6 +81,9 @@ async function runEngine(now = Date.now()) {
   try {
     const policy = await activePolicy();
     if (!policy) return { skipped: "no confirmed policy" };
+    // Schedule changes he approved (each applies only from its own date on).
+    const sched = await db("jeetos_settings?id=eq.schedule&select=data").catch(() => []);
+    policy.schedule_overrides = (sched && sched[0] && sched[0].data && sched[0].data.overrides) || [];
     const from = istDate(policy.effective_from);
     const [commitments, logs, entries, incidents] = await Promise.all([
       db("jeetos_commitments?staked=eq.true&select=id,coach,text,due,status,owner,staked,agreed_at,deadline_at,done_at,resolved_at"),

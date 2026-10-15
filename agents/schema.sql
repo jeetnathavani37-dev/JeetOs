@@ -428,3 +428,10 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 -- verdict (worked|didnt|unclear), outcome_at. Jeet's own entries: coach 'jeet',
 -- source 'journal', status 'approved'. Review is due on review_on, else 14 days after
 -- approval. Patterns (api/_insights.js) compare the related habit 14 days before/after.
+
+-- ── Plan repair (2026-10-16) ───────────────────────────────────────────
+-- jeetos_settings id 'schedule' → { overrides: [{ anchor, time, from, was, approved_at, evidence, revert? }],
+--   rejected: [{ anchor, time, at }] }. Proposals are computed (api/_repair.js), never stored.
+-- An approved shift applies from tomorrow in: the penalty engine (anchorsOn), the context
+-- packet, the planner, the alarm cron (moved-later anchors aren't pinged at the old time)
+-- and the app's schedule card. Each approval is also a journal decision (source 'repair').

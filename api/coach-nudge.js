@@ -10,7 +10,7 @@
 
 const { COACHES, personaPrompt } = require("./_coach-personas");
 const { sendToAll } = require("./_push");
-const { POLICY_V1 } = require("./_penalty");
+const { POLICY_V1, anchorsOn, istAt, addDays } = require("./_penalty");
 const { buildPacket, loadContextData } = require("./_context");
 // Which coach nudges him when an anchor of his day slips.
 const ANCHOR_COACH = { wake: "sleep", gym: "fitness", breakfast: "nutrition", work: "ronaldo", lunch: "nutrition", snack: "nutrition", leave: "ronaldo", dinner: "nutrition", sleep: "sleep" };
@@ -190,9 +190,12 @@ module.exports = async function handler(req, res) {
   try {
     // Anchor alarm: a few minutes after one of his times, if it isn't done yet, the right coach pings him.
     if (slot === "anchor") {
-      const key = req.query && req.query.anchor, A = POLICY_V1.anchors.list[key];
-      if (!A) return res.status(400).json({ error: "unknown anchor" });
-      const ist = istNow(), day = A.next_day && ist.getUTCHours() < 12 ? istIsoDate(new Date(ist.getTime() - 864e5)) : today;
+      const key = req.query && req.query.anchor, A0 = POLICY_V1.anchors.list[key];
+      if (!A0) return res.status(400).json({ error: "unknown anchor" });
+      const ist = istNow(), day = A0.next_day && ist.getUTCHours() < 12 ? istIsoDate(new Date(ist.getTime() - 864e5)) : today;
+      // His approved schedule changes move the anchor; the cron runs at the old time, so a later anchor isn't due yet.
+      const A = anchorsOn(POLICY_V1.anchors, raw.scheduleOverrides, day).list[key];
+      if (Date.now() < istAt(A.next_day ? addDays(day, 1) : day, A.time)) return res.status(200).json({ skipped: "moved to " + A.time + " — not due yet" });
       if (A.days && !A.days.includes(new Date(day + "T12:00:00Z").getUTCDay())) return res.status(200).json({ skipped: "not today" });
       const [done, sick] = await Promise.all([
         A.kind === "meal" ? supaJson(`jeetos_logs?day=eq.${day}&select=entries_seen`).then(r => !!(r[0] && r[0].entries_seen && r[0].entries_seen[key]))

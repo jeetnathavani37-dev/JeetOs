@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.16-86";
+const APP_BUILD = "2026.10.16-87";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -2885,6 +2885,22 @@ const DAY_ANCHORS = [
     { key: "dinner", icon: "🍽️", label: "Dinner", time: "23:00", ext: 30, kind: "meal" },
     { key: "sleep", icon: "🌙", label: "Sona", time: "00:30", ext: 30, kind: "checkin", nextDay: true, btn: "So raha hoon" },
 ];
+// Schedule changes he approved (Plan repair) — each applies from its own date on.
+// Cached so the schedule card is right offline too; refreshed from the server on open.
+const SCHED_KEY = "jos_sched_overrides";
+DAY_ANCHORS.forEach(a => { a.base = a.time; });
+function applyScheduleOverrides(list) {
+    const today = localIsoDate(new Date());
+    DAY_ANCHORS.forEach(a => {
+        const o = (Array.isArray(list) ? list : []).filter(x => x && x.anchor === a.key && /^\d\d:\d\d$/.test(x.time || "") && String(x.from) <= today).sort((x, y) => String(x.from).localeCompare(String(y.from))).pop();
+        a.time = o ? o.time : a.base;
+    });
+}
+applyScheduleOverrides(store.get(SCHED_KEY));
+function refreshScheduleOverrides() {
+    if (!authSession()) return Promise.resolve();
+    return fetch("/api/os?action=repair").then(r => r.ok ? r.json() : null).then(d => { if (d && Array.isArray(d.overrides)) { store.set(SCHED_KEY, d.overrides); applyScheduleOverrides(d.overrides); } return d; }).catch(() => null);
+}
 const CK_KEY = "jos_checkins_today", CK_QUEUE = "jos_ck_queue";
 // The anchor day: sleep after midnight (before noon) still belongs to the previous day.
 function anchorDay(a) { const d = new Date(); if (a && a.nextDay && d.getHours() < 12) d.setDate(d.getDate() - 1); return localIsoDate(d); }
@@ -10105,6 +10121,7 @@ function JeetOS() {
                     React.createElement("span", { style: { fontSize: 10, color: "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, lineHeight: 1.5 } }, "Every task needs one photo as proof — finish the steps, then add a photo inside the card to mark it complete."))),
             React.createElement(CommandCentreCard, null),
             React.createElement(CheckinCard, null),
+            React.createElement(RepairCard, null),
             React.createElement(GoalGraphCard, null),
             React.createElement(HabitsCard, null),
             React.createElement(PrimaryGoalCard, { T: T, onChange: () => setStreakTick(t => t + 1) }),
@@ -11496,6 +11513,32 @@ function JournalCard() {
         msg && React.createElement("span", { style: { fontSize: 11, color: T.ivoryM, marginLeft: 8 } }, msg),
         d && Array.isArray(d.decisions) && d.decisions.filter(x => !x.due).slice(0, 8).map(x => React.createElement("div", { key: x.id, style: { fontSize: 11.5, color: T.ivoryM, padding: "4px 0", borderTop: "1px solid " + T.border, marginTop: 4 } },
             String(x.decided_at).slice(0, 10) + " · " + x.change + (x.verdict ? " — " + VERDICT[x.verdict] + (x.actual_outcome ? " (" + x.actual_outcome + ")" : "") : x.review_day ? " — review " + x.review_day : ""))));
+}
+// Plan repair — when an anchor keeps slipping, the server proposes a realistic
+// new time. Nothing changes until he approves; it applies from tomorrow.
+function RepairCard() {
+    const [d, setD] = React.useState(null);
+    const [msg, setMsg] = React.useState("");
+    const load = () => refreshScheduleOverrides().then(x => setD(x));
+    React.useEffect(() => { load(); }, []);
+    if (!d || !Array.isArray(d.proposals)) return null;
+    const recent = (Array.isArray(d.overrides) ? d.overrides : []).filter(o => !o.revert && o.from > new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10));
+    if (!d.proposals.length && !recent.length) return null;
+    const post = body => fetch("/api/os", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json().then(x => { setMsg(r.ok ? (x.from ? "✓ " + x.from + " se lagu" : "✓") : (x.error || "error")); return load(); })).catch(() => setMsg("offline"));
+    const box = { background: T.card, border: "1px solid " + (d.proposals.length ? T.gold : T.border), borderRadius: 16, padding: "12px 16px", marginBottom: 14, fontFamily: "Inter,system-ui,sans-serif" };
+    const btn = (label, onClick, primary) => React.createElement("button", { onClick, style: { padding: "5px 12px", marginRight: 8, marginTop: 6, borderRadius: 10, border: primary ? "none" : "1px solid " + T.border2, background: primary ? T.gold : "transparent", color: primary ? T.ink : T.ivory, fontSize: 12, cursor: "pointer" } }, label);
+    const name = k => (DAY_ANCHORS.find(a => a.key === k) || {}).label || k;
+    return React.createElement("div", { style: box, "data-testid": "repair-card" },
+        React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold } }, "🔧 PLAN SUGGESTION"),
+        d.proposals.map(pr => React.createElement("div", { key: pr.id, style: { marginTop: 6 } },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivory, lineHeight: 1.4 } }, pr.text),
+            React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryM, marginTop: 2 } }, "Kal se lagu. Passes aur fines naye time se; purane din nahi badlenge. Calendar wala event khud edit kar lena."),
+            btn("✓ Haan, " + pr.to_time + " karo", () => post({ action: "repair.approve", id: pr.id }), true),
+            btn("Nahi, " + pr.from_time + " hi rakho", () => post({ action: "repair.reject", id: pr.id })))),
+        recent.length > 0 && React.createElement("div", { style: { fontSize: 11, color: T.ivoryM, marginTop: 8 } },
+            "Badle hue time: ", recent.map(o => React.createElement("span", { key: o.anchor + o.from }, name(o.anchor) + " " + (o.was || "") + " → " + o.time + " (" + o.from + " se) ",
+                React.createElement("button", { onClick: () => { if (confirm(name(o.anchor) + " wapas purane time pe? (kal se)")) post({ action: "repair.revert", anchor: o.anchor }); }, style: { background: "transparent", border: "none", color: T.gold, fontSize: 11, cursor: "pointer", textDecoration: "underline" } }, "undo")))),
+        msg && React.createElement("div", { style: { fontSize: 11, color: T.ivoryM, marginTop: 4 } }, msg));
 }
 // Shows the app only to the logged-in owner. Offline with a saved session → the app still opens.
 function AuthGate() {

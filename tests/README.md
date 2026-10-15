@@ -14,6 +14,7 @@ node tests/notify.test.js        # notification budget: cap, quiet hours, nudge 
 node tests/checkin.test.js       # daily check-in: adaptive questions, validation, log overlay, plan + packet, endpoint
 node tests/habits.test.js        # habit consistency: 7/30-day %, unknown ≠ miss, recovery excused, minimum credited, blockers
 node tests/insights.test.js      # patterns with sample sizes (sleep→gym, wake→gym, energy→plan, weekdays, before/after) + decision journal
+node tests/repair.test.js        # plan repair: slip detection, approve from tomorrow, engine/context/planner/alarm honour it, endpoint
 node tests/goals.test.js         # goal graph: health maths, roll-up, approval, target limits, endpoint, packet
 ```
 
