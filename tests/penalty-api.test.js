@@ -5,7 +5,7 @@ const DB = { jeetos_penalty_policies: [], jeetos_penalty_incidents: [], jeetos_p
   jeetos_commitments: [
     { id: 'c1', coach: 'fitness', text: 'Send deck', due: '2026-10-20', status: 'open', owner: 'jeet', staked: false },
     { id: 'c2', coach: 'sleep', text: 'Coach checks sleep', due: '2026-10-20', status: 'open', owner: 'coach', staked: false }],
-  jeetos_logs: [], jeetos_streak_marks: [], jeetos_allowance_uses: [], jeetos_disputes: [], jeetos_evidence: [], jeetos_weighins: [], jeetos_weight_goals: [] };
+  jeetos_logs: [], jeetos_streak_marks: [], jeetos_allowance_uses: [], jeetos_disputes: [], jeetos_evidence: [], jeetos_weighins: [], jeetos_weight_goals: [], jeetos_anchor_checkins: [], jeetos_places: [] };
 let seq = 1, keysUsed = new Set();
 function filt(rows, qs) {
   return rows.filter(r => [...qs.entries()].every(([k, v]) => {
@@ -128,7 +128,9 @@ const RealNow = Date.now;
   r = await call({ method: 'POST', headers: owner, body: { action: 'go_live' } });
   ok('live: refused without typing LIVE', r.c === 400);
   Date.now = () => Date.parse('2026-10-24T10:00:00+05:30');
+  const PV = require('../api/_penalty.js').POLICY_V1, savedAnchors = PV.anchors; delete PV.anchors;   // anchors have their own tests
   r = await call({ method: 'POST', headers: owner, body: { action: 'go_live', confirm: 'LIVE' } });
+  PV.anchors = savedAnchors;
   const v = DB.jeetos_penalty_policies;
   ok('live: new version active in live mode, old retired', r.c === 200 && v.find(p => p.version === 1).status === 'retired' && v.find(p => p.version === 2).mode === 'live' && v.find(p => p.version === 2).status === 'active', v.map(p => [p.version, p.mode, p.status]));
   DB.jeetos_commitments.push({ id: 'c9', coach: 'fitness', text: 'Meal prep', due: '2026-10-24', status: 'open', owner: 'jeet', staked: false });
@@ -160,7 +162,7 @@ const RealNow = Date.now;
   DB.jeetos_streak_marks = []; DB.jeetos_allowance_uses = [];
   // fresh live policy so exceptions start at a known date
   DB.jeetos_penalty_policies.forEach(p => { p.status = 'retired'; });
-  DB.jeetos_penalty_policies.push({ version: 3, mode: 'simulation', status: 'active', effective_from: '2026-11-01T00:00:00+05:30', rules: require('../api/_penalty.js').POLICY_V1 });
+  DB.jeetos_penalty_policies.push({ version: 3, mode: 'simulation', status: 'active', effective_from: '2026-11-01T00:00:00+05:30', rules: Object.assign({}, require('../api/_penalty.js').POLICY_V1, { anchors: undefined }) });
   Date.now = () => Date.parse('2026-11-02T10:00:00+05:30');
   let r = await call({ method: 'POST', headers: owner, body: { action: 'plan_rest', date: '2026-11-08' } });
   ok('rest: Sunday refused (already a rest day)', r.c === 400);
@@ -245,4 +247,23 @@ const RealNow = Date.now;
   Date.now = () => day('2026-12-20');
   r = await call({ method: 'POST', headers: owner, body: { action: 'goal_cancel' } });
   ok('goal: can\'t cancel after the first week', r.c === 409);
+})();
+
+// ── Daily anchors through the API ──
+(async () => {
+  await new Promise(r => setTimeout(r, 2400));
+  Date.now = () => Date.parse('2026-12-01T09:20:00+05:30');
+  let r = await call({ method: 'POST', headers: owner, body: { action: 'set_place', place: 'gym', lat: 22.3, lng: 70.8, acc: 15 } });
+  ok('place: gym location saved', r.c === 200 && DB.jeetos_places[0].id === 'gym');
+  r = await call({ method: 'POST', headers: owner, body: { action: 'set_place', place: 'gym', lat: 22.3, lng: 70.8, acc: 900 } });
+  ok('place: inaccurate location refused', r.c === 400);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'checkin', anchor: 'gym', lat: 22.32, lng: 70.8, acc: 10 } });
+  ok('checkin: 2 km from the gym → refused', r.c === 409 && /km door/.test(r.b.error), r.b);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'checkin', anchor: 'gym', lat: 22.3005, lng: 70.8, acc: 10 } });
+  ok('checkin: at the gym → recorded, verified, server time', r.c === 200 && r.b.checkin.verified === true && r.b.checkin.day === '2026-12-01');
+  r = await call({ method: 'POST', headers: owner, body: { action: 'checkin', anchor: 'breakfast' } });
+  ok('checkin: meals are not check-ins (they come from the meal log)', r.c === 400);
+  Date.now = () => Date.parse('2026-12-02T00:40:00+05:30');
+  r = await call({ method: 'POST', headers: owner, body: { action: 'checkin', anchor: 'sleep' } });
+  ok('checkin: sleep at 12:40 AM counts for the previous day', r.c === 200 && r.b.checkin.day === '2026-12-01');
 })();

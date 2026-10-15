@@ -35,20 +35,20 @@ ok('   honestly closed as missed → only ₹250', JSON.stringify(amounts(r)) ==
 r = run({ commitments: [staked({ agreed_at: '2026-10-21T00:00:00+05:30' }), staked({ id: 'c2', staked: false })], now: T('2026-10-25T12:00:00+05:30') });
 ok('   agreed after deadline / not staked → no penalty', r.entries.length === 0);
 // 5 log inside grace
-const lg = allLogs(days); lg[1].entries_seen.dinner = '2026-10-20T23:30:00+05:30';
+const lg = allLogs(days); lg[1].entries_seen.sleep = '2026-10-20T13:30:00+05:30';
 r = run({ logs: lg, now: T('2026-10-21T02:00:00+05:30') });
-ok('5 dinner logged 23:30 (inside 2h grace) → no fine', r.entries.length === 0);
+ok('5 sleep log at 1:30 PM (inside 2h grace after 12:00) → no fine', r.entries.length === 0);
 // 6 missing after grace
-const lg2 = allLogs(days); delete lg2[1].entries.dinner; delete lg2[1].entries_seen.dinner;
+const lg2 = allLogs(days); delete lg2[1].entries.sleep; delete lg2[1].entries_seen.sleep;
 r = run({ logs: lg2, now: T('2026-10-21T02:00:00+05:30') });
-ok('6 dinner missing after grace → one ₹100', JSON.stringify(amounts(r)) === '[10000]' && r.entries[0].incident_id === 'log:dinner:2026-10-20');
+ok('6 sleep log missing after grace → one ₹100', JSON.stringify(amounts(r)) === '[10000]' && r.entries[0].incident_id === 'log:sleep:2026-10-20');
 // logged on phone in time but synced late → review
-const lg3 = allLogs(days); lg3[1].entries.dinner = '2026-10-20T21:00:00+05:30'; lg3[1].entries_seen.dinner = '2026-10-21T08:00:00+05:30';
+const lg3 = allLogs(days); lg3[1].entries.sleep = '2026-10-20T11:00:00+05:30'; lg3[1].entries_seen.sleep = '2026-10-21T08:00:00+05:30';
 r = run({ logs: lg3, now: T('2026-10-21T09:00:00+05:30') });
-ok('14 phone logged in time, synced late → review, no fine', r.entries.length === 0 && r.incidents.find(i => i.id === 'log:dinner:2026-10-20').status === 'review');
+ok('14 phone logged in time, synced late → review, no fine', r.entries.length === 0 && r.incidents.find(i => i.id === 'log:sleep:2026-10-20').status === 'review');
 // 7 overlap: same root already fined by another incident
-r = run({ logs: lg2, incidents: [{ id: 'promise:x', root_key: 'log:dinner:2026-10-20', status: 'resolved' }], now: T('2026-10-21T02:00:00+05:30') });
-ok('7 same omission already fined elsewhere → suppressed, ₹0', r.entries.length === 0 && r.incidents.find(i => i.id === 'log:dinner:2026-10-20').status === 'overlap_suppressed');
+r = run({ logs: lg2, incidents: [{ id: 'promise:x', root_key: 'log:sleep:2026-10-20', status: 'resolved' }], now: T('2026-10-21T02:00:00+05:30') });
+ok('7 same omission already fined elsewhere → suppressed, ₹0', r.entries.length === 0 && r.incidents.find(i => i.id === 'log:sleep:2026-10-20').status === 'overlap_suppressed');
 // 22 caps: day cap ₹1,000
 const many = ['a', 'b', 'c', 'd', 'e'].map(id => staked({ id, deadline_at: '2026-10-20T23:00:00+05:30' }));
 r = run({ commitments: many, now: T('2026-10-21T02:00:00+05:30') });
@@ -92,7 +92,7 @@ ok('   every entry has calc + why + caps', r.entries.every(e => e.calc && e.calc
   ok('P2 junk meal → diet exception', st(c, 'diet', '2026-10-21') === 'needs_allowance');
   ok('P2 2600 kcal → diet exception', st(c, 'diet', '2026-10-22') === 'needs_allowance');
   ok('P2 5h sleep → sleep exception', st(c, 'sleep', '2026-10-23') === 'needs_allowance');
-  ok('P2 bed 1:15 am → sleep exception', st(c, 'sleep', '2026-10-24') === 'needs_allowance');
+  ok('P2 bed 1:15 am → not a sleep exception any more (the sleep anchor handles bedtime)', st(c, 'sleep', '2026-10-24') === 'ok');
   const none = exceptionCandidates({ policy: X, logs: [], marks: [], uses: [], now });
   ok('P2 no data → no diet/sleep exception (missing ≠ violation)', none.filter(x => x.category !== 'gym').every(x => x.state === 'ok' || x.state === 'pending'));
   c = exceptionCandidates({ policy: X, logs: lg, marks: [{ date: '2026-10-20', habit: 'move', kind: 'recovery', reason: 'fever' }], uses: [], now });
@@ -193,4 +193,49 @@ ok('   every entry has calc + why + caps', r.entries.every(e => e.calc && e.calc
   const tr = weightTrend([W('2026-11-10', 90), W('2026-11-17', 88.8)], '2026-11-17', WEIGHT_RULES);
   ok('W losing >1%/week → safety flag', tr.fast && tr.pct_week > 1, tr);
   ok('W corrections: superseded weigh-in ignored', meanWindow([W('2026-11-10', 95), Object.assign(W('2026-11-10', 90, true, 1), { supersedes: 'w2026-11-100' })], '2026-11-10') === 90);
+}
+
+// ── Daily anchors (wake 8, gym 9:30, breakfast 11:30, work 12:30, lunch 3, snack 5:30, leave 10 PM, dinner 11 PM, sleep 12:30) ──
+{
+  const { anchorCandidates, anchorExtras } = require('../api/_penalty.js');
+  const X = Object.assign({}, P, { effective_from: '2026-10-19T00:00:00+05:30' });
+  const ck = (anchor, day, at) => ({ anchor, day, at: at, verified: null });
+  const tue = '2026-10-20';
+  const fullDay = [ck('wake', tue, tue + 'T07:55:00+05:30'), ck('gym', tue, tue + 'T09:25:00+05:30'), ck('work', tue, tue + 'T12:20:00+05:30'), ck('snack', tue, tue + 'T17:20:00+05:30'),
+    ck('leave', tue, tue + 'T21:50:00+05:30'), ck('sleep', tue, '2026-10-21T00:20:00+05:30')];
+  const meals = { day: tue, gym_done: true, entries_seen: { breakfast: tue + 'T11:20:00+05:30', lunch: tue + 'T14:50:00+05:30', dinner: tue + 'T22:55:00+05:30', workout: tue + 'T10:30:00+05:30' } };
+  const now = T('2026-10-21T09:00:00+05:30');
+  const get = (c, k) => (c.find(x => x.key === k && x.date === tue) || {}).state;
+  let c = anchorCandidates({ policy: X, checkins: fullDay, logs: [meals], marks: [], now });
+  ok('A all 9 anchors on time → all ok, ₹0', ['wake', 'gym', 'breakfast', 'work', 'lunch', 'snack', 'leave', 'dinner', 'sleep'].every(k => get(c, k) === 'ok'), c.filter(x => x.date === tue).map(x => x.key + ':' + x.state));
+  const late = fullDay.map(x => x.anchor === 'wake' ? ck('wake', tue, tue + 'T08:45:00+05:30') : x);
+  c = anchorCandidates({ policy: X, checkins: late, logs: [meals], marks: [], now });
+  ok('A woke 8:45 (inside 9:00 extension) → uses a wake pass', get(c, 'wake') === 'needs_allowance');
+  c = anchorCandidates({ policy: X, checkins: fullDay.map(x => x.anchor === 'wake' ? ck('wake', tue, tue + 'T09:20:00+05:30') : x), logs: [meals], marks: [], now });
+  ok('A woke 9:20 (after the extension) → missed, ₹100, no pass', get(c, 'wake') === 'missed');
+  const noBf = Object.assign({}, meals, { entries_seen: Object.assign({}, meals.entries_seen, { breakfast: tue + 'T11:50:00+05:30' }) });
+  c = anchorCandidates({ policy: X, checkins: fullDay, logs: [noBf], marks: [], now });
+  ok('A breakfast logged 11:50 → extension pass (meal timed from the log)', get(c, 'breakfast') === 'needs_allowance');
+  c = anchorCandidates({ policy: X, checkins: fullDay.filter(x => x.anchor !== 'gym'), logs: [Object.assign({}, meals, { gym_done: false, entries_seen: Object.assign({}, meals.entries_seen, { workout: undefined }) })], marks: [], now });
+  ok('A gym skipped entirely → no reporting fine (the gym rule handles it, no double fine)', get(c, 'gym') === 'skip');
+  c = anchorCandidates({ policy: X, checkins: [], logs: [], marks: [{ date: tue, habit: 'move', kind: 'recovery' }], now });
+  ok('A sick day (recovery mark) → every anchor excused', c.filter(x => x.date === tue && x.key !== 'gym').every(x => x.state === 'excused'));
+  c = anchorCandidates({ policy: X, checkins: fullDay.map(x => x.anchor === 'sleep' ? ck('sleep', tue, '2026-10-21T00:50:00+05:30') : x), logs: [meals], marks: [], now });
+  ok('A slept 12:50 AM → sleep pass (counts for the previous day)', get(c, 'sleep') === 'needs_allowance');
+  const sun = '2026-10-25';
+  c = anchorCandidates({ policy: X, checkins: [], logs: [], marks: [], now: T('2026-10-26T09:00:00+05:30') });
+  ok('A Sunday: no gym / work / leave anchors', !c.some(x => x.date === sun && ['gym', 'work', 'leave'].includes(x.key)) && c.some(x => x.date === sun && x.key === 'wake'));
+  c = anchorCandidates({ policy: X, checkins: [Object.assign(ck('wake', tue, tue + 'T10:00:00+05:30'), { client_at: tue + 'T07:58:00+05:30' })], logs: [meals], marks: [], now });
+  ok('A tapped 7:58 offline, reached server 10:00 → review, not a fine', get(c, 'wake') === 'review');
+  c = anchorCandidates({ policy: X, checkins: late, logs: [meals], marks: [], now });
+  const i = c.findIndex(x => x.key === 'wake' && x.date === tue);
+  let dec = []; dec[i] = { allowance: { ok: true, used: 2 } };
+  let ex = anchorExtras(X, c, dec).find(e => e.incident.id === 'anchor:wake:' + tue);
+  ok('A pass available → status allowance 2/5, no money', ex && ex.incident.status === 'allowance' && !ex.want && ex.incident.detail.pass === '2/5');
+  dec[i] = { allowance: { ok: false, used: 5 } };
+  ex = anchorExtras(X, c, dec).find(e => e.incident.id === 'anchor:wake:' + tue);
+  ok('A passes used up → ₹100', ex.want && ex.want.raw === 10000 && /all 5 extensions/.test(ex.want.why));
+  const missed = anchorExtras(X, anchorCandidates({ policy: X, checkins: [], logs: [], marks: [], now }), []);
+  const tueFines = missed.filter(e => e.want && e.want.local_date === tue);
+  ok('A nothing done all day → ₹100 for each of the 8 anchors (gym excluded) = ₹800, under the ₹1,000 day cap', tueFines.length === 8 && tueFines.every(e => e.want.raw === 10000), tueFines.map(e => e.incident.id));
 }

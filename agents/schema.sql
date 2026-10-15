@@ -375,3 +375,13 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 --     weigh-ins; 12 weeks + 3-week extension; outcome on 7-day means; consequences are milestone
 --     incidents (category 'milestone') that wait 48 h for a dispute before any entry is written.
 -- jeetos_penalty_incidents.category += milestone.
+
+-- Daily anchors (build -77): wake 8 (ext 60), gym 9:30, breakfast 11:30, work 12:30, lunch 15:00,
+-- snack 17:30, leave 22:00, dinner 23:00, sleep 00:30 (ext 30). On time free; inside the extension =
+-- one of that anchor's 5 monthly passes (allowance category 'a_<anchor>'); after it / no pass → ₹100.
+-- Meal anchors use jeetos_logs.entries_seen; others use check-ins. Meal log rules removed (sleep log stays).
+--   jeetos_anchor_checkins(id, anchor, day, at server time, client_at, lat, lng, accuracy_m, distance_m,
+--                          verified, note) — append-only; gym/work check-ins must be within ~400 m of
+--                          the saved place when one is set.
+--   jeetos_places(id gym|work, lat, lng, accuracy_m, set_at)
+-- jeetos_allowance_uses.category check → ^(gym|diet|sleep|a_[a-z]+)$; incidents.category += anchor.

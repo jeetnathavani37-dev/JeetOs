@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.15-76";
+const APP_BUILD = "2026.10.15-77";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -1196,7 +1196,7 @@ function fullRoutineText() {
 - Post gym, within 2 min of reaching home: Glow Juice (anaar, gajar, beetroot, amla, aloe vera, adrak, pudina) + 4–5 badam or 2 walnuts, then a post-gym bath (warm rinse, body wash, cool-water face wash).
 - Meals: ${meals}. Targets 1800 kcal, 170 g protein, vegetarian.
 - Supplements: ${supp}.
-- Night drink 11 PM${alpha ? " tonight" : ""}: ${alpha ? list(alpha.steps) : "—"}. Bedtime target 11:30 PM, wake 7 AM.
+- Night drink 11 PM${alpha ? " tonight" : ""}: ${alpha ? list(alpha.steps) : "—"}. Wake 8 AM (9 latest), asleep by 12:30 AM.
 - HIS PREFERRED DAY (what he WANTS his day to look like — an intention, not a record; check what actually happened before praising or chasing any of it): morning sunlight, goals page, Shlok reading, gym, journaling, library time, no phone in the first hour after waking, lights out around 11:30 PM with the phone outside the bedroom. Sequence these around his actual wake time and energy — never force all of them at once.
 Use it like a real team would: know how your advice touches the rest (amla in the glow juice is vitamin C, coffee at 5:30 PM hits his sleep, whey and milk can affect acne, creatine and water, hair oil and forehead acne). Never contradict another field's routine without saying why and telling that coach.`;
 }
@@ -1318,6 +1318,7 @@ function buildCoachSystem(coach, CH, ctx, W) {
     parts.push(teamMemoryPrompt(CH, coach.id));
     parts.push(commitmentsPrompt(coach.id));
     parts.push(ledgerPrompt());
+    parts.push(anchorsPrompt());
     parts.push(goalsPrompt(coach.id));
     parts.push(departmentPrompt(coach.id));
     parts.push(masterPlanPrompt(coach.id));
@@ -2080,9 +2081,9 @@ function dailyRecord(dateStr, W) {
     const inWin = (a, b) => foodAt.filter(t => { const h = new Date(t).getHours(); return h >= a && h < b; });
     const firstOf = l => l.length ? Math.min.apply(null, l) : null;
     r.logEntries = {
-        breakfast: ticked("bf_") + ticked("breakfast_") > 0 || inWin(4, 12).length > 0 ? { at: firstOf(inWin(4, 12)) } : null,
-        lunch: ticked("lunch_") > 0 || inWin(11, 17).length > 0 ? { at: firstOf(inWin(11, 17)) } : null,
-        dinner: ticked("dinner_") > 0 || inWin(17, 24).concat(inWin(0, 4)).length > 0 ? { at: firstOf(inWin(17, 24)) } : null,
+        breakfast: ticked("bf_") + ticked("breakfast_") > 0 || inWin(4, 13).length > 0 ? { at: firstOf(inWin(4, 13)) } : null,
+        lunch: ticked("lunch_") > 0 || inWin(13, 18).length > 0 ? { at: firstOf(inWin(13, 18)) } : null,
+        dinner: ticked("dinner_") > 0 || inWin(18, 24).concat(inWin(0, 4)).length > 0 ? { at: firstOf(inWin(18, 24)) } : null,
         sleep: r.sleep != null ? { at: null } : null,
         workout: r.gym ? { at: null } : null,
     };
@@ -2828,7 +2829,8 @@ function LedgerCard({ T, onChange }) {
         React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, lineHeight: 1.55, marginBottom: 10 } },
             "Rules v1 (simulation — koi paisa nahi katega, sirf ledger banega):", React.createElement("br"),
             "• Staked promise miss: ₹250 → ₹500 → ₹1,000 (har din double, max 3 din, phir review). Khud \"miss ho gaya\" bol do toh doubling ruk jaati hai.", React.createElement("br"),
-            "• Log miss (deadline + 2h grace): ₹100 each — breakfast 11 AM, lunch 4 PM, dinner 10 PM, neend ka log 12 PM.", React.createElement("br"),
+            "• Daily schedule: uthna 8 (9 tak), gym 9:30, breakfast 11:30, library 12:30, lunch 3, coffee+snacks 5:30, library se nikalna 10 PM, dinner 11, sona 12:30. Har ek mein extension (uthna 60 min, baaki 30 min) = us anchor ka pass (5/mahina); uske baad ₹100.", React.createElement("br"),
+            "• Neend ka log 12 PM tak (+2h grace), warna ₹100.", React.createElement("br"),
             "• Mahine ke passes: gym rest 7 · diet 4 · sleep 4. Miss pe pehle pass lagta hai; khatam hone pe gym ₹250, diet ₹100, sleep ₹100 (ek baar, doubling nahi). Sunday already rest.", React.createElement("br"),
             "• Diet exception = junk meal ya 2,100+ kcal. Sleep exception = 6h se kam ya 12:30 AM ke baad sona (sirf jo tum log karo).", React.createElement("br"),
             "• Bimar/injury: streak card pe recovery mark karo — na pass, na fine.", React.createElement("br"),
@@ -2860,6 +2862,119 @@ function LedgerCard({ T, onChange }) {
     if (open) body = React.createElement("div", null, body, l && l.policy && React.createElement(WeightBox, { T: T, l: l, act: act, busy: busy }), React.createElement(PaymentBox, { T: T, l: l, act: act, busy: busy }));
     return React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 16px", marginBottom: 16, fontFamily: font } },
         head, body, msg && React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 8 } }, msg));
+}
+// ── DAILY ANCHORS: his day, as he set it (the server's rules engine is the authority) ──
+const DAY_ANCHORS = [
+    { key: "wake", icon: "⏰", label: "Uthna", time: "08:00", ext: 60, kind: "checkin", btn: "Utha ✓" },
+    { key: "gym", icon: "🏋️", label: "Gym reporting", time: "09:30", ext: 30, kind: "checkin", place: "gym", days: [1, 2, 3, 4, 5, 6], btn: "Gym pahuncha" },
+    { key: "breakfast", icon: "🍳", label: "Breakfast", time: "11:30", ext: 30, kind: "meal" },
+    { key: "work", icon: "📚", label: "Library / work", time: "12:30", ext: 30, kind: "checkin", place: "work", days: [1, 2, 3, 4, 5, 6], btn: "Library pahuncha" },
+    { key: "lunch", icon: "🍛", label: "Lunch", time: "15:00", ext: 30, kind: "meal" },
+    { key: "snack", icon: "☕", label: "Black coffee + snacks", time: "17:30", ext: 30, kind: "checkin", btn: "Le liya" },
+    { key: "leave", icon: "🚪", label: "Library se nikalna", time: "22:00", ext: 30, kind: "checkin", days: [1, 2, 3, 4, 5, 6], btn: "Nikal gaya" },
+    { key: "dinner", icon: "🍽️", label: "Dinner", time: "23:00", ext: 30, kind: "meal" },
+    { key: "sleep", icon: "🌙", label: "Sona", time: "00:30", ext: 30, kind: "checkin", nextDay: true, btn: "So raha hoon" },
+];
+const CK_KEY = "jos_checkins_today", CK_QUEUE = "jos_ck_queue";
+// The anchor day: sleep after midnight (before noon) still belongs to the previous day.
+function anchorDay(a) { const d = new Date(); if (a && a.nextDay && d.getHours() < 12) d.setDate(d.getDate() - 1); return localIsoDate(d); }
+function anchorTimes(a, day) {
+    const [h, m] = a.time.split(":").map(Number), t = new Date(day + "T00:00:00");
+    if (a.nextDay) t.setDate(t.getDate() + 1);
+    t.setHours(h, m, 0, 0);
+    return { target: t.getTime(), deadline: t.getTime() + a.ext * 60000 };
+}
+function localCheckins() { const c = store.get(CK_KEY); return c && typeof c === "object" ? c : {}; }
+function rememberCheckin(day, key, at) { const c = localCheckins(); Object.keys(c).forEach(k => { if (k < localIsoDate(new Date(Date.now() - 3 * 864e5))) delete c[k]; }); c[day] = Object.assign({}, c[day], { [key]: c[day] && c[day][key] || at }); store.set(CK_KEY, c); }
+function anchorStatus(a, day) {
+    const { target, deadline } = anchorTimes(a, day), now = Date.now();
+    let at = null;
+    if (a.kind === "meal") { const seen = (store.get("jos_entry_seen") || {})[new Date(day + "T12:00:00").toDateString()] || {}; at = seen[a.key] ? Date.parse(seen[a.key]) : null; }
+    else at = localCheckins()[day] && localCheckins()[day][a.key] ? Date.parse(localCheckins()[day][a.key]) : null;
+    const st = at != null ? (at <= target ? "ok" : at <= deadline ? "pass" : "late") : now <= target ? (now >= target - 3 * 3600e3 ? "open" : "later") : now <= deadline ? "ext" : "missed";
+    return { st, at, target, deadline };
+}
+function getPosition() {
+    return new Promise(res => {
+        if (!navigator.geolocation) return res(null);
+        navigator.geolocation.getCurrentPosition(p => res({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy }), () => res(null), { enableHighAccuracy: true, timeout: 9000, maximumAge: 30000 });
+    });
+}
+async function sendCheckin(a) {
+    const day = anchorDay(a), client_at = new Date().toISOString();
+    const pos = a.place ? await getPosition() : null;
+    const body = Object.assign({ action: "checkin", anchor: a.key, client_at: client_at }, pos || {});
+    try { const d = await ledgerAction(body); rememberCheckin(d.checkin.day || day, a.key, d.checkin.at || client_at); return { ok: true, verified: d.checkin.verified, noLocation: a.place && !pos }; }
+    catch (e) {
+        if (/fetch|network|Failed/i.test(e.message)) { const q = store.get(CK_QUEUE) || []; store.set(CK_QUEUE, q.concat([body]).slice(-20)); rememberCheckin(day, a.key, client_at); return { ok: true, queued: true }; }
+        return { ok: false, error: e.message };
+    }
+}
+// Offline check-ins go out with the phone's time; the server marks them for review if they arrive late.
+async function flushCheckins() {
+    const q = store.get(CK_QUEUE) || [];
+    if (!q.length || !authSession()) return;
+    const left = [];
+    for (const b of q) { try { await ledgerAction(b); } catch (e) { if (/fetch|network|Failed/i.test(e.message)) left.push(b); } }
+    store.set(CK_QUEUE, left);
+}
+async function syncCheckins() {
+    if (!supabaseReady() || !authSession()) return;
+    try {
+        const since = localIsoDate(new Date(Date.now() - 864e5));
+        const r = await fetch(SUPABASE_URL + "/rest/v1/jeetos_anchor_checkins?day=gte." + since + "&select=anchor,day,at&order=at.asc", { headers: SUPA_HEADERS() });
+        if (r.ok) (await r.json()).forEach(c => rememberCheckin(String(c.day).slice(0, 10), c.anchor, c.at));
+    } catch (_a) { }
+}
+function anchorsPrompt() {
+    const day = localIsoDate(), wd = new Date().getDay();
+    const rows = DAY_ANCHORS.filter(a => !a.days || a.days.includes(wd)).map(a => { const s = anchorStatus(a, anchorDay(a)); const hm = t => new Date(t).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" }); return a.label + " " + a.time + " → " + ({ ok: "on time " + hm(s.at), pass: "late " + hm(s.at) + " (extension pass)", late: "late " + hm(s.at), open: "due soon", later: "later", ext: "IN EXTENSION now (pass if done before " + hm(s.deadline) + ")", missed: "missed" })[s.st]; });
+    return "HIS DAY ANCHORS TODAY (he set these himself; each has a short extension that uses one of 5 monthly passes, then ₹100): " + rows.join("; ") + ". Use them for timing your advice; never invent a check-in he didn't make.";
+}
+function AnchorsCard({ T }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [, setTick] = React.useState(0);
+    const [busy, setBusy] = React.useState("");
+    const [msg, setMsg] = React.useState("");
+    const [places, setPlaces] = React.useState(false);
+    React.useEffect(() => { flushCheckins().then(syncCheckins).then(() => setTick(x => x + 1)); const t = setInterval(() => setTick(x => x + 1), 60000); return () => clearInterval(t); }, []);
+    const wd = new Date().getDay();
+    const list = DAY_ANCHORS.filter(a => !a.days || a.days.includes(wd) || (a.nextDay && false));
+    const hm = t => new Date(t).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
+    const rows = list.map(a => Object.assign({ a: a }, anchorStatus(a, anchorDay(a))));
+    const onTime = rows.filter(r => r.st === "ok").length;
+    const checkIn = async (a) => {
+        setBusy(a.key); setMsg("");
+        const r = await sendCheckin(a);
+        setMsg(r.ok ? (r.queued ? "📶 Net nahi — check-in phone pe save hai, baad mein jaayega" : r.noLocation ? "✓ Ho gaya (location nahi mili — bina verify ke gaya)" : "✓ " + a.label + " — " + hm(Date.now())) : "⚠️ " + r.error);
+        setBusy(""); setTick(x => x + 1);
+    };
+    const savePlace = async (place) => {
+        setBusy("p" + place); setMsg("");
+        const pos = await getPosition();
+        if (!pos) { setMsg("⚠️ Location permission do (Settings → Safari/JeetOS → Location)"); setBusy(""); return; }
+        try { await ledgerAction(Object.assign({ action: "set_place", place: place }, pos)); setMsg("✓ " + (place === "gym" ? "Gym" : "Library") + " ki location save ho gayi"); } catch (e) { setMsg("⚠️ " + e.message); }
+        setBusy("");
+    };
+    const badge = { ok: ["✓", T.green], pass: ["pass", T.gold], late: ["late", T.red], missed: ["✗", T.red], ext: ["extension", T.gold], open: ["", T.ivoryM], later: ["", T.ivoryD] };
+    return React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 16px", marginBottom: 16, fontFamily: font } },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 } },
+            React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontWeight: 600 } }, "⏰ Aaj ka schedule"),
+            React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD } }, onTime + "/" + rows.length + " time pe")),
+        rows.map(r => {
+            const b = badge[r.st], canTap = r.a.kind === "checkin" && !r.at && ["open", "ext", "missed"].includes(r.st);
+            return React.createElement("div", { key: r.a.key, style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0", borderTop: "1px solid " + T.border } },
+                React.createElement("div", { style: { fontSize: 12.5, color: r.st === "later" ? T.ivoryD : T.ivory } }, r.a.icon + " " + r.a.label,
+                    React.createElement("span", { style: { fontSize: 11, color: T.ivoryD, marginLeft: 6 } }, r.a.time.replace(/^0/, "") + (r.at ? " · " + hm(r.at) : r.st === "ext" ? " · " + hm(r.deadline) + " tak (pass)" : "") + (r.a.kind === "meal" && !r.at ? " · meal log karo" : ""))),
+                canTap ? React.createElement("button", { onClick: () => checkIn(r.a), disabled: !!busy, style: { fontSize: 11.5, padding: "5px 10px", borderRadius: 9, border: "none", background: r.st === "open" ? T.goldG : T.card2, color: r.st === "open" ? "#1A1408" : T.gold, fontWeight: 700, flexShrink: 0 } }, busy === r.a.key ? "…" : r.a.btn)
+                    : React.createElement("span", { style: { fontSize: 11, color: b[1], flexShrink: 0 } }, b[0]));
+        }),
+        msg && React.createElement("div", { style: { fontSize: 11.5, color: /^⚠️/.test(msg) ? T.red : T.green, marginTop: 6 } }, msg),
+        React.createElement("div", { onClick: () => setPlaces(!places), style: { fontSize: 11, color: T.ivoryD, marginTop: 8, cursor: "pointer" } }, "📍 Gym / library location " + (places ? "▴" : "▾")),
+        places && React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" } },
+            React.createElement("button", { onClick: () => savePlace("gym"), disabled: !!busy, style: { fontSize: 11.5, padding: "5px 10px", borderRadius: 9, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM } }, "Main gym pe hoon — save karo"),
+            React.createElement("button", { onClick: () => savePlace("work"), disabled: !!busy, style: { fontSize: 11.5, padding: "5px 10px", borderRadius: 9, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM } }, "Main library pe hoon — save karo")),
+        React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD, marginTop: 6, lineHeight: 1.4 } }, "Time pe = free · extension mein = us anchor ka 1 pass (5/mahina) · uske baad ₹100. Bimar ho toh streak card pe recovery mark karo — poora din maaf."));
 }
 function StreakCard({ T, W, L, checks, onChange }) {
     const font = "Inter,system-ui,sans-serif";
@@ -9967,6 +10082,7 @@ function JeetOS() {
                     React.createElement("span", { style: { fontSize: 10, color: "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, lineHeight: 1.5 } }, "Every task needs one photo as proof — finish the steps, then add a photo inside the card to mark it complete."))),
             React.createElement(PrimaryGoalCard, { T: T, onChange: () => setStreakTick(t => t + 1) }),
             React.createElement(StreakCard, { T: T, W: W, L: L, checks: checks, onChange: () => setStreakTick(t => t + 1) }),
+            React.createElement(AnchorsCard, { T: T }),
             React.createElement(LedgerCard, { T: T }),
             disciplineCard && React.createElement("div", { style: { padding: "0 20px", marginBottom: 14 } },
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, background: disciplineCard.type === "red" ? "linear-gradient(135deg,#2A0E0E,#1A0808)" : "linear-gradient(135deg,#2A2410,#1A1608)", border: "1px solid " + (disciplineCard.type === "red" ? "rgba(220,50,50,.4)" : "rgba(220,180,50,.35)"), borderRadius: 14, padding: "14px 16px" } },
