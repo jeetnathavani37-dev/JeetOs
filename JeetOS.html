@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.16-82";
+const APP_BUILD = "2026.10.16-83";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -10581,7 +10581,7 @@ function JeetOS() {
             React.createElement("div", { style: { padding: "12px 20px" } },
                 React.createElement(GroupEntryCard, { T: T, CH: CH, onOpen: () => setScreen("group") }),
                 React.createElement(PushCard, { T: T }),
-                React.createElement(AccountCard, null), React.createElement(TeamContextPeek, null), React.createElement(MemoryCard, null),
+                React.createElement(AccountCard, null), React.createElement(TeamContextPeek, null), React.createElement(MemoryCard, null), React.createElement(NotifyCard, null),
                 React.createElement(MasterPlanCard, { T: T, onOpen: () => setPlanOpen(true) }),
                 planOpen && React.createElement(MasterPlanSheet, { T: T, onClose: () => setPlanOpen(false) }),
                 React.createElement(FocusBoardCard, { T: T, onOpen: () => setFocusOpen(true) }),
@@ -11351,6 +11351,39 @@ function CommandCentreCard() {
         promises.length > 0 && sub("🤝 AAJ KE PROMISES"),
         promises.map(c => React.createElement("div", { key: c.id, style: { fontSize: 11.5, color: c.overdue ? T.gold : T.ivory, padding: "2px 0" } }, (c.overdue ? "⏰ " : "• ") + c.text + (c.overdue ? " (overdue)" : "") + (c.staked ? " 💰" : ""))),
         risks.length > 0 && React.createElement("div", { style: { fontSize: 11, color: T.gold, marginTop: 8 } }, "⚠ " + risks.join(" · ")));
+}
+// Notification budget — how many pings a day and when it's quiet. His alarms
+// (wake, gym, meals, sleep) always ring; coach nudges respect the cap.
+function NotifyCard() {
+    const [open, setOpen] = React.useState(false);
+    const [d, setD] = React.useState(null);
+    const [f, setF] = React.useState(null);
+    const [msg, setMsg] = React.useState("");
+    const load = () => fetch("/api/os?action=notify").then(r => r.ok ? r.json() : null).then(x => { if (x && x.settings) { setD(x); setF(x.settings); } }).catch(() => { });
+    React.useEffect(() => { if (open) load(); }, [open]);
+    const box = { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "10px 16px", marginBottom: 16, fontFamily: "Inter,system-ui,sans-serif" };
+    if (!open) return React.createElement("button", { onClick: () => setOpen(true), style: Object.assign({}, box, { width: "100%", textAlign: "left", color: T.ivoryM, fontSize: 12, cursor: "pointer" }) }, "🔕 Notifications ki limit aur quiet hours");
+    const save = () => fetch("/api/os", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "notify.set", settings: { daily_cap: Number(f.daily_cap), quiet_from: f.quiet_from, quiet_to: f.quiet_to, nudge_gap_min: Number(f.nudge_gap_min) } }) })
+        .then(r => r.json().then(x => { setMsg(r.ok ? "Saved ✓" : (x.error || "error")); if (r.ok) load(); })).catch(() => setMsg("offline"));
+    const inp = (k, type, extra) => React.createElement("input", Object.assign({ "aria-label": k, type, value: f[k], onChange: e => setF(Object.assign({}, f, { [k]: e.target.value })), style: { background: T.ink, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "4px 6px", fontSize: 12, width: type === "number" ? 56 : 92 } }, extra || {}));
+    const row = (label, el) => React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, color: T.ivory, padding: "4px 0" } }, label, el);
+    const sentN = d && Array.isArray(d.today) ? d.today.filter(x => x.decision === "sent").length : 0;
+    return React.createElement("div", { style: box, "data-testid": "notify-card" },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between" } },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, "🔕 Notifications" + (d ? " · aaj " + sentN + " bheje" : "")),
+            React.createElement("button", { onClick: () => setOpen(false), style: { background: "transparent", border: "none", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Band karo")),
+        !f ? React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 6 } }, "Load ho raha hai…") : React.createElement(React.Fragment, null,
+            row("Coach nudges — roz max", inp("daily_cap", "number", { min: 3, max: 15 })),
+            row("Quiet hours shuru", inp("quiet_from", "time")),
+            row("Quiet hours khatam", inp("quiet_to", "time")),
+            row("Do nudges ke beech kam se kam (min)", inp("nudge_gap_min", "number", { min: 0, max: 240 })),
+            React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryM, marginTop: 4 } }, "Tumhare schedule ke alarms (uthna, gym, khana, sona) hamesha bajenge. Quiet hours mein coach ke messages app mein milenge, ping nahi aayega."),
+            React.createElement("button", { onClick: save, style: { marginTop: 8, padding: "5px 12px", borderRadius: 8, border: "none", background: T.gold, color: T.ink, fontSize: 12, cursor: "pointer" } }, "Save"),
+            msg && React.createElement("span", { style: { fontSize: 11, color: T.ivoryM, marginLeft: 8 } }, msg),
+            d && Array.isArray(d.today) && d.today.length > 0 && React.createElement("div", { style: { marginTop: 10 } },
+                React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold } }, "AAJ"),
+                d.today.slice(0, 12).map((x, i) => React.createElement("div", { key: i, style: { fontSize: 10.5, color: x.decision === "sent" ? T.ivoryM : T.gold } },
+                    new Date(x.at).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" }) + " · " + x.tag + " · " + (x.decision === "sent" ? "bheja" : "roka: " + (x.reason || "")))))));
 }
 // Shows the app only to the logged-in owner. Offline with a saved session → the app still opens.
 function AuthGate() {

@@ -408,3 +408,11 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 -- RLS owner select/insert/update; no deletes. Nothing exists until Jeet approves the
 -- proposal (api/os.js goals.approve). Health is computed (api/_goals.js), never stored:
 -- on_track / behind / at_risk / unknown; an at-risk supporting goal only flags the primary.
+
+-- ── Notification budget (2026-10-16) ───────────────────────────────────
+-- jeetos_push_log: every push decision (day IST, tag, cls alarm|deadline|nudge|test,
+--   decision sent|held, reason). jeetos_settings: id 'notify' → { daily_cap, quiet_from,
+--   quiet_to, nudge_gap_min }. Both owner-read RLS; the cron writes with the server key.
+-- Rules in api/_notify.js, enforced inside api/_push.js sendToAll for every sender.
+-- Until SUPABASE_SERVICE_ROLE_KEY is set the cron can't read the log → cap fails open,
+-- quiet hours still apply.
