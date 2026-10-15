@@ -11,6 +11,10 @@
 //   GET  /api/os?action=checkin             which check-in is due now + its questions
 //   POST /api/os { action: "checkin.save", kind: morning|evening, answers }
 //   GET  /api/os?action=habits              7/30-day consistency + why things get missed
+//   GET  /api/os?action=insights            patterns in his data (with sample sizes)
+//   GET  /api/os?action=journal             decision journal (+ which are due for review)
+//   POST /api/os { action: "journal.add", change, area?, alternatives?, expected?, review_on? }
+//   POST /api/os { action: "journal.outcome", id, verdict: worked|didnt|unclear, actual? }
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -21,9 +25,10 @@ const { requireOwner, bearer, SUPABASE_URL, PUBLIC_KEY } = require("./_auth");
 const { planPropose, planAct } = require("./_memory");
 const { PLAN, graphHealth, approvalRows, cleanTarget } = require("./_goals");
 const { settingsOf, DEFAULTS: NOTIFY_DEFAULTS, LIMITS: NOTIFY_LIMITS } = require("./_notify");
-const { loadContextData, planDay, buildPacket, todayPlan } = require("./_context");
+const { loadContextData, planDay, buildPacket, todayPlan, reviewDay } = require("./_context");
 const { questionsFor, cleanAnswers, due: checkinDue } = require("./_checkin");
 const { habitReport } = require("./_habits");
+const { insightReport } = require("./_insights");
 
 // The server key when configured; otherwise act as the logged-in owner (RLS allows the owner).
 function makeDb(req) {
@@ -106,6 +111,16 @@ module.exports = async function handler(req, res) {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
       return res.status(200).json(Object.assign({ day: planDay(Date.now()), unreadable: raw.failed }, habitReport(raw, planDay(Date.now()))));
     }
+    if (req.method === "GET" && q.action === "insights") {
+      const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
+      return res.status(200).json(Object.assign({ unreadable: raw.failed }, insightReport(raw, planDay(Date.now()))));
+    }
+    if (req.method === "GET" && q.action === "journal") {
+      const r = await db("jeetos_decisions?status=eq.approved&select=id,coach,area,change,reason,alternatives,expected_outcome,review_on,actual_outcome,verdict,decided_at,outcome_at,source&order=decided_at.desc&limit=60");
+      if (!r.ok) return res.status(502).json({ error: "couldn't read decisions (" + r.status + ")" });
+      const today = planDay(Date.now());
+      return res.status(200).json({ today, decisions: r.body.map(x => Object.assign({}, x, { review_day: reviewDay(x), due: !x.verdict && !!reviewDay(x) && reviewDay(x) <= today })) });
+    }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
       const all = await db("jeetos_goals?select=id,kind,parent_id,title,why,owner_coach,metric,target,status,approved_at,updated_at&order=created_at.asc");
@@ -163,6 +178,28 @@ module.exports = async function handler(req, res) {
       const r = await db("jeetos_settings?on_conflict=id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=representation" }, body: JSON.stringify({ id: "notify", data: clean, updated_at: new Date().toISOString() }) });
       if (!r.ok) return res.status(502).json({ error: "couldn't save (" + r.status + ")" });
       return res.status(200).json({ ok: true, settings: clean });
+    }
+    if (b.action === "journal.add" || b.action === "journal.outcome") {
+      const txt = (v, n) => (v == null ? null : String(v).replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim().slice(0, n) || null);
+      const now = new Date().toISOString(), today = planDay(Date.now());
+      if (b.action === "journal.add") {
+        const change = txt(b.change, 300);
+        if (!change || change.length < 4) return res.status(400).json({ error: "write the decision" });
+        let review = b.review_on ? String(b.review_on).slice(0, 10) : null;
+        if (review && (!/^\d{4}-\d{2}-\d{2}$/.test(review) || review <= today || review > (new Date(Date.now() + 180 * 864e5).toISOString().slice(0, 10)))) return res.status(400).json({ error: "review date must be within the next 6 months" });
+        const row = { id: "j" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), coach: "jeet", area: txt(b.area, 40), change, reason: txt(b.reason, 300), alternatives: txt(b.alternatives, 300),
+          expected_outcome: txt(b.expected, 300), review_on: review, source: "journal", status: "approved", created_at: now, decided_at: now };
+        const r = await db("jeetos_decisions", { method: "POST", body: JSON.stringify(row) });
+        if (!r.ok) return res.status(502).json({ error: "couldn't save (" + r.status + ")" });
+        return res.status(200).json({ ok: true, id: row.id });
+      }
+      if (!["worked", "didnt", "unclear"].includes(b.verdict)) return res.status(400).json({ error: "verdict must be worked, didnt or unclear" });
+      const id = String(b.id || "").replace(/[^a-z0-9]/gi, "").slice(0, 40);
+      const cur = ((await db(`jeetos_decisions?id=eq.${id}&select=id,status,verdict`)).body || [])[0];
+      if (!cur || cur.status !== "approved") return res.status(404).json({ error: "not found" });
+      const r = await db(`jeetos_decisions?id=eq.${id}`, { method: "PATCH", body: JSON.stringify({ verdict: b.verdict, actual_outcome: txt(b.actual, 300), outcome_at: now }) });
+      if (!r.ok) return res.status(502).json({ error: "couldn't save (" + r.status + ")" });
+      return res.status(200).json({ ok: true });
     }
     if (b.action === "goals.approve") {
       const all = await db("jeetos_goals?select=id,status");
