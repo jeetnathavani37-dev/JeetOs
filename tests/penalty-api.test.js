@@ -5,7 +5,7 @@ const DB = { jeetos_penalty_policies: [], jeetos_penalty_incidents: [], jeetos_p
   jeetos_commitments: [
     { id: 'c1', coach: 'fitness', text: 'Send deck', due: '2026-10-20', status: 'open', owner: 'jeet', staked: false },
     { id: 'c2', coach: 'sleep', text: 'Coach checks sleep', due: '2026-10-20', status: 'open', owner: 'coach', staked: false }],
-  jeetos_logs: [], jeetos_streak_marks: [], jeetos_allowance_uses: [], jeetos_disputes: [], jeetos_evidence: [] };
+  jeetos_logs: [], jeetos_streak_marks: [], jeetos_allowance_uses: [], jeetos_disputes: [], jeetos_evidence: [], jeetos_weighins: [], jeetos_weight_goals: [] };
 let seq = 1, keysUsed = new Set();
 function filt(rows, qs) {
   return rows.filter(r => [...qs.entries()].every(([k, v]) => {
@@ -220,4 +220,29 @@ const RealNow = Date.now;
   ok('dispute: audit trail written', DB.jeetos_audit_events.filter(a => a.entity === 'dispute').length >= 6);
   await call({ method: 'GET', headers: { authorization: 'Bearer cron' } });
   ok('engine does not touch disputed/excused incidents', live.status === 'disputed' && fined.status === 'excused');
+})();
+
+// ── Phase 4: weigh-ins + weight goal through the API ──
+(async () => {
+  await new Promise(r => setTimeout(r, 1800));
+  const day = d => Date.parse(d + 'T07:30:00+05:30');
+  Date.now = () => day('2026-11-20');
+  let r = await call({ method: 'POST', headers: owner, body: { action: 'weighin', kg: 500 } });
+  ok('weighin: absurd weight refused', r.c === 400);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'goal_start' } });
+  ok('goal: started in baseline mode with the 10 kg / 12-week rules', r.c === 200 && DB.jeetos_weight_goals[0].status === 'baseline' && DB.jeetos_weight_goals[0].rules.loss_kg === 10);
+  r = await call({ method: 'POST', headers: owner, body: { action: 'goal_start' } });
+  ok('goal: only one at a time', r.c === 409);
+  for (const [d, kg] of [['2026-11-20', 90.2], ['2026-11-21', 89.8], ['2026-11-22', 90]]) {
+    Date.now = () => day(d);
+    await call({ method: 'POST', headers: owner, body: { action: 'weighin', kg, fasted: true, morning: true } });
+  }
+  ok('weighin: server sets the day', DB.jeetos_weighins.map(w => w.day).join() === '2026-11-20,2026-11-21,2026-11-22');
+  DB.jeetos_weighins.forEach((w, i) => { w.measured_at = w.day + 'T07:30:00+05:30'; });
+  await call({ method: 'GET', headers: { authorization: 'Bearer cron' } });
+  const g = DB.jeetos_weight_goals[0];
+  ok('cron: 3 fasted morning weigh-ins → goal active, baseline 90, ends in 12 weeks', g.status === 'active' && g.baseline_kg === 90 && g.end_day === '2027-02-14', g);
+  Date.now = () => day('2026-12-20');
+  r = await call({ method: 'POST', headers: owner, body: { action: 'goal_cancel' } });
+  ok('goal: can\'t cancel after the first week', r.c === 409);
 })();
