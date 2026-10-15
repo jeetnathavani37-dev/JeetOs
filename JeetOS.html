@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.15-73";
+const APP_BUILD = "2026.10.15-74";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -2084,7 +2084,9 @@ function dailyRecord(dateStr, W) {
         lunch: ticked("lunch_") > 0 || inWin(11, 17).length > 0 ? { at: firstOf(inWin(11, 17)) } : null,
         dinner: ticked("dinner_") > 0 || inWin(17, 24).concat(inWin(0, 4)).length > 0 ? { at: firstOf(inWin(17, 24)) } : null,
         sleep: r.sleep != null ? { at: null } : null,
+        workout: r.gym ? { at: null } : null,
     };
+    r.bedtime = entered("bedtime") ? String(log.bedtime) : null;
     return r;
 }
 // The same day in the field names the rest of the app already uses.
@@ -2146,7 +2148,8 @@ function logRow(dateStr, W) {
     });
     if (Object.keys(seen).length) { seenAll[dateStr] = seen; Object.keys(seenAll).forEach(d => { if (Date.now() - new Date(d).getTime() > 40 * 864e5) delete seenAll[d]; }); store.set("jos_entry_seen", seenAll); }
     return { date: dateStr, day: isoOf(dateStr), gym_done: r.gym, skincare_done: r.skincare, haircare_done: r.haircare, supplements_done: r.supplements,
-        total_protein: r.protein, total_cal: r.cal, sleep_hours: r.sleep, water: r.water, mood: r.mood, energy: r.energy, entries: entries };
+        total_protein: r.protein, total_cal: r.cal, sleep_hours: r.sleep, water: r.water, mood: r.mood, energy: r.energy, entries: entries,
+        junk_meals: r.junkMeals, bedtime: r.bedtime };
 }
 const _daySync = {};
 function syncDays(dates) {
@@ -2566,15 +2569,16 @@ async function loadLedger() {
     try {
         const month = localIsoDate().slice(0, 7) + "-01";
         const q = p => fetch(SUPABASE_URL + "/rest/v1/" + p, { headers: SUPA_HEADERS() }).then(r => r.ok ? r.json() : Promise.reject(r.status));
-        const [pol, inc, ent, payee, pays] = await Promise.all([
+        const [pol, inc, ent, payee, pays, uses] = await Promise.all([
             q("jeetos_penalty_policies?status=eq.active&order=version.desc&limit=1&select=version,mode,rules,confirmed_at"),
             q("jeetos_penalty_incidents?select=id,category,title,status,detail,opened_at,updated_at&order=updated_at.desc&limit=30"),
             q("jeetos_penalty_entries?local_date=gte." + month + "&select=id,incident_id,kind,day_n,local_date,amount_paise,calc&order=id.desc&limit=200"),
             q("jeetos_payees?id=eq.charity&select=name,vpa"),
             q("jeetos_payments?select=id,kind,amount_paise,payee_name,payee_vpa,status,utr,created_at,reported_at&order=created_at.desc&limit=5"),
+            q("jeetos_allowance_uses?status=eq.used&month=eq." + localIsoDate().slice(0, 7) + "&select=category,day,kind"),
         ]);
         const d = await ledgerAction({ action: "dues" }).catch(() => null);
-        const l = { policy: pol[0] || null, incidents: inc, entries: ent, payee: payee[0] || null, payments: pays, dues: d, at: Date.now() };
+        const l = { policy: pol[0] || null, incidents: inc, entries: ent, payee: payee[0] || null, payments: pays, uses: uses, dues: d, at: Date.now() };
         store.set(LEDGER_KEY, l);
         return l;
     } catch (_a) { return ledgerCache(); }
@@ -2585,6 +2589,12 @@ function ledgerTotals(l) {
     const sum = f => ent.filter(f).reduce((a, e) => a + (+e.amount_paise || 0), 0);
     return { month: sum(() => true), today: sum(e => String(e.local_date) === today) };
 }
+const PASS_LIMITS = { gym: 7, diet: 4, sleep: 4 };
+function passesLeft(l) {
+    const u = (l && l.uses) || [], left = {};
+    Object.keys(PASS_LIMITS).forEach(k => { left[k] = Math.max(0, PASS_LIMITS[k] - u.filter(x => x.category === k).length); });
+    return left;
+}
 function ledgerPrompt() {
     const l = ledgerCache();
     if (!l || !l.policy) return "";
@@ -2594,6 +2604,7 @@ function ledgerPrompt() {
     return "ACCOUNTABILITY LEDGER (" + (l.policy.mode === "live" ? "LIVE" : "SIMULATION — no real money moves") + "): this month " + paiseText(t.month) + ", today " + paiseText(t.today) + "."
         + (staked.length ? " Staked promises: " + staked.map(c => "\"" + c.text + "\" (by " + new Date(c.deadline_at).toLocaleString("en-IN", { weekday: "short", hour: "numeric", minute: "2-digit" }) + ")").join("; ") + "." : "")
         + (open.length ? " Open: " + open.map(i => i.title + " [" + i.status + "]").join("; ") + "." : "")
+        + (" Monthly passes left: gym rest " + passesLeft(l).gym + "/7, diet " + passesLeft(l).diet + "/4, sleep " + passesLeft(l).sleep + "/4 (a miss uses a pass first; money only after they run out). If he's ill or injured, tell him to mark a recovery day on the streak card — that never uses a pass, and never push training through pain.")
         + (l.dues && l.dues.live ? " Owed to " + ((l.payee && l.payee.name) || "charity") + ": " + paiseText(l.dues.dues_paise) + " (he pays it himself by UPI; remind calmly on Sundays, never shame)." : "")
         + "\nLedger rules: the app's rules engine alone decides amounts. Never state, threaten or invent a fine or amount the ledger doesn't show, never stake a promise for him (only he can, in the app), and never push unsafe compensation (starving, extra cardio, skipping sleep) to avoid a fine. If something looks unfair or he had a real reason, tell him to dispute it in the ledger.";
 }
@@ -2641,6 +2652,26 @@ function PaymentBox({ T, l, act, busy }) {
         l && l.dues && l.dues.live && l.dues.dues_paise > 0 && b(paiseText(l.dues.dues_paise) + " " + payee.name.split(" ")[0] + " ko pay karo", () => act("settle", { action: "settle_start" }), "settle", true),
         b("₹1 test pay karo", () => act("pstart", { action: "pay_test_start" }), "pstart", !(l && l.dues && l.dues.dues_paise > 0))]);
 }
+// Monthly passes left + plan a gym rest day ahead (server checks the date and the pool).
+function PassesRow({ T, l, act, busy }) {
+    const font = "Inter,system-ui,sans-serif";
+    const left = passesLeft(l), uses = (l && l.uses) || [];
+    const planned = uses.filter(u => u.category === "gym" && u.kind === "planned" && String(u.day) >= localIsoDate());
+    const next = Array.from({ length: 8 }, (_, i) => new Date(Date.now() + i * 864e5)).filter(d => d.getDay() !== 0).map(d => localIsoDate(d)).filter(d => !planned.some(p => String(p.day) === d)).slice(0, 6);
+    const pill = (txt, n, max) => React.createElement("span", { key: txt, style: { fontSize: 11.5, padding: "4px 9px", borderRadius: 20, border: "1px solid " + T.border2, color: n ? T.ivory : T.red, marginRight: 6, marginBottom: 6, display: "inline-block" } }, txt + " " + n + "/" + max);
+    const [pick, setPick] = React.useState("");
+    return React.createElement("div", { style: { marginBottom: 6 } },
+        React.createElement("div", { style: { fontSize: 11, color: T.ivoryD, margin: "4px 0" } }, "Is mahine ke passes bache:"),
+        React.createElement("div", null, pill("🏋️ Gym rest", left.gym, 7), pill("🍔 Diet", left.diet, 4), pill("🌙 Sleep", left.sleep, 4)),
+        planned.map(p => React.createElement("div", { key: "pl" + p.day, style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, color: T.ivoryM, margin: "2px 0" } },
+            "🛌 Planned rest: " + new Date(p.day).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }),
+            React.createElement("button", { onClick: () => act("cr" + p.day, { action: "cancel_rest", date: String(p.day) }), disabled: !!busy, style: { fontSize: 11, padding: "3px 8px", borderRadius: 8, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryD, cursor: "pointer" } }, "Cancel"))),
+        left.gym > 0 && React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", marginTop: 4 } },
+            React.createElement("select", { value: pick, onChange: e => setPick(e.target.value), style: { flex: 1, background: T.card2, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "6px 8px", fontSize: 12.5, fontFamily: font } },
+                React.createElement("option", { value: "" }, "Rest day plan karo…"),
+                next.map(d => React.createElement("option", { key: d, value: d }, new Date(d).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })))),
+            React.createElement("button", { disabled: !pick || !!busy, onClick: () => { act("rest", { action: "plan_rest", date: pick }); setPick(""); }, style: { fontSize: 12, padding: "6px 10px", borderRadius: 8, border: "none", background: pick ? T.goldG : T.card2, color: pick ? "#1A1408" : T.ivoryD, fontWeight: 700, cursor: "pointer" } }, "Plan")));
+}
 function LedgerCard({ T, onChange }) {
     const font = "Inter,system-ui,sans-serif";
     const [l, setL] = React.useState(ledgerCache());
@@ -2681,11 +2712,15 @@ function LedgerCard({ T, onChange }) {
             "Rules v1 (simulation — koi paisa nahi katega, sirf ledger banega):", React.createElement("br"),
             "• Staked promise miss: ₹250 → ₹500 → ₹1,000 (har din double, max 3 din, phir review). Khud \"miss ho gaya\" bol do toh doubling ruk jaati hai.", React.createElement("br"),
             "• Log miss (deadline + 2h grace): ₹100 each — breakfast 11 AM, lunch 4 PM, dinner 10 PM, neend ka log 12 PM.", React.createElement("br"),
+            "• Mahine ke passes: gym rest 7 · diet 4 · sleep 4. Miss pe pehle pass lagta hai; khatam hone pe gym ₹250, diet ₹100, sleep ₹100 (ek baar, doubling nahi). Sunday already rest.", React.createElement("br"),
+            "• Diet exception = junk meal ya 2,100+ kcal. Sleep exception = 6h se kam ya 12:30 AM ke baad sona (sirf jo tum log karo).", React.createElement("br"),
+            "• Bimar/injury: streak card pe recovery mark karo — na pass, na fine.", React.createElement("br"),
             "• Caps: ₹1,750 per promise · ₹1,000 per din · ₹5,000 per mahina.", React.createElement("br"),
             "• Sirf wahi promise jo tum khud Stake karo. Coaches kuch stake nahi kar sakte."),
         btn("Rules confirm karo", () => act("confirm", { action: "confirm_policy" }), "confirm", true));
     else if (open) body = React.createElement("div", { style: { marginTop: 8 } },
         React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD, marginBottom: 4 } }, "Aaj " + paiseText(t.today) + " · Is mahine " + paiseText(t.month) + " / " + paiseText(P && P.caps && P.caps.month_paise)),
+        React.createElement(PassesRow, { T: T, l: l, act: act, busy: busy }),
         staked.map(c => row("🔒 " + c.text, React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0 } }, btn("Ho gaya ✓", () => closePromise(c, "done"), "done:" + c.id, true), btn("Miss hua", () => { if (confirm("Sach bolne ke liye shukriya. Miss maan lein? Doubling yahin ruk jaayegi.")) closePromise(c, "missed"); }, "miss:" + c.id)), "s" + c.id, "Deadline " + new Date(c.deadline_at).toLocaleString("en-IN", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }))),
         stakeable.map(c => row(c.text, btn("Stake ₹250", () => { if (confirm("\"" + c.text + "\" ko stake karna hai?\nDeadline: " + c.due + " raat 11 baje. Miss hua toh ₹250 (simulation).")) act("stake:" + c.id, { action: "stake", commitment_id: c.id, time: "23:00" }); }, "stake:" + c.id), "p" + c.id, "Check " + c.due)),
         ((l && l.incidents) || []).slice(0, 8).map(i => {

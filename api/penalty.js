@@ -6,12 +6,13 @@
 //   POST { action: "run" }             (owner)    → run the engine now
 //   POST { action: "go_live", confirm: "LIVE" }    → real-money mode (new policy version from now)
 //   POST { action: "dues" | "settle_start" }      → what's owed (live entries − paid) / pay it
+//   POST { action: "plan_rest" | "cancel_rest", date } → plan a gym rest day (monthly pass) ahead
 //   POST { action: "set_payee" | "pay_test_start" | "pay_report" | "pay_cancel" } → manual UPI
 //        (₹1 test to the charity; he pays in his own UPI app; status is self-reported)
 // The client can only read the ledger; every write happens here with the
 // server key, and amounts come only from api/_penalty.js.
 const { requireOwner, SUPABASE_URL } = require("./_auth");
-const { POLICY_V1, plan, istDate, istAt, rupees } = require("./_penalty");
+const { POLICY_V1, plan, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras } = require("./_penalty");
 const { sendToAll } = require("./_push");
 
 const KEY = () => (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "").trim();
@@ -76,11 +77,25 @@ async function runEngine(now = Date.now()) {
     const from = istDate(policy.effective_from);
     const [commitments, logs, entries, incidents] = await Promise.all([
       db("jeetos_commitments?staked=eq.true&select=id,coach,text,due,status,owner,staked,agreed_at,deadline_at,done_at,resolved_at"),
-      db(`jeetos_logs?day=gte.${from}&select=date,day,entries,entries_seen`),
+      db(`jeetos_logs?day=gte.${from}&select=date,day,entries,entries_seen,gym_done,total_cal,junk_meals,sleep_hours,bedtime`),
       db("jeetos_penalty_entries?select=incident_id,kind,local_date,amount_paise&limit=10000"),
       db("jeetos_penalty_incidents?select=id,root_key,status&limit=5000"),
     ]);
-    const out = plan({ policy, commitments, logs, entries, incidents, now });
+    // Gym / diet / sleep: a miss uses a monthly pass first (atomic DB function); money only after they run out.
+    const [marks, uses] = await Promise.all([
+      db(`jeetos_streak_marks?date=gte.${addDays(from, -7)}&select=date,habit,kind,reason`),
+      db(`jeetos_allowance_uses?status=eq.used&day=gte.${from}&select=category,day,kind,status`),
+    ]);
+    const lockedIds = new Set(incidents.filter(i => ["disputed", "excused"].includes(i.status)).map(i => i.id));
+    const cands = exceptionCandidates({ policy, logs, marks, uses, now }).filter(c => !lockedIds.has(c.category + ":" + c.date));
+    const decided = [];
+    for (let i = 0; i < cands.length; i++) {
+      const c = cands[i];
+      if (c.state !== "needs_allowance") continue;
+      const a = await db("rpc/jeetos_use_allowance", { method: "POST", body: JSON.stringify({ p_category: c.category, p_day: c.date, p_kind: "auto", p_incident: c.category + ":" + c.date, p_limit: policy.exceptions[c.category].monthly_allowance }) });
+      decided[i] = { allowance: a };
+    }
+    const out = plan({ policy, commitments, logs, entries, incidents, now, extra: exceptionExtras(policy, cands, decided) });
     // Review / dispute outcomes are never overwritten by the engine.
     const locked = new Set(incidents.filter(i => ["disputed", "excused"].includes(i.status)).map(i => i.id));
     const incRows = out.incidents.filter(i => !locked.has(i.id)).map(i => Object.assign({}, i, { updated_at: new Date(now).toISOString() }));
@@ -159,6 +174,27 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
     if (action === "dues") return res.status(200).json(await dues());
+    // Plan a gym rest day ahead (uses one of the month's 7 passes) or cancel an unused one.
+    if (action === "plan_rest" || action === "cancel_rest") {
+      const policy = await activePolicy();
+      if (!policy || !policy.exceptions) return res.status(409).json({ error: "Pehle rules confirm karo" });
+      const day = String((req.body || {}).date || "");
+      const today = istDate(now);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day < today || day > addDays(today, 14)) return res.status(400).json({ error: "Aaj se 14 din ke andar ki date chuno" });
+      if (action === "cancel_rest") {
+        if (day === today && Date.now() > istAt(today, "06:00")) return res.status(409).json({ error: "Aaj ka rest subah 6 baje ke baad cancel nahi hota" });
+        const r = await db("rpc/jeetos_release_allowance", { method: "POST", body: JSON.stringify({ p_category: "gym", p_day: day }) });
+        if (!r.ok) return res.status(409).json({ error: "Ye rest day cancel nahi ho sakta (already use ho chuka)" });
+        await audit("allowance", "gym:" + day, "rest_cancelled", {}, "owner");
+        return res.status(200).json({ ok: true });
+      }
+      const wd = new Date(day + "T12:00:00Z").getUTCDay();
+      if (!policy.exceptions.gym.days.includes(wd)) return res.status(400).json({ error: "Sunday already rest day hai — pass ki zaroorat nahi" });
+      const r = await db("rpc/jeetos_use_allowance", { method: "POST", body: JSON.stringify({ p_category: "gym", p_day: day, p_kind: "planned", p_incident: null, p_limit: policy.exceptions.gym.monthly_allowance }) });
+      if (!r.ok) return res.status(409).json({ error: "Is mahine ke " + policy.exceptions.gym.monthly_allowance + " rest passes khatam" });
+      await audit("allowance", "gym:" + day, "rest_planned", { used: r.used }, "owner");
+      return res.status(200).json(Object.assign({ ok: true }, r));
+    }
     // Switching to real money needs his explicit typed confirmation. A new policy version starts now;
     // nothing assessed in simulation becomes payable, and promises staked before need re-staking.
     if (action === "go_live") {
