@@ -357,3 +357,12 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 --   unique (category, day) where status='used'; owner read only.
 -- jeetos_use_allowance(category, day, kind, incident, limit) / jeetos_release_allowance(category, day):
 --   security definer, advisory lock per category+month, service_role only.
+
+-- Phase 3 (build -75): evidence + disputes. Owner read only; writes via api/penalty.js.
+--   jeetos_evidence(id 'ev_'+sha256 prefix, kind proof_photo|dispute_photo|note, day, proof_key, vault_key,
+--                   sha256, incident_id, dispute_id, status, ai_analysis, received_at server time) — no delete.
+--     The image itself lives only in the encrypted jeetos_photo_vault (key proof:<day>:<card> / dispute:...).
+--   jeetos_disputes(id, incident_id → incidents, category tech_issue|did_it|wrong_data|ill|other, reason,
+--                   prev_status, status open|upheld|rejected|need_more, review jsonb, created_at, decided_at)
+--     Max 2 per incident. While disputed the fine is excluded from dues. Upheld → reversal entries
+--     (originals kept), incident excused, its pass released. Rejected → previous status.

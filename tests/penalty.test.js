@@ -121,3 +121,23 @@ ok('   every entry has calc + why + caps', r.entries.every(e => e.calc && e.calc
   ok('P2 undecided pass → nothing written', exceptionExtras(X, c, []).every(e => e.incident.id !== 'gym:2026-10-20'));
   ok('P2 bedtime parser', bedMinutes('11:30 PM') === 1410 && bedMinutes('1:15 am') === 75 && bedMinutes('00:45') === 45 && bedMinutes('12 am') === 0 && bedMinutes('soon') === null);
 }
+
+// ── Phase 3: dispute outcomes ──
+{
+  const { disputeOutcome } = require('../api/_penalty.js');
+  const ents = [{ id: 11, incident_id: 'promise:c1', kind: 'assessment', day_n: 1, local_date: '2026-10-21', amount_paise: 25000, policy_version: 1 },
+                { id: 12, incident_id: 'promise:c1', kind: 'escalation', day_n: 2, local_date: '2026-10-22', amount_paise: 50000, policy_version: 1 }];
+  const d = { id: 'dp1', prev_status: 'escalating' };
+  let o = disputeOutcome({ recommendation: 'uphold', why: 'photo shows the deck was sent on time' }, d, ents, '2026-10-25');
+  ok('16 upheld → reversal for every entry, originals untouched, excused, pass released', o.dispute === 'upheld' && o.incident === 'excused' && o.releasePass && o.reversals.length === 2 && o.reversals.every(r => r.amount_paise < 0 && r.reverses) && o.reversals[1].local_date === '2026-10-22');
+  o = disputeOutcome({ recommendation: 'uphold', why: 'x' }, d, ents.concat([{ id: 13, incident_id: 'promise:c1', kind: 'reversal', reverses: 11, amount_paise: -25000, local_date: '2026-10-21' }]), '2026-10-25');
+  ok('16 already-reversed entries are not reversed twice', o.reversals.length === 1 && o.reversals[0].reverses === 12);
+  o = disputeOutcome({ recommendation: 'reject', why: 'no workout logged and photo is a menu' }, d, ents, '2026-10-25');
+  ok('16 rejected → back to previous status, no money moved', o.dispute === 'rejected' && o.incident === 'escalating' && !o.reversals.length);
+  o = disputeOutcome({ recommendation: 'need_more', why: 'send the gym entry screenshot' }, d, ents, '2026-10-25');
+  ok('16 need more → stays disputed (fine paused)', o.dispute === 'need_more' && o.incident === 'disputed');
+  o = disputeOutcome(null, d, ents, '2026-10-25');
+  ok('16 review failed → stays disputed, nothing decided', o.dispute === 'open' && o.incident === 'disputed' && !o.reversals.length);
+  o = disputeOutcome({ recommendation: 'uphold' }, d, ents, '2026-10-25');
+  ok('16 uphold without a reason → not applied', o.dispute === 'open' && o.incident === 'disputed');
+}

@@ -241,4 +241,19 @@ function exceptionExtras(policy, cands, decided) {
   return out;
 }
 
-module.exports = { POLICY_V1, plan, promiseDue, logStatus, capTrim, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, bedMinutes };
+// Applies a dispute review. The AI only recommends; this decides what is written.
+// uphold → reversal rows for every assessed entry (originals stay), incident excused, pass released.
+// reject → incident back to its previous status. need_more / no valid review → stays disputed (fine paused).
+function disputeOutcome(review, dispute, incEntries, today) {
+  const rec = review && ["uphold", "reject", "need_more"].includes(review.recommendation) && String(review.why || "").trim() ? review.recommendation : null;
+  if (!rec || rec === "need_more") return { dispute: rec ? "need_more" : "open", incident: "disputed", reversals: [], releasePass: false };
+  if (rec === "reject") return { dispute: "rejected", incident: dispute.prev_status, reversals: [], releasePass: false };
+  const reversed = new Set(incEntries.filter(e => e.kind === "reversal" && e.reverses != null).map(e => String(e.reverses)));
+  const reversals = incEntries.filter(e => e.kind !== "reversal" && Number(e.amount_paise) > 0 && !reversed.has(String(e.id))).map(e => ({
+    incident_id: e.incident_id, kind: "reversal", day_n: e.day_n, local_date: String(e.local_date).slice(0, 10), amount_paise: -Number(e.amount_paise),
+    reverses: e.id, policy_version: e.policy_version, created_by: "review",
+    calc: { formula: "reversal of entry " + e.id, why: "Dispute upheld: " + String(review.why).slice(0, 300), dispute_id: dispute.id, decided_on: today } }));
+  return { dispute: "upheld", incident: "excused", reversals, releasePass: true };
+}
+
+module.exports = { POLICY_V1, plan, disputeOutcome, promiseDue, logStatus, capTrim, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, bedMinutes };
