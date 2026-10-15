@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.15-75";
+const APP_BUILD = "2026.10.15-76";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -2599,16 +2599,18 @@ async function loadLedger() {
     try {
         const month = localIsoDate().slice(0, 7) + "-01";
         const q = p => fetch(SUPABASE_URL + "/rest/v1/" + p, { headers: SUPA_HEADERS() }).then(r => r.ok ? r.json() : Promise.reject(r.status));
-        const [pol, inc, ent, payee, pays, uses] = await Promise.all([
+        const [pol, inc, ent, payee, pays, uses, wgoal, weighins] = await Promise.all([
             q("jeetos_penalty_policies?status=eq.active&order=version.desc&limit=1&select=version,mode,rules,confirmed_at"),
             q("jeetos_penalty_incidents?select=id,category,title,status,detail,opened_at,updated_at&order=updated_at.desc&limit=30"),
             q("jeetos_penalty_entries?local_date=gte." + month + "&select=id,incident_id,kind,day_n,local_date,amount_paise,calc&order=id.desc&limit=200"),
             q("jeetos_payees?id=eq.charity&select=name,vpa"),
             q("jeetos_payments?select=id,kind,amount_paise,payee_name,payee_vpa,status,utr,created_at,reported_at&order=created_at.desc&limit=5"),
             q("jeetos_allowance_uses?status=eq.used&month=eq." + localIsoDate().slice(0, 7) + "&select=category,day,kind"),
+            q("jeetos_weight_goals?status=neq.cancelled&order=requested_at.desc&limit=1&select=*"),
+            q("jeetos_weighins?order=measured_at.desc&limit=40&select=id,day,kg,fasted,morning,measured_at,supersedes"),
         ]);
         const d = await ledgerAction({ action: "dues" }).catch(() => null);
-        const l = { policy: pol[0] || null, incidents: inc, entries: ent, payee: payee[0] || null, payments: pays, uses: uses, dues: d, at: Date.now() };
+        const l = { policy: pol[0] || null, incidents: inc, entries: ent, payee: payee[0] || null, payments: pays, uses: uses, goal: wgoal[0] || null, weighins: weighins, dues: d, at: Date.now() };
         store.set(LEDGER_KEY, l);
         return l;
     } catch (_a) { return ledgerCache(); }
@@ -2635,6 +2637,7 @@ function ledgerPrompt() {
         + (staked.length ? " Staked promises: " + staked.map(c => "\"" + c.text + "\" (by " + new Date(c.deadline_at).toLocaleString("en-IN", { weekday: "short", hour: "numeric", minute: "2-digit" }) + ")").join("; ") + "." : "")
         + (open.length ? " Open: " + open.map(i => i.title + " [" + i.status + "]").join("; ") + "." : "")
         + (" Monthly passes left: gym rest " + passesLeft(l).gym + "/7, diet " + passesLeft(l).diet + "/4, sleep " + passesLeft(l).sleep + "/4 (a miss uses a pass first; money only after they run out). If he's ill or injured, tell him to mark a recovery day on the streak card — that never uses a pass, and never push training through pain.")
+        + weightPrompt(l)
         + (l.dues && l.dues.live ? " Owed to " + ((l.payee && l.payee.name) || "charity") + ": " + paiseText(l.dues.dues_paise) + " (he pays it himself by UPI; remind calmly on Sundays, never shame)." : "")
         + "\nLedger rules: the app's rules engine alone decides amounts. Never state, threaten or invent a fine or amount the ledger doesn't show, never stake a promise for him (only he can, in the app), and never push unsafe compensation (starving, extra cardio, skipping sleep) to avoid a fine. If something looks unfair or he had a real reason, tell him to dispute it in the ledger.";
 }
@@ -2742,6 +2745,49 @@ function DisputeForm({ T, incident, onDone, onCancel }) {
                 React.createElement("button", { onClick: send, disabled: busy || why.trim().length < 10, style: { padding: "7px 12px", borderRadius: 10, border: "none", background: why.trim().length >= 10 ? T.goldG : T.card, color: why.trim().length >= 10 ? "#1A1408" : T.ivoryD, fontWeight: 700, fontSize: 12.5 } }, busy ? "Review ho raha hai…" : "Dispute bhejo"),
                 React.createElement("button", { onClick: onCancel, style: { padding: "7px 12px", borderRadius: 10, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM, fontSize: 12.5 } }, "Rehne do"))));
 }
+// ── Weight goal (10 kg in 12 weeks): numbers here are display only; the server decides ──
+function weightStats(l) {
+    const all = ((l && l.weighins) || []).slice().reverse(), gone = new Set(all.map(w => w.supersedes).filter(Boolean));
+    const q = all.filter(w => !gone.has(w.id) && w.fasted && w.morning).map(w => ({ day: String(w.day).slice(0, 10), kg: +w.kg }));
+    const avg = (from, to) => { const v = q.filter(w => w.day >= from && w.day <= to).map(w => w.kg); return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length * 10) / 10 : null; };
+    const day = n => localIsoDate(new Date(Date.now() - n * 864e5));
+    const cur = avg(day(6), day(0)), prev = avg(day(13), day(7));
+    return { cur: cur, prev: prev, pctWeek: cur != null && prev != null ? Math.round((prev - cur) / prev * 1000) / 10 : null, last: all.filter(w => !gone.has(w.id)).slice(-1)[0] || null, qualifying: q };
+}
+function weightPrompt(l) {
+    const g = l && l.goal;
+    if (!g) return "";
+    const st = weightStats(l);
+    if (g.status === "baseline") return " Weight goal: waiting for baseline (" + st.qualifying.length + "/3 fasted morning weigh-ins).";
+    const target = g.baseline_kg != null ? Math.round((+g.baseline_kg - 10) * 10) / 10 : null;
+    return " Weight goal (" + g.status + "): baseline " + g.baseline_kg + " kg → target " + target + " kg by " + g.end_day + (g.ext_end_day ? " (extension to " + g.ext_end_day + ")" : "") + "; 7-day average now " + (st.cur != null ? st.cur + " kg" : "not enough fasted weigh-ins") + "."
+        + (st.pctWeek != null && st.pctWeek > 1 ? " ⚠️ He's losing " + st.pctWeek + "% a week — faster than safe: tell him to eat a bit more and slow down, never push harder." : "")
+        + " Never suggest crash diets, skipping meals, extra cardio or dehydration to hit the number; if the plan is followed and the scale doesn't move, the plan gets reviewed, not him punished.";
+}
+function WeightBox({ T, l, act, busy }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [kg, setKg] = React.useState("");
+    const [fasted, setFasted] = React.useState(true);
+    const [morning, setMorning] = React.useState(new Date().getHours() < 11);
+    const g = l && l.goal, st = weightStats(l);
+    const note = (t, c) => React.createElement("div", { style: { fontSize: 11.5, color: c || T.ivoryM, lineHeight: 1.5, marginBottom: 6 } }, t);
+    const chk = (v, set, t) => React.createElement("label", { style: { fontSize: 11.5, color: T.ivoryM, display: "flex", alignItems: "center", gap: 4 } }, React.createElement("input", { type: "checkbox", checked: v, onChange: e => set(e.target.checked) }), t);
+    const target = g && g.baseline_kg != null ? Math.round((+g.baseline_kg - 10) * 10) / 10 : null;
+    const daysLeft = g && g.end_day ? Math.ceil((new Date(String(g.status === "extension" ? g.ext_end_day : g.end_day) + "T23:59:00+05:30") - Date.now()) / 864e5) : null;
+    return React.createElement("div", { style: { marginTop: 12, paddingTop: 10, borderTop: "1px solid " + T.border } },
+        React.createElement("div", { style: { fontSize: 12.5, color: T.ivory, fontWeight: 600, marginBottom: 6 } }, "⚖️ Weight goal — 10 kg in 12 weeks"),
+        !g && note("Baseline ke liye 3 din khaali pet, subah, same scale pe weight daalna hoga. Miss hua toh: 12 hafte baad ₹500 (48h dispute window) + 3 hafte extension; phir plan follow kiya toh ₹1,000, nahi kiya toh ₹3,000 (caps ke andar). Logs kam hue toh sirf review, fine nahi."),
+        !g && React.createElement("button", { onClick: () => { if (confirm("10 kg / 12 hafte ka goal shuru karna hai? Pehle hafte tak cancel kar sakte ho.")) act("wgs", { action: "goal_start" }); }, disabled: !!busy, style: { fontSize: 12.5, padding: "7px 12px", borderRadius: 10, border: "none", background: T.goldG, color: "#1A1408", fontWeight: 700, marginBottom: 8 } }, "Goal shuru karo"),
+        g && g.status === "baseline" && note("Baseline: " + st.qualifying.length + "/3 khaali-pet subah weigh-ins. 3 hote hi 12 hafte shuru."),
+        g && g.status !== "baseline" && note((g.status === "achieved" ? "🏆 Goal achieved! " : g.status === "missed" ? "Goal miss hua — review dekho. " : "") + "Start " + g.baseline_kg + " kg → target " + target + " kg · abhi (7 din avg) " + (st.cur != null ? st.cur + " kg" : "—") + (daysLeft != null && daysLeft >= 0 && ["active", "extension"].includes(g.status) ? " · " + daysLeft + " din bache" + (g.status === "extension" ? " (extension)" : "") : "")),
+        st.pctWeek != null && st.pctWeek > 1 && note("⚠️ Weight " + st.pctWeek + "% per hafta gir raha hai — ye zyada tez hai. Thoda aur khao, coach se baat karo. Number ke liye body ko nuksaan nahi.", T.gold),
+        React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+            React.createElement("input", { value: kg, onChange: e => setKg(e.target.value), inputMode: "decimal", placeholder: "kg", style: { width: 80, boxSizing: "border-box", background: T.card2, border: "1px solid " + T.border2, borderRadius: 10, color: T.ivory, fontSize: 16, fontFamily: font, padding: "7px 9px" } }),
+            chk(fasted, setFasted, "khaali pet"), chk(morning, setMorning, "subah"),
+            React.createElement("button", { disabled: !kg || !!busy, onClick: () => { act("wi", { action: "weighin", kg: parseFloat(kg), fasted: fasted, morning: morning }); setKg(""); }, style: { fontSize: 12.5, padding: "7px 12px", borderRadius: 10, border: "none", background: kg ? T.goldG : T.card2, color: kg ? "#1A1408" : T.ivoryD, fontWeight: 700 } }, "Save")),
+        st.last && note("Last: " + st.last.kg + " kg (" + new Date(st.last.measured_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) + (st.last.fasted && st.last.morning ? "" : ", goal mein nahi ginta — khaali pet + subah nahi") + ")", T.ivoryD),
+        g && g.status === "baseline" && React.createElement("button", { onClick: () => act("wgc", { action: "goal_cancel" }), disabled: !!busy, style: { fontSize: 11, padding: "3px 8px", borderRadius: 8, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryD } }, "Goal cancel"));
+}
 function LedgerCard({ T, onChange }) {
     const font = "Inter,system-ui,sans-serif";
     const [l, setL] = React.useState(ledgerCache());
@@ -2811,7 +2857,7 @@ function LedgerCard({ T, onChange }) {
                 if (t === "LIVE") act("live", { action: "go_live", confirm: "LIVE" });
             }, "live")),
         React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD, marginTop: 8, lineHeight: 1.4 } }, "Amount sirf rules engine tay karta hai. Koi fine galat lage toh uske saamne \"Dispute\" dabao — tab tak wo ruk jaata hai."));
-    if (open) body = React.createElement("div", null, body, React.createElement(PaymentBox, { T: T, l: l, act: act, busy: busy }));
+    if (open) body = React.createElement("div", null, body, l && l.policy && React.createElement(WeightBox, { T: T, l: l, act: act, busy: busy }), React.createElement(PaymentBox, { T: T, l: l, act: act, busy: busy }));
     return React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 16px", marginBottom: 16, fontFamily: font } },
         head, body, msg && React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 8 } }, msg));
 }

@@ -8,13 +8,14 @@
 //   POST { action: "dues" | "settle_start" }      → what's owed (live entries − paid) / pay it
 //   POST { action: "plan_rest" | "cancel_rest", date } → plan a gym rest day (monthly pass) ahead
 //   POST { action: "evidence", date, proof_key, vault_key, sha256 } → record a proof photo's arrival
+//   POST { action: "weighin", kg, fasted, morning, supersedes? } / { action: "goal_start" | "goal_cancel" } → weight milestone
 //   POST { action: "dispute", incident_id, category, reason, photo? } → pause the fine, AI review, rules decide
 //   POST { action: "set_payee" | "pay_test_start" | "pay_report" | "pay_cancel" } → manual UPI
 //        (₹1 test to the charity; he pays in his own UPI app; status is self-reported)
 // The client can only read the ledger; every write happens here with the
 // server key, and amounts come only from api/_penalty.js.
 const { requireOwner, SUPABASE_URL } = require("./_auth");
-const { POLICY_V1, plan, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, disputeOutcome } = require("./_penalty");
+const { POLICY_V1, plan, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, disputeOutcome, WEIGHT_RULES, weightPlan } = require("./_penalty");
 const crypto = require("crypto");
 const { sendToAll } = require("./_push");
 
@@ -100,7 +101,19 @@ async function runEngine(now = Date.now()) {
       const a = await db("rpc/jeetos_use_allowance", { method: "POST", body: JSON.stringify({ p_category: c.category, p_day: c.date, p_kind: "auto", p_incident: c.category + ":" + c.date, p_limit: policy.exceptions[c.category].monthly_allowance }) });
       decided[i] = { allowance: a };
     }
-    const out = plan({ policy, commitments, logs, entries, incidents, now, extra: exceptionExtras(policy, cands, decided) });
+    // Weight milestone (only once a goal exists).
+    const [goal] = await db("jeetos_weight_goals?status=neq.cancelled&order=requested_at.desc&limit=1&select=*") || [];
+    let weightExtras = [];
+    if (goal) {
+      const weighins = await db(`jeetos_weighins?day=gte.${addDays(istDate(goal.requested_at), -14)}&select=id,day,kg,fasted,morning,measured_at,supersedes&order=measured_at.asc`);
+      const wp = weightPlan({ goal, weighins, logs, entries, now, version: policy.version });
+      if (wp.patch) {
+        await db(`jeetos_weight_goals?id=eq.${encodeURIComponent(goal.id)}`, { method: "PATCH", body: JSON.stringify(Object.assign({}, wp.patch, { updated_at: new Date(now).toISOString() })) });
+        await audit("weight_goal", goal.id, "status", wp.patch);
+      }
+      weightExtras = wp.extras.filter(x => !lockedIds.has(x.incident.id));
+    }
+    const out = plan({ policy, commitments, logs, entries, incidents, now, extra: exceptionExtras(policy, cands, decided).concat(weightExtras) });
     // Review / dispute outcomes are never overwritten by the engine.
     const locked = new Set(incidents.filter(i => ["disputed", "excused"].includes(i.status)).map(i => i.id));
     const incRows = out.incidents.filter(i => !locked.has(i.id)).map(i => Object.assign({}, i, { updated_at: new Date(now).toISOString() }));
@@ -206,6 +219,39 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
     if (action === "dues") return res.status(200).json(await dues());
+
+    // ── Weight: weigh-ins (server time, append-only) and the 12-week goal ──
+    if (action === "weighin") {
+      const { kg, fasted, morning, note, supersedes } = req.body || {};
+      const v = Math.round(Number(kg) * 100) / 100;
+      if (!(v > 25 && v < 300)) return res.status(400).json({ error: "Weight 25–300 kg ke beech daalo" });
+      const today = istDate(now);
+      const todays = await db(`jeetos_weighins?day=eq.${today}&select=id`);
+      if (todays.length >= 3) return res.status(429).json({ error: "Aaj 3 weigh-ins ho chuke" });
+      const row = { id: "w_" + now.toString(36) + crypto.randomBytes(2).toString("hex"), day: today, kg: v, fasted: fasted === true, morning: morning === true,
+        source: "app", note: note ? String(note).slice(0, 200) : null, supersedes: supersedes ? String(supersedes).slice(0, 40) : null };
+      await db("jeetos_weighins", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(row) });
+      await audit("weighin", row.id, supersedes ? "corrected" : "recorded", { kg: v, fasted: row.fasted, morning: row.morning, supersedes: row.supersedes }, "owner");
+      return res.status(200).json({ ok: true, weighin: row });
+    }
+    if (action === "goal_start" || action === "goal_cancel") {
+      const [g] = await db("jeetos_weight_goals?status=in.(baseline,active,extension)&order=requested_at.desc&limit=1&select=*") || [];
+      if (action === "goal_cancel") {
+        if (!g) return res.status(404).json({ error: "Koi chalta goal nahi hai" });
+        const fresh = g.status === "baseline" || (g.start_day && istDate(now) <= addDays(String(g.start_day), 7));
+        if (!fresh) return res.status(409).json({ error: "Goal shuru hue 7 din ho gaye — ab cancel nahi, dispute ya review hi hoga" });
+        await db(`jeetos_weight_goals?id=eq.${encodeURIComponent(g.id)}`, { method: "PATCH", body: JSON.stringify({ status: "cancelled", updated_at: new Date(now).toISOString() }) });
+        await audit("weight_goal", g.id, "cancelled", {}, "owner");
+        return res.status(200).json({ ok: true });
+      }
+      if (g) return res.status(409).json({ error: "Ek goal pehle se chal raha hai" });
+      if (!(await activePolicy())) return res.status(409).json({ error: "Pehle rules confirm karo" });
+      const row = { id: "wg_" + now.toString(36), status: "baseline", requested_at: new Date(now).toISOString(), target_loss_kg: WEIGHT_RULES.loss_kg,
+        weeks: WEIGHT_RULES.weeks, ext_weeks: WEIGHT_RULES.ext_weeks, plan: String((req.body || {}).plan || "Coaches ka approved plan: ~1,800 kcal, gym Mon–Sat, 7h+ sleep").slice(0, 500), rules: WEIGHT_RULES };
+      await db("jeetos_weight_goals", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(row) });
+      await audit("weight_goal", row.id, "requested", { rules: WEIGHT_RULES }, "owner");
+      return res.status(200).json({ ok: true, goal: row });
+    }
 
     // Proof photo evidence: the photo itself is encrypted in his vault; the server records when it arrived.
     if (action === "evidence") {

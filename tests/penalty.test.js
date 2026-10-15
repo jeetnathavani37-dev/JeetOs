@@ -141,3 +141,56 @@ ok('   every entry has calc + why + caps', r.entries.every(e => e.calc && e.calc
   o = disputeOutcome({ recommendation: 'uphold' }, d, ents, '2026-10-25');
   ok('16 uphold without a reason → not applied', o.dispute === 'open' && o.incident === 'disputed');
 }
+
+// ── Phase 4: weight milestone ──
+{
+  const { weightPlan, meanWindow, baselineOf, weightTrend, adherence, WEIGHT_RULES, addDays } = require('../api/_penalty.js');
+  const W = (day, kg, ok = true, i = 0) => ({ id: 'w' + day + i, day, kg, fasted: ok, morning: ok, measured_at: day + 'T07:0' + i + ':00+05:30' });
+  const goal = { id: 'g1', status: 'baseline', requested_at: '2026-11-01T10:00:00+05:30', rules: WEIGHT_RULES };
+  let r = weightPlan({ goal, weighins: [W('2026-11-02', 90), W('2026-11-03', 91, false)], logs: [], entries: [], now: T('2026-11-04T12:00:00+05:30'), version: 1 });
+  ok('W baseline waits for 3 fasted morning weigh-ins (non-fasted ignored)', !r.patch && r.info.baseline_have === 1);
+  const base = [W('2026-11-02', 90), W('2026-11-03', 90.4), W('2026-11-04', 89.6)];
+  r = weightPlan({ goal, weighins: base, logs: [], entries: [], now: T('2026-11-04T12:00:00+05:30'), version: 1 });
+  ok('W baseline = average of first 3, 12 weeks from the 3rd', r.patch && r.patch.status === 'active' && r.patch.baseline_kg === 90 && r.patch.end_day === '2027-01-27' && r.patch.ext_end_day === '2027-02-17', r.patch);
+  const active = Object.assign({}, goal, r.patch);
+  const endWeek = d => [0, 2, 4].map(k => W(addDays(d, -k), 0));
+  // achieved at 12 weeks
+  let ws = base.concat(endWeek('2027-01-27').map(w => Object.assign(w, { kg: 79.8 })));
+  r = weightPlan({ goal: active, weighins: ws, logs: [], entries: [], now: T('2027-01-28T09:00:00+05:30'), version: 1 });
+  ok('W target hit on the 7-day average → achieved, no fine', r.patch && r.patch.status === 'achieved' && r.extras.length === 0);
+  // one low reading doesn't count
+  ws = base.concat([W('2027-01-27', 79), W('2027-01-25', 83, true, 1), W('2027-01-23', 83, true, 2)]);
+  r = weightPlan({ goal: active, weighins: ws, logs: [], entries: [], now: T('2027-01-28T09:00:00+05:30'), version: 1 });
+  ok('W one low reading is not enough (average 81.67 > 80)', r.patch && r.patch.status === 'extension');
+  // missed initial: ₹500 proposed, waits 48h
+  ws = base.concat(endWeek('2027-01-27').map(w => Object.assign(w, { kg: 84 })));
+  r = weightPlan({ goal: active, weighins: ws, logs: [], entries: [], now: T('2027-01-28T09:00:00+05:30'), version: 1 });
+  let x = r.extras[0];
+  ok('W missed at 12 weeks → ₹500 proposed, review for 48h, extension', r.patch.status === 'extension' && x.incident.status === 'review' && x.incident.detail.proposed_paise === 50000 && !x.want && x.incident.detail.lost_kg === 6);
+  r = weightPlan({ goal: Object.assign({}, active, { status: 'extension' }), weighins: ws, logs: [], entries: [], now: T('2027-01-30T01:00:00+05:30'), version: 1 });
+  x = r.extras[0];
+  ok('W after 48h without dispute → ₹500 assessed', x.want && x.want.raw === 50000 && x.incident.status === 'resolved');
+  // no weigh-ins at the end → unknown, no money
+  r = weightPlan({ goal: active, weighins: base, logs: [], entries: [], now: T('2027-02-05T09:00:00+05:30'), version: 1 });
+  ok('W no weigh-in near the end → outcome unknown, no fine', r.extras[0].incident.detail.proposed_paise === null && !r.extras[0].want);
+  // extension end, adherence paths
+  const ext = Object.assign({}, active, { status: 'extension' });
+  const ws2 = ws.concat(endWeek('2027-02-17').map(w => Object.assign(w, { kg: 82 })));
+  const days = []; for (let d = '2026-11-04'; d <= '2027-02-17'; d = addDays(d, 1)) days.push(d);
+  const logsAll = days.map(d => ({ day: d }));
+  const after = T('2027-02-20T09:00:00+05:30');
+  r = weightPlan({ goal: ext, weighins: ws2, logs: logsAll, entries: [], now: after, version: 1 });
+  let e2 = r.extras.find(e => /extension/.test(e.incident.id));
+  ok('W followed the plan but missed → ₹1,000 (and "plan needs review")', r.patch.status === 'missed' && e2.want && e2.want.raw === 100000 && /plan itself needs review/.test(e2.want.why));
+  const fines = days.filter((_, i) => i % 2 === 0).map((d, i) => ({ incident_id: 'gym:' + d, amount_paise: 25000 }));
+  r = weightPlan({ goal: ext, weighins: ws2, logs: logsAll, entries: fines, now: after, version: 1 });
+  e2 = r.extras.find(e => /extension/.test(e.incident.id));
+  ok('W plan not followed (fined on half the days) → ₹3,000 proposed, overlap disclosed', e2.want && e2.want.raw === 300000 && /already fined separately/.test(e2.incident.detail.overlap_note));
+  r = weightPlan({ goal: ext, weighins: ws2, logs: logsAll.slice(0, 40), entries: [], now: after, version: 1 });
+  e2 = r.extras.find(e => /extension/.test(e.incident.id));
+  ok('21 W logs too sparse → adherence unknown, review only, no fine', !e2.want && e2.incident.detail.adherence.status === 'unknown' && e2.incident.detail.proposed_paise === null);
+  // fast loss safety
+  const tr = weightTrend([W('2026-11-10', 90), W('2026-11-17', 88.8)], '2026-11-17', WEIGHT_RULES);
+  ok('W losing >1%/week → safety flag', tr.fast && tr.pct_week > 1, tr);
+  ok('W corrections: superseded weigh-in ignored', meanWindow([W('2026-11-10', 95), Object.assign(W('2026-11-10', 90, true, 1), { supersedes: 'w2026-11-100' })], '2026-11-10') === 90);
+}

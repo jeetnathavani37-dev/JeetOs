@@ -256,4 +256,107 @@ function disputeOutcome(review, dispute, incEntries, today) {
   return { dispute: "upheld", incident: "excused", reversals, releasePass: true };
 }
 
-module.exports = { POLICY_V1, plan, disputeOutcome, promiseDue, logStatus, capTrim, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, bedMinutes };
+// ── Weight milestone: lose 10 kg in 12 weeks (+3-week extension) ──────────
+// Outcome is judged on 7-day averages of fasted morning weigh-ins, never one reading.
+// Adherence (did he follow the plan?) is judged separately from his logs; missing logs
+// make it "unknown", never "not followed". Every consequence waits 48 h for a dispute.
+const WEIGHT_RULES = {
+  loss_kg: 10, weeks: 12, ext_weeks: 3, baseline_count: 3, baseline_window_days: 10,
+  initial_paise: 50000, followed_paise: 100000, not_followed_paise: 300000, review_hours: 48,
+  coverage_min: 0.7, followed_min: 0.85, not_followed_max: 0.6, fast_loss_pct_week: 1.0,
+};
+const qualifies = w => !!(w && w.fasted && w.morning && !w.superseded);
+function liveWeighins(weighins) {
+  const gone = new Set((weighins || []).map(w => w.supersedes).filter(Boolean));
+  return (weighins || []).filter(w => !gone.has(w.id)).map(w => Object.assign({}, w, { day: String(w.day).slice(0, 10), kg: +w.kg }));
+}
+function meanWindow(weighins, endDay, days) {
+  const from = addDays(endDay, -((days || 7) - 1));
+  const v = liveWeighins(weighins).filter(w => qualifies(w) && w.day >= from && w.day <= endDay).map(w => w.kg);
+  return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length * 100) / 100 : null;
+}
+function baselineOf(weighins, fromDay, R) {
+  const q = liveWeighins(weighins).filter(w => qualifies(w) && w.day >= fromDay && w.day <= addDays(fromDay, R.baseline_window_days))
+    .sort((a, b) => Date.parse(a.measured_at) - Date.parse(b.measured_at));
+  if (q.length < R.baseline_count) return { have: q.length };
+  const first = q.slice(0, R.baseline_count);
+  return { kg: Math.round(first.reduce((a, w) => a + w.kg, 0) / first.length * 100) / 100, day: first[first.length - 1].day, have: q.length };
+}
+function weightTrend(weighins, today, R) {
+  const cur = meanWindow(weighins, today), prev = meanWindow(weighins, addDays(today, -7));
+  if (cur == null || prev == null) return { cur, prev, pct_week: null, fast: false };
+  const pct = Math.round((prev - cur) / prev * 1000) / 10;
+  return { cur, prev, pct_week: pct, fast: pct > R.fast_loss_pct_week };
+}
+// Share of plan days without a fined gym/diet/sleep miss, and how many days have any log at all.
+function adherence({ start, end, logs, entries, R }) {
+  const days = []; for (let d = start; d <= end; d = addDays(d, 1)) days.push(d);
+  const logged = new Set((logs || []).map(r => String(r.day || "").slice(0, 10)));
+  const net = {};
+  (entries || []).forEach(e => { if (/^(gym|diet|sleep):/.test(e.incident_id)) net[e.incident_id] = (net[e.incident_id] || 0) + Number(e.amount_paise); });
+  const fined = new Set(Object.keys(net).filter(k => net[k] > 0).map(k => k.split(":")[1]).filter(d => d >= start && d <= end));
+  const coverage = days.length ? days.filter(d => logged.has(d)).length / days.length : 0;
+  const pct = days.length ? 1 - fined.size / days.length : 0;
+  const status = coverage < R.coverage_min ? "unknown" : pct >= R.followed_min ? "followed" : pct <= R.not_followed_max ? "not_followed" : "partial";
+  return { status, coverage: Math.round(coverage * 100), pct: Math.round(pct * 100), fined_days: fined.size, days: days.length };
+}
+function weightPlan({ goal, weighins, logs, entries, now, version }) {
+  const out = { patch: null, extras: [], info: {} };
+  if (!goal || goal.status === "cancelled") return out;
+  const R = Object.assign({}, WEIGHT_RULES, goal.rules || {}), today = istDate(now);
+  let g = Object.assign({}, goal);
+  if (g.status === "baseline") {
+    const b = baselineOf(weighins, istDate(g.requested_at), R);
+    out.info.baseline_have = b.have;
+    if (b.kg == null) return out;
+    g = Object.assign(g, { status: "active", baseline_kg: b.kg, baseline_day: b.day, start_day: b.day,
+      end_day: addDays(b.day, R.weeks * 7), ext_end_day: addDays(b.day, (R.weeks + R.ext_weeks) * 7) });
+    out.patch = { status: "active", baseline_kg: b.kg, baseline_day: b.day, start_day: g.start_day, end_day: g.end_day, ext_end_day: g.ext_end_day };
+  }
+  const target = Math.round((+g.baseline_kg - R.loss_kg) * 100) / 100;
+  out.info = Object.assign(out.info, { target, trend: weightTrend(weighins, today, R) });
+  const mk = (phase, endDay, proposed, why, detail) => {
+    const id = "milestone:" + g.id + ":" + phase, reviewUntil = istAt(addDays(endDay, 1), "00:00") + R.review_hours * 3600000;
+    const inc = { id, source_key: id, commitment_id: null, category: "milestone", root_key: id, policy_version: version,
+      title: (phase === "initial" ? "Weight goal (12 weeks)" : "Weight goal (extension)") + " — " + endDay, overlap_of: null,
+      detail: Object.assign({ date: endDay, why, proposed_paise: proposed, review_until: new Date(reviewUntil).toISOString() }, detail), status: "review" };
+    const x = { incident: inc };
+    if (proposed && now >= reviewUntil) {
+      inc.status = "resolved";
+      x.want = { incident_id: id, kind: "assessment", day_n: 1, local_date: istDate(reviewUntil), raw: proposed, checkpoint: reviewUntil, why };
+    }
+    out.extras.push(x);
+  };
+  let status = g.status;
+  if (today > g.end_day && ["active", "extension", "missed", "achieved"].includes(status)) {
+    const m = meanWindow(weighins, g.end_day), lost = m == null ? null : Math.round((+g.baseline_kg - m) * 100) / 100;
+    if (m != null && m <= target) status = "achieved";
+    else {
+      mk("initial", g.end_day, m == null ? null : R.initial_paise,
+        m == null ? "No fasted morning weigh-in in the last week of the 12 weeks — outcome unknown, so no fine; weigh in to continue"
+          : "Lost " + lost + " kg of " + R.loss_kg + " in " + R.weeks + " weeks (7-day average " + m + " kg vs target " + target + " kg) — " + R.ext_weeks + "-week extension started",
+        { baseline_kg: +g.baseline_kg, end_mean_kg: m, lost_kg: lost, target_kg: target });
+      if (status === "active") status = "extension";
+    }
+  }
+  if (today > g.ext_end_day && (status === "extension" || status === "missed")) {
+    const m = meanWindow(weighins, g.ext_end_day), lost = m == null ? null : Math.round((+g.baseline_kg - m) * 100) / 100;
+    if (m != null && m <= target) status = "achieved";
+    else {
+      const adh = adherence({ start: g.start_day, end: g.ext_end_day, logs, entries, R });
+      const amount = m == null ? null : adh.status === "followed" ? R.followed_paise : adh.status === "not_followed" ? R.not_followed_paise : null;
+      const why = m == null ? "No fasted morning weigh-in in the last week of the extension — outcome unknown, no fine"
+        : adh.status === "followed" ? "Target missed even though the plan was followed (" + adh.pct + "% of days on plan) — the plan itself needs review"
+        : adh.status === "not_followed" ? "Target missed and the plan wasn't followed (" + adh.pct + "% of days on plan, " + adh.fined_days + " fined misses)"
+        : adh.status === "unknown" ? "Target missed, but logs cover only " + adh.coverage + "% of days — adherence unknown, review only, no fine"
+        : "Target missed with partial adherence (" + adh.pct + "%) — review only, no fine";
+      mk("extension", g.ext_end_day, amount, why, { baseline_kg: +g.baseline_kg, end_mean_kg: m, lost_kg: lost, target_kg: target, adherence: adh,
+        overlap_note: adh.fined_days ? adh.fined_days + " of these days were already fined separately; this is the outcome consequence, shown separately" : null });
+      status = "missed";
+    }
+  }
+  if (status !== goal.status) out.patch = Object.assign(out.patch || {}, { status });
+  return out;
+}
+
+module.exports = { POLICY_V1, plan, disputeOutcome, WEIGHT_RULES, weightPlan, meanWindow, baselineOf, weightTrend, adherence, promiseDue, logStatus, capTrim, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, bedMinutes };

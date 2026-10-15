@@ -366,3 +366,12 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 --                   prev_status, status open|upheld|rejected|need_more, review jsonb, created_at, decided_at)
 --     Max 2 per incident. While disputed the fine is excluded from dues. Upheld → reversal entries
 --     (originals kept), incident excused, its pass released. Rejected → previous status.
+
+-- Phase 4 (build -76): weight milestone. Owner read only; writes via api/penalty.js.
+--   jeetos_weighins(id, measured_at server time, day IST, kg 25–300, fasted, morning, source, note, supersedes)
+--     append-only (corrections are a new row that supersedes the old one); max 3 per day.
+--   jeetos_weight_goals(id, status baseline|active|extension|achieved|missed|cancelled, baseline_kg/day,
+--     start/end/ext_end day, plan, rules jsonb snapshot). Baseline = mean of first 3 fasted morning
+--     weigh-ins; 12 weeks + 3-week extension; outcome on 7-day means; consequences are milestone
+--     incidents (category 'milestone') that wait 48 h for a dispute before any entry is written.
+-- jeetos_penalty_incidents.category += milestone.
