@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.15-77";
+const APP_BUILD = "2026.10.15-78";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -2937,6 +2937,7 @@ function AnchorsCard({ T }) {
     const [busy, setBusy] = React.useState("");
     const [msg, setMsg] = React.useState("");
     const [places, setPlaces] = React.useState(false);
+    const [alarms, setAlarms] = React.useState(false);
     React.useEffect(() => { flushCheckins().then(syncCheckins).then(() => setTick(x => x + 1)); const t = setInterval(() => setTick(x => x + 1), 60000); return () => clearInterval(t); }, []);
     const wd = new Date().getDay();
     const list = DAY_ANCHORS.filter(a => !a.days || a.days.includes(wd) || (a.nextDay && false));
@@ -2974,6 +2975,12 @@ function AnchorsCard({ T }) {
         places && React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" } },
             React.createElement("button", { onClick: () => savePlace("gym"), disabled: !!busy, style: { fontSize: 11.5, padding: "5px 10px", borderRadius: 9, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM } }, "Main gym pe hoon — save karo"),
             React.createElement("button", { onClick: () => savePlace("work"), disabled: !!busy, style: { fontSize: 11.5, padding: "5px 10px", borderRadius: 9, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM } }, "Main library pe hoon — save karo")),
+        React.createElement("div", { onClick: () => setAlarms(!alarms), style: { fontSize: 11, color: T.ivoryD, marginTop: 8, cursor: "pointer" } }, "🔔 Alarms " + (alarms ? "▴" : "▾")),
+        alarms && React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryM, lineHeight: 1.55, marginTop: 6 } },
+            React.createElement("a", { href: "/api/schedule.ics", target: "_blank", rel: "noopener", style: { display: "inline-block", fontSize: 12, padding: "6px 11px", borderRadius: 9, background: T.goldG, color: "#1A1408", fontWeight: 700, textDecoration: "none", marginBottom: 6 } }, "📅 Calendar mein alarms daalo"),
+            React.createElement("div", null, "• Saare 9 times iPhone Calendar mein roz ke events ban jaayenge — 10 min pehle + time pe alert (bina net ke bhi). \"Add All\" dabana."),
+            React.createElement("div", null, "• Uthne ke liye asli alarm: iPhone Clock app mein 8:00 aur 8:40 ka alarm lagao — Calendar alert silent mode mein zor se nahi bajta."),
+            React.createElement("div", null, "• Koi time nikal gaya aur check-in nahi hua toh us field ka coach push bhejega (Coaches tab mein 🔔 notifications ON honi chahiye).")),
         React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD, marginTop: 6, lineHeight: 1.4 } }, "Time pe = free · extension mein = us anchor ka 1 pass (5/mahina) · uske baad ₹100. Bimar ho toh streak card pe recovery mark karo — poora din maaf."));
 }
 function StreakCard({ T, W, L, checks, onChange }) {

@@ -16,6 +16,10 @@
     {
       "source": "/",
       "destination": "/JeetOS.html"
+    },
+    {
+      "source": "/api/schedule.ics",
+      "destination": "/api/schedule-ics"
     }
   ],
   "crons": [
@@ -66,6 +70,42 @@
     {
       "path": "/api/penalty?slot=evening",
       "schedule": "45 12 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=anchor&anchor=wake",
+      "schedule": "40 2 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=anchor&anchor=gym",
+      "schedule": "10 4 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=anchor&anchor=breakfast",
+      "schedule": "10 6 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=anchor&anchor=work",
+      "schedule": "10 7 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=anchor&anchor=lunch",
+      "schedule": "40 9 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=anchor&anchor=snack",
+      "schedule": "10 12 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=anchor&anchor=leave",
+      "schedule": "40 16 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=anchor&anchor=dinner",
+      "schedule": "40 17 * * *"
+    },
+    {
+      "path": "/api/coach-nudge?slot=anchor&anchor=sleep",
+      "schedule": "10 19 * * *"
     }
   ],
   "headers": [
