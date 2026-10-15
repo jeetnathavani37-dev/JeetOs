@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.16-83";
+const APP_BUILD = "2026.10.16-84";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -10104,6 +10104,7 @@ function JeetOS() {
                     React.createElement("span", { style: { fontSize: 14 } }, "📷"),
                     React.createElement("span", { style: { fontSize: 10, color: "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, lineHeight: 1.5 } }, "Every task needs one photo as proof — finish the steps, then add a photo inside the card to mark it complete."))),
             React.createElement(CommandCentreCard, null),
+            React.createElement(CheckinCard, null),
             React.createElement(GoalGraphCard, null),
             React.createElement(PrimaryGoalCard, { T: T, onChange: () => setStreakTick(t => t + 1) }),
             React.createElement(StreakCard, { T: T, W: W, L: L, checks: checks, onChange: () => setStreakTick(t => t + 1) }),
@@ -11329,7 +11330,7 @@ function GoalGraphCard() {
 function CommandCentreCard() {
     const [d, setD] = React.useState(null);
     const load = () => fetch("/api/os?action=today").then(r => r.ok ? r.json() : null).then(x => setD(x)).catch(() => { });
-    React.useEffect(() => { if (!authSession()) return; load(); const t = setInterval(load, 5 * 60000); const f = () => { if (!document.hidden) load(); }; document.addEventListener("visibilitychange", f); return () => { clearInterval(t); document.removeEventListener("visibilitychange", f); }; }, []);
+    React.useEffect(() => { if (!authSession()) return; load(); const t = setInterval(load, 5 * 60000); const f = () => { if (!document.hidden) load(); }; document.addEventListener("visibilitychange", f); window.addEventListener("jos-plan-refresh", load); return () => { clearInterval(t); document.removeEventListener("visibilitychange", f); window.removeEventListener("jos-plan-refresh", load); }; }, []);
     if (!d || !d.plan || !Array.isArray(d.plan.top3)) return null;
     const box = { background: "linear-gradient(135deg," + T.card + "," + T.ink + ")", border: "1px solid " + T.gold, borderRadius: 16, padding: "12px 16px", marginBottom: 14, fontFamily: "Inter,system-ui,sans-serif" };
     const sub = t => React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold, marginTop: 10, marginBottom: 3 } }, t);
@@ -11384,6 +11385,43 @@ function NotifyCard() {
                 React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold } }, "AAJ"),
                 d.today.slice(0, 12).map((x, i) => React.createElement("div", { key: i, style: { fontSize: 10.5, color: x.decision === "sent" ? T.ivoryM : T.gold } },
                     new Date(x.at).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" }) + " · " + x.tag + " · " + (x.decision === "sent" ? "bheja" : "roka: " + (x.reason || "")))))));
+}
+// Daily check-in — short and adaptive (the server skips what he already logged).
+// Morning: sleep, energy, mood, free time, one priority. Evening: what got done,
+// why the rest didn't, one change for tomorrow.
+function CheckinCard() {
+    const [d, setD] = React.useState(null);
+    const [a, setA] = React.useState({});
+    const [err, setErr] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const [later, setLater] = React.useState(false);
+    React.useEffect(() => { if (authSession()) fetch("/api/os?action=checkin").then(r => r.ok ? r.json() : null).then(x => setD(x)).catch(() => { }); }, []);
+    if (!d || !d.kind || !Array.isArray(d.questions) || !d.questions.length || later) return null;
+    const set = (k, v) => setA(Object.assign({}, a, { [k]: v }));
+    const box = { background: T.card, border: "1px solid " + T.border2, borderRadius: 16, padding: "12px 16px", marginBottom: 14, fontFamily: "Inter,system-ui,sans-serif" };
+    const chip = (on, label, onClick, key) => React.createElement("button", { key: key || label, onClick, "aria-pressed": on, style: { padding: "4px 10px", margin: "3px 6px 0 0", borderRadius: 16, border: "1px solid " + (on ? T.gold : T.border2), background: on ? T.gold : "transparent", color: on ? T.ink : T.ivory, fontSize: 12, cursor: "pointer" } }, label);
+    const field = q => {
+        if (q.kind === "scale") return [1, 2, 3, 4, 5].map(n => chip(a[q.id] === n, String(n), () => set(q.id, n), q.id + n));
+        if (q.kind === "choice") return q.options.map(o => chip(a[q.id] === o, o, () => set(q.id, o), q.id + o));
+        if (q.kind === "multi") return q.options.map(o => { const cur = a[q.id] || [], on = cur.includes(o); return chip(on, (on ? "✓ " : "") + o, () => set(q.id, on ? cur.filter(x => x !== o) : cur.concat([o])), q.id + o); });
+        const inputStyle = { background: T.ink, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "5px 8px", fontSize: 12.5, width: q.kind === "text" ? "100%" : 110, marginTop: 4 };
+        return React.createElement("input", { "aria-label": q.id, type: q.kind === "number" ? "number" : q.kind === "time" ? "time" : "text", step: q.step, min: q.min, max: q.max, maxLength: q.max && q.kind === "text" ? q.max : undefined, value: a[q.id] == null ? "" : a[q.id], onChange: e => set(q.id, q.kind === "number" ? (e.target.value === "" ? null : Number(e.target.value)) : e.target.value), style: inputStyle });
+    };
+    const submit = () => {
+        setBusy(true); setErr("");
+        fetch("/api/os", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "checkin.save", kind: d.kind, answers: a }) })
+            .then(r => r.json().then(x => { if (r.ok) { setD(Object.assign({}, d, { kind: null })); try { window.dispatchEvent(new Event("jos-plan-refresh")); } catch (_a) { } } else setErr(x.error && /missing/.test(x.error) ? "Ek sawaal reh gaya — sab bhar do (optional chhod sakte ho)." : (x.error || "error")); }))
+            .catch(() => setErr("Offline — baad mein try karo")).finally(() => setBusy(false));
+    };
+    return React.createElement("div", { style: box, "data-testid": "checkin-card" },
+        React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold } }, d.kind === "morning" ? "☀️ SUBAH KA CHECK-IN · 30 SEC" : "🌙 SHAAM KA CHECK-IN · 30 SEC"),
+        d.questions.map(q => React.createElement("div", { key: q.id, style: { marginTop: 9 } },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, q.text + (q.optional ? " (optional)" : "")),
+            React.createElement("div", null, field(q)))),
+        err && React.createElement("div", { style: { fontSize: 11.5, color: T.gold, marginTop: 6 } }, err),
+        React.createElement("div", { style: { marginTop: 10 } },
+            React.createElement("button", { onClick: submit, disabled: busy, style: { padding: "6px 14px", borderRadius: 10, border: "none", background: T.gold, color: T.ink, fontWeight: 600, fontSize: 12.5, cursor: "pointer" } }, "Done ✓"),
+            React.createElement("button", { onClick: () => setLater(true), style: { marginLeft: 8, padding: "6px 12px", borderRadius: 10, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Baad mein")));
 }
 // Shows the app only to the logged-in owner. Offline with a saved session → the app still opens.
 function AuthGate() {

@@ -18,6 +18,7 @@ const { POLICY_V1, istAt, addDays, weightTrend, WEIGHT_RULES } = require("./_pen
 const { visibleTo, label, KIND_LABEL } = require("./_memory");
 const { graphHealth } = require("./_goals");
 const { planToday } = require("./_planner");
+const { overlayLog } = require("./_checkin");
 
 const SUPABASE_URL = "https://qzripzgbstvxkfobzhyv.supabase.co";
 const PUBLIC_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
@@ -96,7 +97,7 @@ async function loadContextData(q, now) {
   now = now || Date.now();
   const day = planDay(now), week = addDays(day, -7), month = day.slice(0, 7);
   const since4 = new Date(now - 4 * 864e5).toISOString(), since7 = new Date(now - 7 * 864e5).toISOString();
-  const keys = ["logs", "checkins", "marks", "openPromises", "closedPromises", "goals", "goalState", "weightGoal", "weighins", "memory", "profile", "notes", "inbox", "passes", "incidents", "disputes", "decisions", "memories", "graph"];
+  const keys = ["logs", "checkins", "marks", "openPromises", "closedPromises", "goals", "goalState", "weightGoal", "weighins", "memory", "profile", "notes", "inbox", "passes", "incidents", "disputes", "decisions", "memories", "graph", "dailyCheckins"];
   const rows = await Promise.all([
     q(`jeetos_logs?day=gte.${week}&select=*&order=day.desc&limit=10`),
     q(`jeetos_anchor_checkins?day=gte.${week}&select=anchor,day,at,verified&limit=120`),
@@ -117,9 +118,16 @@ async function loadContextData(q, now) {
     q("jeetos_decisions?status=eq.approved&select=coach,area,change,decided_at&order=decided_at.desc&limit=6"),
     q("jeetos_memories?status=in.(active,unconfirmed)&select=id,kind,text,scope,source_type,coach,confidence,status,pending,observed_at,review_after&order=observed_at.desc&limit=80"),
     q("jeetos_goals?status=eq.active&select=id,kind,parent_id,title,owner_coach,metric,target,status,approved_at"),
+    q(`jeetos_daily_checkins?day=gte.${week}&select=day,kind,answers,updated_at&order=day.desc&limit=20`),
   ]);
   const raw = { failed: [] };
   keys.forEach((k, i) => { if (!Array.isArray(rows[i])) raw.failed.push(k); raw[k] = Array.isArray(rows[i]) ? rows[i] : []; });
+  // Morning check-in answers fill gaps in that day's log (never overwrite what he logged).
+  raw.dailyCheckins.filter(c => c.kind === "morning").forEach(c => {
+    const d = String(c.day).slice(0, 10), i = raw.logs.findIndex(l => String(l.day).slice(0, 10) === d);
+    const merged = overlayLog(i >= 0 ? raw.logs[i] : { day: d }, Object.assign({}, c, { day: d }));
+    if (i >= 0) raw.logs[i] = merged; else raw.logs.push(merged);
+  });
   raw.goalState = raw.goalState[0] ? raw.goalState[0].data : null;
   raw.weightGoal = raw.weightGoal[0] || null;
   raw.profile = raw.profile[0] || null;
@@ -220,6 +228,10 @@ function nextAction(raw, anchors, now, today) {
 }
 
 // ── Packet ─────────────────────────────────────────────────────────────
+function morningPriority(raw, day) {
+  const m = (raw.dailyCheckins || []).find(c => String(c.day).slice(0, 10) === day && c.kind === "morning");
+  return m && m.answers && m.answers.priority ? { text: m.answers.priority, done: false, from: "check-in" } : null;
+}
 // Today's adaptive plan (api/_planner.js) from the same rows every coach sees.
 function todayPlan(raw, now, anchors) {
   const day = planDay(now);
@@ -232,9 +244,9 @@ function todayPlan(raw, now, anchors) {
   return planToday({
     day, now, anchors, health,
     promises: raw.openPromises || [],
-    todayPriority: gs && gs.today && gs.today.date === day ? gs.today : null,
+    todayPriority: gs && gs.today && gs.today.date === day ? gs.today : morningPriority(raw, day),
     recovery: (raw.marks || []).some(m => m.kind === "recovery" && String(m.date).slice(0, 10) === day),
-    checkin: (raw.dailyCheckins || []).find(c => String(c.day).slice(0, 10) === day && c.kind === "morning") || null,
+    checkin: ((raw.dailyCheckins || []).find(c => String(c.day).slice(0, 10) === day && c.kind === "morning") || {}).answers || null,
     log: (raw.logs || []).find(l => String(l.day).slice(0, 10) === day) || null,
     lastWeighinDay: wi,
   });
@@ -359,6 +371,12 @@ function buildPacket(raw, opts) {
   add("memory", "WHAT THE TEAM KNOWS (dated; older or unconfirmed items — confirm before relying on them)", memLines, 10);
 
   // Unknowns + next action.
+  const ck = raw.dailyCheckins || [], mo = ck.find(c => String(c.day).slice(0, 10) === today && c.kind === "morning"), ev = ck.find(c => c.kind === "evening");
+  const cLines = [];
+  if (mo) { const a = mo.answers || {}; cLines.push(`this morning: energy ${a.energy ?? "?"}/5, mood ${a.mood ?? "?"}/5, free time ${a.free_hours || "?"}${a.priority ? `, his priority: "${a.priority}"` : ""}`); }
+  else unknowns.push("no morning check-in yet");
+  if (ev) { const a = ev.answers || {}; cLines.push(`last evening check-in (${ago(String(ev.day).slice(0, 10), today)}): done ${(a.done || []).join("; ") || "nothing ticked"}; not done ${(a.not_done || []).join("; ") || "—"}${a.blocker ? `; why: ${a.blocker}${a.blocker_note ? " — " + a.blocker_note : ""}` : ""}${a.tomorrow ? `; he'll change: "${a.tomorrow}"` : ""}`); }
+  add("checkins", "CHECK-INS (his own words — use them, don't re-ask)", cLines, 4);
   const plan = todayPlan(raw, now, anchors);
   add("plan", "TODAY'S PLAN (computed — don't invent other time slots)", plan.top3.map((t, i) => `${i + 1}. ${t.title} — ${t.why}`).concat(plan.changes.map(c => "changed: " + c.text)), 2);
   const na = nextAction(raw, anchors, now, today);
