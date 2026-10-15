@@ -16,7 +16,7 @@ const at = (day, hm, nextDay) => istAt(nextDay ? addDays(day, 1) : day, hm);
 
 // Busy blocks for the plan day (ms timestamps), from his own schedule.
 function busyBlocks(day, anchors, opts) {
-  const L = POLICY_V1.anchors.list, dow = new Date(day + "T12:00:00Z").getUTCDay(), on = k => !L[k].days || L[k].days.includes(dow);
+  const L = (opts.AN || POLICY_V1.anchors).list, dow = new Date(day + "T12:00:00Z").getUTCDay(), on = k => !L[k].days || L[k].days.includes(dow);
   const out = [];
   if (on("gym") && !opts.skipGym) out.push({ key: "gym", from: at(day, L.gym.time), to: at(day, L.gym.time) + BLOCK.gym * 60000 });
   out.push({ key: "breakfast", from: at(day, L.breakfast.time), to: at(day, L.breakfast.time) + BLOCK.breakfast * 60000 });
@@ -29,8 +29,8 @@ function busyBlocks(day, anchors, opts) {
   return out.sort((a, b) => a.from - b.from);
 }
 // Free windows between now and bedtime.
-function freeWindows(day, now, busy) {
-  const L = POLICY_V1.anchors.list;
+function freeWindows(day, now, busy, AN) {
+  const L = (AN || POLICY_V1.anchors).list;
   const end = at(day, L.sleep.time, L.sleep.next_day);
   let t = Math.max(now, at(day, L.wake.time));
   const out = [];
@@ -47,7 +47,7 @@ const fits = (wins, min, after, latestEnd) => wins.find(w => Math.max(w.from, af
 
 // health: { gym: "at_risk", diet: ..., sleep: ..., weighin: ... } (from the goal graph; optional)
 function planToday(input) {
-  const { day, now, anchors = [], promises = [], health = {}, todayPriority = null, recovery = false, checkin = null, log = null, lastWeighinDay = null } = input;
+  const { day, now, AN = null, anchors = [], promises = [], health = {}, todayPriority = null, recovery = false, checkin = null, log = null, lastWeighinDay = null } = input;
   const A = Object.fromEntries(anchors.map(a => [a.key, a]));
   const items = [], changes = [], risks = [];
   const push = (prio, title, why, extra) => items.push(Object.assign({ prio, title, why }, extra || {}));
@@ -61,8 +61,8 @@ function planToday(input) {
 
   // 4. Adapt after misses — find a new slot instead of writing the day off.
   const gymMissed = A.gym && A.gym.state === "not checked in" && !(log && log.gym_done);
-  const busy = busyBlocks(day, anchors, { skipGym: !!gymMissed || (A.gym && A.gym.state === "done") });
-  const free = freeWindows(day, now, busy);
+  const busy = busyBlocks(day, anchors, { AN, skipGym: !!gymMissed || (A.gym && A.gym.state === "done") });
+  const free = freeWindows(day, now, busy, AN);
   const lowEnergy = checkin && checkin.energy != null && +checkin.energy <= 2;
   if (gymMissed && !recovery) {
     const slot = !lowEnergy && fits(free, GYM_MIN, now + 15 * 60000, at(day, GYM_LATEST_END));

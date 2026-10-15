@@ -160,15 +160,27 @@ function exceptionCandidates({ policy, logs, marks, uses, now }) {
 }
 
 // Timed anchors per day. State: ok | pending | excused | review | needs_allowance | missed | skip.
+// Approved schedule changes [{ anchor, time, from: "YYYY-MM-DD" }] apply from their date on
+// (never to days before it). The latest change per anchor wins.
+const SHIFT_HM = /^([01]\d|2[0-3]):[0-5]\d$/;
+function anchorsOn(AN, overrides, date) {
+  if (!AN || !Array.isArray(overrides) || !overrides.length) return AN;
+  const list = Object.assign({}, AN.list);
+  overrides.filter(o => o && list[o.anchor] && SHIFT_HM.test(o.time || "") && String(o.from || "") <= date)
+    .sort((a, b) => String(a.from).localeCompare(String(b.from)))
+    .forEach(o => { list[o.anchor] = Object.assign({}, list[o.anchor], { time: o.time }); });
+  return Object.assign({}, AN, { list });
+}
 function anchorCandidates({ policy, checkins, logs, marks, now }) {
-  const AN = policy.anchors;
-  if (!AN) return [];
+  const AN0 = policy.anchors;
+  if (!AN0) return [];
   const from = policy.effective_from ? istDate(policy.effective_from) : istDate(now);
   const out = [];
   for (let date = from; date <= istDate(now); date = addDays(date, 1)) {
     const row = (logs || []).find(r => r.day === date || r.date === date) || null;
     const weekday = new Date(date + "T12:00:00Z").getUTCDay();
     const sick = (marks || []).some(m => String(m.date).slice(0, 10) === date && m.kind === "recovery");
+    const AN = anchorsOn(AN0, policy.schedule_overrides, date);
     for (const key of Object.keys(AN.list)) {
       const A = AN.list[key];
       if (A.days && !A.days.includes(weekday)) continue;
@@ -430,4 +442,4 @@ function weightPlan({ goal, weighins, logs, entries, now, version }) {
   return out;
 }
 
-module.exports = { POLICY_V1, plan, disputeOutcome, anchorCandidates, anchorExtras, WEIGHT_RULES, weightPlan, meanWindow, baselineOf, weightTrend, adherence, promiseDue, logStatus, capTrim, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, bedMinutes };
+module.exports = { anchorsOn, POLICY_V1, plan, disputeOutcome, anchorCandidates, anchorExtras, WEIGHT_RULES, weightPlan, meanWindow, baselineOf, weightTrend, adherence, promiseDue, logStatus, capTrim, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, bedMinutes };

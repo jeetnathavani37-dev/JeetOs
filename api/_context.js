@@ -14,7 +14,7 @@
 //    to the appearance coaches or the mind coach.
 //  - Old facts carry their date, so stale info isn't presented as current.
 //  - Each purpose has a size budget; low-priority lines are trimmed first.
-const { POLICY_V1, istAt, addDays, weightTrend, WEIGHT_RULES } = require("./_penalty");
+const { POLICY_V1, istAt, addDays, weightTrend, WEIGHT_RULES, anchorsOn } = require("./_penalty");
 const { visibleTo, label, KIND_LABEL } = require("./_memory");
 const { graphHealth } = require("./_goals");
 const { planToday } = require("./_planner");
@@ -99,7 +99,7 @@ async function loadContextData(q, now) {
   now = now || Date.now();
   const day = planDay(now), since = addDays(day, -31), month = day.slice(0, 7);   // 31 days: habits need a month
   const since4 = new Date(now - 4 * 864e5).toISOString(), since7 = new Date(now - 7 * 864e5).toISOString();
-  const keys = ["logs", "checkins", "marks", "openPromises", "closedPromises", "goals", "goalState", "weightGoal", "weighins", "memory", "profile", "notes", "inbox", "passes", "incidents", "disputes", "decisions", "memories", "graph", "dailyCheckins"];
+  const keys = ["logs", "checkins", "marks", "openPromises", "closedPromises", "goals", "goalState", "weightGoal", "weighins", "memory", "profile", "notes", "inbox", "passes", "incidents", "disputes", "decisions", "memories", "graph", "dailyCheckins", "schedule"];
   const rows = await Promise.all([
     q(`jeetos_logs?day=gte.${since}&select=*&order=day.desc&limit=35`),
     q(`jeetos_anchor_checkins?day=gte.${since}&select=anchor,day,at,verified&order=day.desc&limit=320`),
@@ -121,6 +121,7 @@ async function loadContextData(q, now) {
     q("jeetos_memories?status=in.(active,unconfirmed)&select=id,kind,text,scope,source_type,coach,confidence,status,pending,observed_at,review_after&order=observed_at.desc&limit=80"),
     q("jeetos_goals?status=eq.active&select=id,kind,parent_id,title,owner_coach,metric,target,status,approved_at"),
     q(`jeetos_daily_checkins?day=gte.${since}&select=day,kind,answers,updated_at&order=day.desc&limit=70`),
+    q("jeetos_settings?id=eq.schedule&select=data"),
   ]);
   const raw = { failed: [] };
   keys.forEach((k, i) => { if (!Array.isArray(rows[i])) raw.failed.push(k); raw[k] = Array.isArray(rows[i]) ? rows[i] : []; });
@@ -130,6 +131,8 @@ async function loadContextData(q, now) {
     const merged = overlayLog(i >= 0 ? raw.logs[i] : { day: d }, Object.assign({}, c, { day: d }));
     if (i >= 0) raw.logs[i] = merged; else raw.logs.push(merged);
   });
+  raw.schedule = (raw.schedule[0] && raw.schedule[0].data) || {};
+  raw.scheduleOverrides = Array.isArray(raw.schedule.overrides) ? raw.schedule.overrides : [];
   raw.goalState = raw.goalState[0] ? raw.goalState[0].data : null;
   raw.weightGoal = raw.weightGoal[0] || null;
   raw.profile = raw.profile[0] || null;
@@ -142,7 +145,7 @@ function anchorStatus(raw, now) {
   const day = planDay(now);
   const log = (raw.logs || []).find(l => String(l.day).slice(0, 10) === day) || null;
   const seen = (log && log.entries_seen) || {};
-  const list = POLICY_V1.anchors.list, out = [];
+  const list = anchorsOn(POLICY_V1.anchors, raw.scheduleOverrides, day).list, out = [];
   const dow = new Date(day + "T12:00:00Z").getUTCDay();
   for (const key of Object.keys(list)) {
     const A = list[key];
@@ -246,7 +249,7 @@ function todayPlan(raw, now, anchors) {
   const gs = raw.goalState;
   const wi = (raw.weighins || []).filter(w => w.fasted && w.morning).map(w => String(w.day).slice(0, 10)).sort().pop() || null;
   return planToday({
-    day, now, anchors, health,
+    day, now, anchors, health, AN: anchorsOn(POLICY_V1.anchors, raw.scheduleOverrides, day),
     promises: raw.openPromises || [],
     todayPriority: gs && gs.today && gs.today.date === day ? gs.today : morningPriority(raw, day),
     recovery: (raw.marks || []).some(m => m.kind === "recovery" && String(m.date).slice(0, 10) === day),

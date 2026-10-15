@@ -15,6 +15,8 @@
 //   GET  /api/os?action=journal             decision journal (+ which are due for review)
 //   POST /api/os { action: "journal.add", change, area?, alternatives?, expected?, review_on? }
 //   POST /api/os { action: "journal.outcome", id, verdict: worked|didnt|unclear, actual? }
+//   GET  /api/os?action=repair              schedule-change proposals for anchors that keep slipping
+//   POST /api/os { action: "repair.approve" | "repair.reject", id }  /  { action: "repair.revert", anchor }
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -29,6 +31,7 @@ const { loadContextData, planDay, buildPacket, todayPlan, reviewDay } = require(
 const { questionsFor, cleanAnswers, due: checkinDue } = require("./_checkin");
 const { habitReport } = require("./_habits");
 const { insightReport } = require("./_insights");
+const repair = require("./_repair");
 
 // The server key when configured; otherwise act as the logged-in owner (RLS allows the owner).
 function makeDb(req) {
@@ -120,6 +123,33 @@ module.exports = async function handler(req, res) {
       if (!r.ok) return res.status(502).json({ error: "couldn't read decisions (" + r.status + ")" });
       const today = planDay(Date.now());
       return res.status(200).json({ today, decisions: r.body.map(x => Object.assign({}, x, { review_day: reviewDay(x), due: !x.verdict && !!reviewDay(x) && reviewDay(x) <= today })) });
+    }
+    if ((req.method === "GET" && q.action === "repair") || (req.method === "POST" && /^repair\./.test((req.body || {}).action || ""))) {
+      const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
+      if ((raw.failed || []).includes("schedule")) return res.status(502).json({ error: "couldn't read the schedule" });
+      const today = planDay(Date.now()), nowIso = new Date().toISOString(), props = repair.proposals(raw, today);
+      if (req.method === "GET") return res.status(200).json({ today, proposals: props, overrides: raw.scheduleOverrides });
+      const b = req.body, save = async data => db("jeetos_settings?on_conflict=id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=representation" }, body: JSON.stringify({ id: "schedule", data, updated_at: nowIso }) });
+      if (b.action === "repair.revert") {
+        const next = repair.revert(raw.schedule, String(b.anchor || ""), today, nowIso);
+        if (!next) return res.status(400).json({ error: "unknown anchor" });
+        const r = await save(next);
+        return r.ok ? res.status(200).json({ ok: true, from: next.overrides.slice(-1)[0].from }) : res.status(502).json({ error: "couldn't save (" + r.status + ")" });
+      }
+      const pr = props.find(x => x.id === b.id);
+      if (!pr) return res.status(409).json({ error: "this suggestion is no longer valid — refresh" });
+      if (b.action === "repair.reject") {
+        const r = await save(repair.reject(raw.schedule, pr, nowIso));
+        return r.ok ? res.status(200).json({ ok: true }) : res.status(502).json({ error: "couldn't save (" + r.status + ")" });
+      }
+      if (b.action !== "repair.approve") return res.status(400).json({ error: "unknown action" });
+      const next = repair.approve(raw.schedule, pr, today, nowIso), r = await save(next);
+      if (!r.ok) return res.status(502).json({ error: "couldn't save (" + r.status + ")" });
+      // Into the decision journal, so it gets reviewed in 14 days ("did the new time work?").
+      await db("jeetos_decisions", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ id: "r" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), coach: "head", area: pr.anchor,
+        change: `${pr.label}: ${pr.from_time} → ${pr.to_time} from ${next.overrides.slice(-1)[0].from}`, reason: pr.text.slice(0, 300), evidence: JSON.stringify(pr.evidence).slice(0, 300),
+        expected_outcome: `on time for ${pr.label} most days`, source: "repair", status: "approved", created_at: nowIso, decided_at: nowIso }) });
+      return res.status(200).json({ ok: true, from: next.overrides.slice(-1)[0].from });
     }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
