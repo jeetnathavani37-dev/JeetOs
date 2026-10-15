@@ -10,6 +10,9 @@
 
 const { COACHES, personaPrompt } = require("./_coach-personas");
 const { sendToAll } = require("./_push");
+const { POLICY_V1 } = require("./_penalty");
+// Which coach nudges him when an anchor of his day slips.
+const ANCHOR_COACH = { wake: "sleep", gym: "fitness", breakfast: "nutrition", work: "ronaldo", lunch: "nutrition", snack: "nutrition", leave: "ronaldo", dinner: "nutrition", sleep: "sleep" };
 
 // The jeetos_* tables are open to the app's public key. Env keys are tried
 // first, but an old/rotated one answers 401 — then fall back to the public key.
@@ -133,7 +136,7 @@ async function sendTelegram(coachId, text) {
 
 // Writes one text in a coach's voice, saves it to the inbox (once per coach
 // per slot per day) and forwards it to Telegram.
-async function writeAndSend(coachId, slot, task, shared) {
+async function writeAndSend(coachId, slot, task, shared, opts) {
   const { today, memory, commitments, goals, moments, profile, primary, todayPriority } = shared;
   const since = new Date(Date.now() - 4 * 864e5).toISOString();
   const [recent, past, notes] = await Promise.all([
@@ -144,7 +147,8 @@ async function writeAndSend(coachId, slot, task, shared) {
   const his = commitments.filter(c => c.owner !== "coach");
   const mine = his.filter(c => c.coach === coachId);
   // Things this coach promised to do for him that are due now — the text must deliver them.
-  const ownDue = commitments.filter(c => c.owner === "coach" && c.coach === coachId && c.due <= today);
+  // An anchor alarm is just a ping — it never delivers (or closes) a coach's promise.
+  const ownDue = opts && opts.alarm ? [] : commitments.filter(c => c.owner === "coach" && c.coach === coachId && c.due <= today);
   const myGoals = goals.filter(g => g.coach === coachId);
   const myMoments = moments.filter(m => m.coach === coachId).slice(-8);
   const nick = [...myMoments].reverse().find(m => m.kind === "nickname");
@@ -187,7 +191,7 @@ module.exports = async function handler(req, res) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   const slot = (req.query && req.query.slot) || "evening";
-  if (!SLOT_MOMENT[slot] && slot !== "review") return res.status(400).json({ error: "slot must be morning|afternoon|evening|night|streak|review" });
+  if (!SLOT_MOMENT[slot] && slot !== "review" && slot !== "anchor") return res.status(400).json({ error: "slot must be morning|afternoon|evening|night|streak|review|anchor" });
 
   const today = istIsoDate();
   const [logs, memory, commitments, goals, moments, profileRows, goalState] = await Promise.all([
@@ -204,6 +208,30 @@ module.exports = async function handler(req, res) {
   const shared = { today, memory, commitments, goals, moments, profile: profileRows[0] && profileRows[0].data, primary, todayPriority: gs && gs.today && gs.today.date === today ? gs.today : null };
 
   try {
+    // Anchor alarm: a few minutes after one of his times, if it isn't done yet, the right coach pings him.
+    if (slot === "anchor") {
+      const key = req.query && req.query.anchor, A = POLICY_V1.anchors.list[key];
+      if (!A) return res.status(400).json({ error: "unknown anchor" });
+      const ist = istNow(), day = A.next_day && ist.getUTCHours() < 12 ? istIsoDate(new Date(ist.getTime() - 864e5)) : today;
+      if (A.days && !A.days.includes(new Date(day + "T12:00:00Z").getUTCDay())) return res.status(200).json({ skipped: "not today" });
+      const [done, sick] = await Promise.all([
+        A.kind === "meal" ? supaJson(`jeetos_logs?day=eq.${day}&select=entries_seen`).then(r => !!(r[0] && r[0].entries_seen && r[0].entries_seen[key]))
+          : supaJson(`jeetos_anchor_checkins?day=eq.${day}&anchor=eq.${key}&select=id&limit=1`).then(r => r.length > 0),
+        supaJson(`jeetos_streak_marks?date=eq.${day}&kind=eq.recovery&select=id&limit=1`).then(r => r.length > 0),
+      ]);
+      if (done) return res.status(200).json({ skipped: "already done" });
+      if (sick) return res.status(200).json({ skipped: "recovery day" });
+      const [h, m] = A.time.split(":").map(Number), dl = h * 60 + m + A.ext_min;
+      const hm = mins => { const x = ((mins % 1440) + 1440) % 1440, hh = Math.floor(x / 60), mm = x % 60; return (hh % 12 || 12) + ":" + String(mm).padStart(2, "0") + (hh < 12 ? " AM" : " PM"); };
+      const nowMin = ist.getUTCHours() * 60 + ist.getUTCMinutes(), left = ((dl - nowMin) + 1440) % 1440;
+      const how = A.kind === "meal" ? "log it in the app" : "tap the check-in in the app";
+      const tone = key === "wake" ? "You're his wake-up call: short, energetic, impossible to ignore. Tell him to get up and tap 'Utha ✓'."
+        : key === "sleep" ? "Calm and firm: phone down, lights off, sleep now; tap 'So raha hoon'. No lecture."
+        : "Friendly, direct, one line.";
+      const result = await writeAndSend(ANCHOR_COACH[key], "a_" + key,
+        `It's ${hm(nowMin)}. His own schedule says "${A.label}" at ${hm(h * 60 + m)} and it isn't done yet (he needs to ${how}). ${left > 0 && left <= A.ext_min ? `He's in his ${A.ext_min}-min extension: doing it now uses one of his 5 monthly passes; after ${hm(dl)} it costs ₹100.` : `After ${hm(dl)} it costs ₹100.`} ${tone} 1-2 short lines, Hinglish, no guilt.`, shared, { alarm: true });
+      return res.status(200).json(Object.assign({ anchor: key }, result));
+    }
     // Sunday review: every coach with an active goal sends a 2-line weekly review.
     if (slot === "review") {
       const days = Array.from({ length: 7 }, (_, i) => istDateString(new Date(istNow().getTime() - i * 86400000)));
