@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.16-84";
+const APP_BUILD = "2026.10.16-85";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -10106,6 +10106,7 @@ function JeetOS() {
             React.createElement(CommandCentreCard, null),
             React.createElement(CheckinCard, null),
             React.createElement(GoalGraphCard, null),
+            React.createElement(HabitsCard, null),
             React.createElement(PrimaryGoalCard, { T: T, onChange: () => setStreakTick(t => t + 1) }),
             React.createElement(StreakCard, { T: T, W: W, L: L, checks: checks, onChange: () => setStreakTick(t => t + 1) }),
             React.createElement(AnchorsCard, { T: T }),
@@ -11422,6 +11423,29 @@ function CheckinCard() {
         React.createElement("div", { style: { marginTop: 10 } },
             React.createElement("button", { onClick: submit, disabled: busy, style: { padding: "6px 14px", borderRadius: 10, border: "none", background: T.gold, color: T.ink, fontWeight: 600, fontSize: 12.5, cursor: "pointer" } }, "Done ✓"),
             React.createElement("button", { onClick: () => setLater(true), style: { marginLeft: 8, padding: "6px 12px", borderRadius: 10, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Baad mein")));
+}
+// Habit consistency — 7 and 30-day %, not just streaks. Days with no data
+// are unknown (never counted as misses); recovery days are excused.
+function HabitsCard() {
+    const [d, setD] = React.useState(null);
+    React.useEffect(() => { if (authSession()) fetch("/api/os?action=habits").then(r => r.ok ? r.json() : null).then(x => setD(x)).catch(() => { }); }, []);
+    if (!d || !Array.isArray(d.habits)) return null;
+    const box = { background: T.card, border: "1px solid " + T.border, borderRadius: 16, padding: "12px 16px", marginBottom: 14, fontFamily: "Inter,system-ui,sans-serif" };
+    const col = p => p == null ? T.border2 : p >= 80 ? T.green : p >= 50 ? T.gold : T.red;
+    const b = d.blockers || {};
+    return React.createElement("div", { style: box, "data-testid": "habits-card" },
+        React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold, marginBottom: 6 } }, "📈 CONSISTENCY · 7 DIN (30 DIN)"),
+        d.habits.map(h => { const p7 = h.d7 && h.d7.pct, p30 = h.d30 && h.d30.pct;
+            return React.createElement("div", { key: h.id, "data-testid": "habit-" + h.id, style: { marginBottom: 6 } },
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12, color: T.ivory } },
+                    React.createElement("span", null, h.label),
+                    React.createElement("span", { style: { color: p7 == null ? T.ivoryM : T.ivory } }, (p7 == null ? "data kam" : p7 + "%") + " (" + (p30 == null ? "—" : p30 + "%") + ")" + (h.trend === "up" ? " ↗" : h.trend === "down" ? " ↘" : ""))),
+                React.createElement("div", { style: { position: "relative", height: 5, background: T.ink, borderRadius: 3, marginTop: 3 } },
+                    React.createElement("div", { style: { width: (p7 || 0) + "%", height: 5, background: col(p7), borderRadius: 3 } }),
+                    p30 != null && React.createElement("div", { title: "30 din", style: { position: "absolute", left: "calc(" + p30 + "% - 1px)", top: -2, width: 2, height: 9, background: T.ivoryM } }))); }),
+        Array.isArray(b.reasons) && b.reasons.length > 0 && React.createElement("div", { style: { fontSize: 11, color: T.ivoryM, marginTop: 6 } },
+            "Miss hone ki wajah (tumhare shaam ke jawab): " + b.reasons.map(r => r.what + " ×" + r.times).join(", ")),
+        React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 4 } }, "Jis din data nahi, wo miss nahi gina jaata. Sick days maaf."));
 }
 // Shows the app only to the logged-in owner. Offline with a saved session → the app still opens.
 function AuthGate() {

@@ -19,6 +19,7 @@ const { visibleTo, label, KIND_LABEL } = require("./_memory");
 const { graphHealth } = require("./_goals");
 const { planToday } = require("./_planner");
 const { overlayLog } = require("./_checkin");
+const { habitReport, habitLines } = require("./_habits");
 
 const SUPABASE_URL = "https://qzripzgbstvxkfobzhyv.supabase.co";
 const PUBLIC_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
@@ -95,13 +96,13 @@ function makeDb(env, ownerToken) {
 
 async function loadContextData(q, now) {
   now = now || Date.now();
-  const day = planDay(now), week = addDays(day, -7), month = day.slice(0, 7);
+  const day = planDay(now), since = addDays(day, -31), month = day.slice(0, 7);   // 31 days: habits need a month
   const since4 = new Date(now - 4 * 864e5).toISOString(), since7 = new Date(now - 7 * 864e5).toISOString();
   const keys = ["logs", "checkins", "marks", "openPromises", "closedPromises", "goals", "goalState", "weightGoal", "weighins", "memory", "profile", "notes", "inbox", "passes", "incidents", "disputes", "decisions", "memories", "graph", "dailyCheckins"];
   const rows = await Promise.all([
-    q(`jeetos_logs?day=gte.${week}&select=*&order=day.desc&limit=10`),
-    q(`jeetos_anchor_checkins?day=gte.${week}&select=anchor,day,at,verified&limit=120`),
-    q(`jeetos_streak_marks?date=gte.${week}&select=date,habit,kind,reason&order=date.desc&limit=50`),
+    q(`jeetos_logs?day=gte.${since}&select=*&order=day.desc&limit=35`),
+    q(`jeetos_anchor_checkins?day=gte.${since}&select=anchor,day,at,verified&order=day.desc&limit=320`),
+    q(`jeetos_streak_marks?date=gte.${since}&select=date,habit,kind,reason&order=date.desc&limit=120`),
     q("jeetos_commitments?status=eq.open&select=id,coach,text,due,owner,staked,deadline_at&order=due.asc&limit=40"),
     q(`jeetos_commitments?status=in.(done,missed)&resolved_at=gte.${encodeURIComponent(since7)}&select=coach,text,status,owner,blocker,resolved_at&order=resolved_at.desc&limit=20`),
     q("jeetos_coach_goals?status=eq.active&select=id,coach,text,unit,start_value,target,current_value,deadline,history,focus,created_at&order=created_at.desc&limit=40"),
@@ -118,7 +119,7 @@ async function loadContextData(q, now) {
     q("jeetos_decisions?status=eq.approved&select=coach,area,change,decided_at&order=decided_at.desc&limit=6"),
     q("jeetos_memories?status=in.(active,unconfirmed)&select=id,kind,text,scope,source_type,coach,confidence,status,pending,observed_at,review_after&order=observed_at.desc&limit=80"),
     q("jeetos_goals?status=eq.active&select=id,kind,parent_id,title,owner_coach,metric,target,status,approved_at"),
-    q(`jeetos_daily_checkins?day=gte.${week}&select=day,kind,answers,updated_at&order=day.desc&limit=20`),
+    q(`jeetos_daily_checkins?day=gte.${since}&select=day,kind,answers,updated_at&order=day.desc&limit=70`),
   ]);
   const raw = { failed: [] };
   keys.forEach((k, i) => { if (!Array.isArray(rows[i])) raw.failed.push(k); raw[k] = Array.isArray(rows[i]) ? rows[i] : []; });
@@ -314,7 +315,7 @@ function buildPacket(raw, opts) {
   // Exceptions: sick/recovery marks, rest days, passes.
   const exLines = [];
   const marks = raw.marks || [];
-  const rec = marks.filter(m => m.kind === "recovery");
+  const rec = marks.filter(m => m.kind === "recovery" && String(m.date).slice(0, 10) >= addDays(today, -6));
   if (rec.length) exLines.push(`recovery (sick/injury) days this week: ${[...new Set(rec.map(m => m.date))].join(", ")}${rec.some(m => m.date === today) ? " — TODAY is a recovery day: don't push training or penalties" : ""}`);
   const mins = marks.filter(m => m.kind === "min" && m.date === today);
   if (mins.length) exLines.push(`minimum-version marked today for: ${mins.map(m => m.habit).join(", ")}`);
@@ -377,6 +378,7 @@ function buildPacket(raw, opts) {
   else unknowns.push("no morning check-in yet");
   if (ev) { const a = ev.answers || {}; cLines.push(`last evening check-in (${ago(String(ev.day).slice(0, 10), today)}): done ${(a.done || []).join("; ") || "nothing ticked"}; not done ${(a.not_done || []).join("; ") || "—"}${a.blocker ? `; why: ${a.blocker}${a.blocker_note ? " — " + a.blocker_note : ""}` : ""}${a.tomorrow ? `; he'll change: "${a.tomorrow}"` : ""}`); }
   add("checkins", "CHECK-INS (his own words — use them, don't re-ask)", cLines, 4);
+  add("habits", "HABIT CONSISTENCY (% of days with data; missing days are unknown, not misses)", habitLines(habitReport(raw, today)), 6);
   const plan = todayPlan(raw, now, anchors);
   add("plan", "TODAY'S PLAN (computed — don't invent other time slots)", plan.top3.map((t, i) => `${i + 1}. ${t.title} — ${t.why}`).concat(plan.changes.map(c => "changed: " + c.text)), 2);
   const na = nextAction(raw, anchors, now, today);
