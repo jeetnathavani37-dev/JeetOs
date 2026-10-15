@@ -399,3 +399,12 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 -- RLS: owner select/insert/update; no delete for anon/authenticated (retract is a status).
 -- Writes go through api/os.js (rules in api/_memory.js). Read by api/_context.js.
 -- Migrated: 7 profile items + 2 team-memory facts → source_type 'migrated'.
+
+-- ── Goal graph (2026-10-16) ────────────────────────────────────────────
+-- jeetos_goals: id (fixed slug), kind primary|supporting, parent_id (supporting → primary,
+--   enforced by a check), title, why, owner_coach, metric (weight / diet_kcal / gym_days /
+--   sleep_window / weighin_weekly), target jsonb, status active|cancelled|done, approved_at.
+-- jeetos_goal_events: append-only audit (approve / cancel / target / resume / done).
+-- RLS owner select/insert/update; no deletes. Nothing exists until Jeet approves the
+-- proposal (api/os.js goals.approve). Health is computed (api/_goals.js), never stored:
+-- on_track / behind / at_risk / unknown; an at-risk supporting goal only flags the primary.
