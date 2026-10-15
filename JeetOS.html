@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.15-78";
+const APP_BUILD = "2026.10.16-79";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -873,6 +873,7 @@ async function callBackendAI(sys, msgs, max, provider, opts) {
             provider,
             tier: opts && opts.tier,
             effort: opts && opts.effort,
+            context: opts && opts.context,
         })
     });
     const d = await r.json().catch(() => ({}));
@@ -8602,7 +8603,7 @@ function SmartChat({ id, coach, CH, setCH, T, viewDay, L, W, pendingAsk, onConsu
             const src = newHistUser.filter(m => !m.error).slice(-20);
             const aiMsgs = stampMsgs(src, src.map(m => (m.image || m.imageKey) ? { role: m.role, content: m.content === "📷" ? "[sent a photo]" : "[sent a photo] " + m.content } : { role: m.role, content: m.content }));
             if (pic) aiMsgs[aiMsgs.length - 1] = { role: "user", content: "[" + stampTime(userMsg.ts) + "] " + (msg.trim() || "(sent a photo)"), image: pic.full };
-            const raw = await ai(fullSys, aiMsgs, 1500, safety ? { tier: "pro", effort: "medium" } : coachBrain(msg, !!pic));
+            const raw = await ai(fullSys, aiMsgs, 1500, Object.assign({ context: { coach: coach.id, purpose: "chat" } }, safety ? { tier: "pro", effort: "medium" } : coachBrain(msg, !!pic)));
             const reply = processCoachReply(raw, id);
             if (reply.milestone) { setMilestone(reply.milestone); setTimeout(() => setMilestone(null), 3200); }
             // With voice on, the coach starts talking as the first text lands.
@@ -10563,7 +10564,7 @@ function JeetOS() {
             React.createElement("div", { style: { padding: "12px 20px" } },
                 React.createElement(GroupEntryCard, { T: T, CH: CH, onOpen: () => setScreen("group") }),
                 React.createElement(PushCard, { T: T }),
-                React.createElement(AccountCard, null),
+                React.createElement(AccountCard, null), React.createElement(TeamContextPeek, null),
                 React.createElement(MasterPlanCard, { T: T, onOpen: () => setPlanOpen(true) }),
                 planOpen && React.createElement(MasterPlanSheet, { T: T, onClose: () => setPlanOpen(false) }),
                 React.createElement(FocusBoardCard, { T: T, onOpen: () => setFocusOpen(true) }),
@@ -11165,6 +11166,32 @@ function AccountCard() {
     return React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "10px 16px", marginBottom: 16, fontFamily: "Inter,system-ui,sans-serif" } },
         React.createElement("div", { style: { fontSize: 12, color: T.ivoryM } }, "🔐 " + (s.user.email || "Logged in"), srvText && React.createElement("div", { style: { fontSize: 10.5, marginTop: 3, color: srv === "ok" ? T.green : T.gold } }, srvText)),
         React.createElement("button", { onClick: () => { if (confirm("Logout karna hai? Data phone pe safe rahega.")) signOut(); }, style: { padding: "6px 12px", borderRadius: 10, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Logout"));
+}
+// "What does a coach actually see?" — the shared team context the server builds
+// for each coach (api/_context.js), shown as-is so nothing is hidden from him.
+const CONTEXT_COACHES = [["head", "Head Coach"], ["fitness", "Marcus"], ["nutrition", "Maya"], ["sleep", "Dr. Sam"], ["ronaldo", "Cristiano"], ["mind", "Dr. Meher"], ["skin", "Dr. Aria"], ["hair", "Kai"], ["style", "Lex"], ["grooming", "Blade"]];
+function TeamContextPeek() {
+    const [open, setOpen] = React.useState(false);
+    const [coach, setCoach] = React.useState("head");
+    const [pk, setPk] = React.useState(null);
+    const [err, setErr] = React.useState("");
+    React.useEffect(() => {
+        if (!open) return;
+        setPk(null); setErr("");
+        fetch("/api/ai?context=" + coach).then(r => r.json().then(d => r.ok ? setPk(d) : setErr(d.error || "error " + r.status))).catch(() => setErr("Offline — server se nahi mila"));
+    }, [open, coach]);
+    const box = { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "10px 16px", marginBottom: 16, fontFamily: "Inter,system-ui,sans-serif" };
+    if (!open) return React.createElement("button", { onClick: () => setOpen(true), style: Object.assign({}, box, { width: "100%", textAlign: "left", color: T.ivoryM, fontSize: 12, cursor: "pointer" }) }, "🧠 Coach kya dekh raha hai? (shared team context)");
+    return React.createElement("div", { style: box },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
+            React.createElement("select", { "aria-label": "Coach", value: coach, onChange: e => setCoach(e.target.value), style: { background: T.ink, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "4px 8px", fontSize: 12 } },
+                CONTEXT_COACHES.map(([id, n]) => React.createElement("option", { key: id, value: id }, n))),
+            React.createElement("button", { onClick: () => setOpen(false), style: { background: "transparent", border: "none", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Band karo")),
+        err ? React.createElement("div", { style: { fontSize: 12, color: T.gold } }, err)
+            : !pk ? React.createElement("div", { style: { fontSize: 12, color: T.ivoryM } }, "Load ho raha hai…")
+                : React.createElement(React.Fragment, null,
+                    React.createElement("div", { style: { fontSize: 12.5, color: T.ivory, marginBottom: 6 } }, "👉 " + pk.nextAction),
+                    React.createElement("pre", { "data-testid": "team-context", style: { whiteSpace: "pre-wrap", fontSize: 10.5, lineHeight: 1.45, color: T.ivoryM, maxHeight: 320, overflow: "auto", margin: 0 } }, pk.text)));
 }
 // Shows the app only to the logged-in owner. Offline with a saved session → the app still opens.
 function AuthGate() {
