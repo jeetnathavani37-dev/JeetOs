@@ -7,12 +7,15 @@
 //   POST { action: "go_live", confirm: "LIVE" }    → real-money mode (new policy version from now)
 //   POST { action: "dues" | "settle_start" }      → what's owed (live entries − paid) / pay it
 //   POST { action: "plan_rest" | "cancel_rest", date } → plan a gym rest day (monthly pass) ahead
+//   POST { action: "evidence", date, proof_key, vault_key, sha256 } → record a proof photo's arrival
+//   POST { action: "dispute", incident_id, category, reason, photo? } → pause the fine, AI review, rules decide
 //   POST { action: "set_payee" | "pay_test_start" | "pay_report" | "pay_cancel" } → manual UPI
 //        (₹1 test to the charity; he pays in his own UPI app; status is self-reported)
 // The client can only read the ledger; every write happens here with the
 // server key, and amounts come only from api/_penalty.js.
 const { requireOwner, SUPABASE_URL } = require("./_auth");
-const { POLICY_V1, plan, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras } = require("./_penalty");
+const { POLICY_V1, plan, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, disputeOutcome } = require("./_penalty");
+const crypto = require("crypto");
 const { sendToAll } = require("./_push");
 
 const KEY = () => (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "").trim();
@@ -41,11 +44,13 @@ async function dues() {
   const live = await db("jeetos_penalty_policies?mode=eq.live&select=version");
   const vers = (live || []).map(p => p.version);
   if (!vers.length) return { live: false, assessed_paise: 0, paid_paise: 0, dues_paise: 0 };
-  const [ent, pays] = await Promise.all([
-    db(`jeetos_penalty_entries?policy_version=in.(${vers.join(",")})&select=amount_paise&limit=10000`),
+  const [ent, pays, disputed] = await Promise.all([
+    db(`jeetos_penalty_entries?policy_version=in.(${vers.join(",")})&select=incident_id,amount_paise&limit=10000`),
     db("jeetos_payments?kind=eq.settlement&status=in.(reported_paid,verified)&select=amount_paise"),
+    db("jeetos_penalty_incidents?status=eq.disputed&select=id"),
   ]);
-  const assessed = ent.reduce((a, e) => a + Number(e.amount_paise), 0), paid = pays.reduce((a, x) => a + Number(x.amount_paise), 0);
+  const paused = new Set((disputed || []).map(i => i.id));   // a disputed fine isn't owed until it's decided
+  const assessed = ent.filter(e => !paused.has(e.incident_id)).reduce((a, e) => a + Number(e.amount_paise), 0), paid = pays.reduce((a, x) => a + Number(x.amount_paise), 0);
   return { live: true, assessed_paise: assessed, paid_paise: paid, dues_paise: Math.max(0, assessed - paid) };
 }
 // For _push.sendToAll, which expects a fetch-style helper.
@@ -111,6 +116,33 @@ async function runEngine(now = Date.now()) {
   }
 }
 
+
+// ── Dispute review (AI recommends, the rules above decide) ──
+const REVIEW_MODEL = (process.env.CLAUDE_CHAT_MODEL || "claude-sonnet-5-5").trim();
+async function reviewDispute(ctx, image) {
+  const key = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY || "").trim();
+  if (!key) return null;
+  const system = `You review a disputed entry in Jeet's personal accountability ledger (JeetOS). You are a fair reviewer of evidence, not a judge of his character.
+Return ONLY JSON: {"recommendation":"uphold"|"reject"|"need_more","why":"1-3 short lines in simple Hinglish","evidence_used":["..."]}.
+Rules:
+- uphold when the records or the photo plausibly show he did it in time; when a technical/sync/app problem is plausible (e.g. logged on the phone in time but synced late, app outage, upload failed); when he was genuinely ill or injured on a gym/diet/sleep day (his self-report is accepted — remind him to mark a recovery day next time); or when the rule was applied to the wrong day/data.
+- reject ONLY when the records clearly contradict his claim. Never reject because it "sounds like an excuse", because he has disputed before, or for tone. Say exactly what evidence would change the outcome.
+- need_more when one specific piece of evidence would decide it; name it.
+- A photo shows what it shows — don't claim certainty beyond it (it can't prove reps, calories or timing by itself). Missing photo is not proof he didn't do it.
+- Never mention amounts other than those in the data. Never shame.`;
+  const content = [{ type: "text", text: JSON.stringify(ctx, null, 1).slice(0, 12000) }];
+  if (image) { const m = /^data:(image\/(?:jpeg|png|webp|gif));base64,(.+)$/.exec(image); if (m) content.unshift({ type: "image", source: { type: "base64", media_type: m[1], data: m[2] } }); }
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", { method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: REVIEW_MODEL, max_tokens: 1200, system, messages: [{ role: "user", content }] }) });
+    const d = await r.json().catch(() => ({}));
+    const text = r.ok && Array.isArray(d.content) ? d.content.filter(b => b.type === "text").map(b => b.text).join("") : "";
+    const m = text.match(/\{[\s\S]*\}/);
+    return m ? JSON.parse(m[0]) : null;
+  } catch (_) { return null; }
+}
+
 module.exports = async function handler(req, res) {
   if (!KEY()) return res.status(503).json({ error: "Server key missing — add SUPABASE_SERVICE_ROLE_KEY in Vercel" });
   try {
@@ -174,6 +206,65 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
     if (action === "dues") return res.status(200).json(await dues());
+
+    // Proof photo evidence: the photo itself is encrypted in his vault; the server records when it arrived.
+    if (action === "evidence") {
+      const { date, proof_key, vault_key, sha256 } = req.body || {};
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "") || !/^[a-z0-9_]{1,40}$/i.test(proof_key || "") || !/^[0-9a-f]{64}$/.test(sha256 || "")) return res.status(400).json({ error: "bad evidence" });
+      const id = "ev_" + sha256.slice(0, 24);
+      await db("jeetos_evidence?on_conflict=id", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
+        body: JSON.stringify({ id, kind: "proof_photo", day: date, proof_key, vault_key: String(vault_key || "").slice(0, 120) || null, sha256 }) });
+      return res.status(200).json({ ok: true, id });
+    }
+
+    // Dispute: pauses the fine at once, then an AI review recommends and the rules decide.
+    if (action === "dispute") {
+      const { incident_id, category, reason, photo, vault_key } = req.body || {};
+      const cats = ["tech_issue", "did_it", "wrong_data", "ill", "other"];
+      if (!cats.includes(category)) return res.status(400).json({ error: "Wajah ka type chuno" });
+      if (String(reason || "").trim().length < 10) return res.status(400).json({ error: "Thoda detail mein likho kya hua (10+ characters)" });
+      if (photo && (typeof photo !== "string" || photo.length > 3e6 || !/^data:image\//.test(photo))) return res.status(400).json({ error: "Photo sahi nahi hai" });
+      const [inc] = await db(`jeetos_penalty_incidents?id=eq.${encodeURIComponent(incident_id || "")}&select=*`) || [];
+      if (!inc) return res.status(404).json({ error: "Ye entry nahi mili" });
+      const prior = await db(`jeetos_disputes?incident_id=eq.${encodeURIComponent(inc.id)}&select=id,status,category,reason,review,prev_status,created_at&order=created_at.asc`);
+      if (prior.some(d => d.status === "open")) return res.status(409).json({ error: "Is par ek dispute pehle se chal raha hai" });
+      if (prior.length >= 2) return res.status(409).json({ error: "Is entry par 2 baar dispute ho chuka — ab ye final hai" });
+      const id = "dp_" + now.toString(36) + crypto.randomBytes(3).toString("hex");
+      const prevStatus = inc.status === "disputed" ? (prior.length ? prior[prior.length - 1].prev_status : "resolved") : inc.status;
+      const dispute = { id, incident_id: inc.id, category, reason: String(reason).trim().slice(0, 1000), prev_status: prevStatus, status: "open" };
+      await db("jeetos_disputes", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(dispute) });
+      await db(`jeetos_penalty_incidents?id=eq.${encodeURIComponent(inc.id)}`, { method: "PATCH", body: JSON.stringify({ status: "disputed", updated_at: new Date(now).toISOString() }) });
+      await audit("dispute", id, "opened", { incident_id: inc.id, category, prev_status: prevStatus }, "owner");
+      let evId = null;
+      if (photo) {
+        const sha = crypto.createHash("sha256").update(photo).digest("hex");
+        evId = "ev_" + sha.slice(0, 24);
+        await db("jeetos_evidence?on_conflict=id", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
+          body: JSON.stringify({ id: evId, kind: "dispute_photo", day: (inc.detail && inc.detail.date) || null, vault_key: String(vault_key || "").slice(0, 120) || null, sha256: sha, incident_id: inc.id, dispute_id: id }) });
+      }
+      // Everything the reviewer may look at.
+      const day = (inc.detail && inc.detail.date) || null;
+      const [ents, evid, logRow, commit] = await Promise.all([
+        db(`jeetos_penalty_entries?incident_id=eq.${encodeURIComponent(inc.id)}&select=*&order=id.asc`),
+        day ? db(`jeetos_evidence?day=eq.${day}&select=kind,proof_key,received_at`) : Promise.resolve([]),
+        day ? db(`jeetos_logs?day=eq.${day}&select=gym_done,total_cal,junk_meals,sleep_hours,bedtime,entries,entries_seen`) : Promise.resolve([]),
+        inc.commitment_id ? db(`jeetos_commitments?id=eq.${encodeURIComponent(inc.commitment_id)}&select=text,due,deadline_at,agreed_at,status,done_at,resolved_at`) : Promise.resolve([]),
+      ]);
+      const review = await reviewDispute({
+        incident: { title: inc.title, category: inc.category, status_before: prevStatus, detail: inc.detail },
+        assessed: ents.filter(e => e.kind !== "reversal").map(e => ({ date: e.local_date, amount: rupees(Number(e.amount_paise)), why: e.calc && e.calc.why, checkpoint: e.calc && e.calc.checkpoint })),
+        dispute: { type: category, his_words: dispute.reason, attempt: prior.length + 1, earlier: prior.map(d => ({ type: d.category, outcome: d.status, why: d.review && d.review.why })) },
+        records_that_day: logRow[0] || null, proof_photos_that_day: evid, promise: commit[0] || null, photo_attached: !!photo,
+      }, photo);
+      const out = disputeOutcome(review, dispute, ents, istDate(now));
+      if (out.reversals.length) await db("jeetos_penalty_entries?on_conflict=incident_id,kind,local_date", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify(out.reversals) });
+      if (out.releasePass) await db(`jeetos_allowance_uses?incident_id=eq.${encodeURIComponent(inc.id)}&status=eq.used`, { method: "PATCH", body: JSON.stringify({ status: "released", released_at: new Date(now).toISOString() }) });
+      await db(`jeetos_penalty_incidents?id=eq.${encodeURIComponent(inc.id)}`, { method: "PATCH", body: JSON.stringify({ status: out.incident, updated_at: new Date(now).toISOString() }) });
+      await db(`jeetos_disputes?id=eq.${id}`, { method: "PATCH", body: JSON.stringify({ status: out.dispute, review: Object.assign({}, review || { error: "review unavailable — fine stays paused" }, { prev_status: prevStatus, model: REVIEW_MODEL }), decided_at: out.dispute === "open" ? null : new Date(now).toISOString() }) });
+      if (evId) await db(`jeetos_evidence?id=eq.${evId}`, { method: "PATCH", body: JSON.stringify({ status: out.dispute === "upheld" ? "accepted" : out.dispute === "rejected" ? "rejected" : "insufficient", ai_analysis: review }) }).catch(() => {});
+      await audit("dispute", id, out.dispute, { incident_id: inc.id, recommendation: review && review.recommendation, why: review && review.why, reversed_paise: out.reversals.reduce((a, r) => a - r.amount_paise, 0) }, "review");
+      return res.status(200).json({ ok: true, dispute_id: id, outcome: out.dispute, why: review && review.why, reversed: rupees(out.reversals.reduce((a, r) => a - r.amount_paise, 0)) });
+    }
     // Plan a gym rest day ahead (uses one of the month's 7 passes) or cancel an unused one.
     if (action === "plan_rest" || action === "cancel_rest") {
       const policy = await activePolicy();

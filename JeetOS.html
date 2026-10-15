@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.15-74";
+const APP_BUILD = "2026.10.15-75";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -2559,6 +2559,36 @@ YOU'RE TEXTING HIM FIRST to protect his streak (🔥 ${s.current} days). It's ev
         return { coach: coach.id, parts: r.parts };
     } catch (_a) { store.set("jos_streak_rescue", null); return null; }
 }
+// ── EVIDENCE: proof photos kept for good ────────────────────────────────
+// The photo goes into the encrypted vault (putPhoto backs it up); the server records
+// when it arrived (sha256 only, never the image). Local card proofs are still pruned
+// after 14 days, the vault copy stays.
+async function sha256Hex(text) {
+    const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+const PROOF_DONE = "jos_proof_recorded";
+async function recordProof(dateStr, proofKey, dataUrl) {
+    if (!dataUrl || !authSession()) return false;
+    const iso = localIsoDate(new Date(dateStr)), vk = "proof:" + iso + ":" + proofKey;
+    try {
+        const sha = await sha256Hex(dataUrl);
+        const done = store.get(PROOF_DONE) || [];
+        if (done.includes(sha)) return true;
+        await putPhoto(vk, dataUrl);
+        await ledgerAction({ action: "evidence", date: iso, proof_key: proofKey, vault_key: vk, sha256: sha });
+        store.set(PROOF_DONE, done.concat([sha]).slice(-500));
+        return true;
+    } catch (_a) { return false; }
+}
+// Proof photos taken before this existed (still on the phone) get recorded once.
+async function backfillProofs() {
+    const keys = Object.keys(localStorage).filter(k => k.indexOf("jos_cardproof_") === 0);
+    for (const k of keys) {
+        const day = k.slice("jos_cardproof_".length), obj = store.get(k) || {};
+        for (const pk of Object.keys(obj)) await recordProof(day, pk, obj[pk]);
+    }
+}
 // ── ACCOUNTABILITY LEDGER (simulation) ─────────────────────────────────
 // Amounts are decided only by the server rules engine (api/_penalty.js).
 // The app and the coaches can read the ledger; nobody here can write it.
@@ -2672,6 +2702,46 @@ function PassesRow({ T, l, act, busy }) {
                 next.map(d => React.createElement("option", { key: d, value: d }, new Date(d).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })))),
             React.createElement("button", { disabled: !pick || !!busy, onClick: () => { act("rest", { action: "plan_rest", date: pick }); setPick(""); }, style: { fontSize: 12, padding: "6px 10px", borderRadius: 8, border: "none", background: pick ? T.goldG : T.card2, color: pick ? "#1A1408" : T.ivoryD, fontWeight: 700, cursor: "pointer" } }, "Plan")));
 }
+// Dispute a fine: pauses it at once; an AI review recommends and the server's rules decide.
+const DISPUTE_TYPES = [["did_it", "Maine kiya tha"], ["tech_issue", "App / sync problem"], ["wrong_data", "Data galat hai"], ["ill", "Bimar / injury tha"], ["other", "Kuch aur"]];
+function DisputeForm({ T, incident, onDone, onCancel }) {
+    const font = "Inter,system-ui,sans-serif";
+    const [cat, setCat] = React.useState("did_it");
+    const [why, setWhy] = React.useState("");
+    const [photo, setPhoto] = React.useState(null);
+    const [busy, setBusy] = React.useState(false);
+    const [res, setRes] = React.useState(null);
+    const pick = e => {
+        const f = e.target.files && e.target.files[0];
+        if (!f) return;
+        const rd = new FileReader();
+        rd.onload = ev => { const img = new Image(); img.onload = () => { const m = 900, sc = Math.min(1, m / Math.max(img.width, img.height)); const c = document.createElement("canvas"); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); setPhoto(c.toDataURL("image/jpeg", 0.7)); }; img.src = ev.target.result; };
+        rd.readAsDataURL(f);
+    };
+    const send = async () => {
+        setBusy(true); setRes(null);
+        try {
+            let vk = null;
+            if (photo) { vk = "dispute:" + incident.id.replace(/[^A-Za-z0-9:_-]/g, "_") + ":" + Date.now(); await putPhoto(vk, photo); }
+            const d = await ledgerAction({ action: "dispute", incident_id: incident.id, category: cat, reason: why, photo: photo || undefined, vault_key: vk || undefined });
+            setRes(d); if (onDone) onDone(d);
+        } catch (e) { setRes({ error: e.message }); }
+        setBusy(false);
+    };
+    const label = { upheld: "✅ Dispute maana gaya — fine wapas (" + ((res && res.reversed) || "") + ")", rejected: "❌ Dispute nahi maana gaya", need_more: "📎 Aur evidence chahiye", open: "⏸ Fine abhi ruka hua hai — review baad mein hoga" };
+    const inp = { width: "100%", boxSizing: "border-box", background: T.card2, border: "1px solid " + T.border2, borderRadius: 10, color: T.ivory, fontSize: 16, fontFamily: font, padding: "8px 10px", marginBottom: 8 };
+    return React.createElement("div", { style: { background: T.card2, borderRadius: 12, padding: 10, margin: "6px 0 8px" } },
+        res && !res.error ? React.createElement("div", { style: { fontSize: 12.5, color: T.ivory, lineHeight: 1.5 } }, label[res.outcome] || res.outcome, res.why && React.createElement("div", { style: { color: T.ivoryM, marginTop: 4 } }, res.why), React.createElement("button", { onClick: onCancel, style: { marginTop: 8, fontSize: 12, padding: "5px 10px", borderRadius: 8, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM } }, "Theek hai"))
+        : React.createElement("div", null,
+            React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryD, marginBottom: 6 } }, "Dispute daalte hi ye fine ruk jaata hai. Sach likho — AI sirf records aur evidence dekhega; ek entry par max 2 baar."),
+            React.createElement("select", { value: cat, onChange: e => setCat(e.target.value), style: inp }, DISPUTE_TYPES.map(([v, l]) => React.createElement("option", { key: v, value: v }, l))),
+            React.createElement("textarea", { value: why, onChange: e => setWhy(e.target.value), rows: 3, placeholder: "Kya hua? (jaise: 7 baje gym gaya tha, net nahi tha toh sync nahi hua)", style: inp }),
+            React.createElement("label", { style: { fontSize: 12, color: T.ivoryM, display: "block", marginBottom: 8 } }, photo ? "📷 Photo lag gayi ✓ " : "📷 Proof photo (optional): ", React.createElement("input", { type: "file", accept: "image/*", onChange: pick, style: { fontSize: 11 } })),
+            res && res.error && React.createElement("div", { style: { fontSize: 12, color: T.red, marginBottom: 6 } }, "⚠️ " + res.error),
+            React.createElement("div", { style: { display: "flex", gap: 8 } },
+                React.createElement("button", { onClick: send, disabled: busy || why.trim().length < 10, style: { padding: "7px 12px", borderRadius: 10, border: "none", background: why.trim().length >= 10 ? T.goldG : T.card, color: why.trim().length >= 10 ? "#1A1408" : T.ivoryD, fontWeight: 700, fontSize: 12.5 } }, busy ? "Review ho raha hai…" : "Dispute bhejo"),
+                React.createElement("button", { onClick: onCancel, style: { padding: "7px 12px", borderRadius: 10, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM, fontSize: 12.5 } }, "Rehne do"))));
+}
 function LedgerCard({ T, onChange }) {
     const font = "Inter,system-ui,sans-serif";
     const [l, setL] = React.useState(ledgerCache());
@@ -2679,7 +2749,8 @@ function LedgerCard({ T, onChange }) {
     const [busy, setBusy] = React.useState("");
     const [msg, setMsg] = React.useState("");
     const [tick, setTick] = React.useState(0);
-    React.useEffect(() => { loadLedger().then(setL); syncCommitments().then(() => setTick(x => x + 1)); }, []);
+    const [disputing, setDisputing] = React.useState(null);
+    React.useEffect(() => { loadLedger().then(setL); syncCommitments().then(() => setTick(x => x + 1)); backfillProofs(); }, []);
     const act = async (key, body, after) => {
         setBusy(key); setMsg("");
         try { const d = await ledgerAction(body); if (after) after(d); await syncCommitments(); setL(await loadLedger()); setTick(x => x + 1); if (onChange) onChange(); }
@@ -2726,14 +2797,20 @@ function LedgerCard({ T, onChange }) {
         ((l && l.incidents) || []).slice(0, 8).map(i => {
             const sum = ((l && l.entries) || []).filter(e => e.incident_id === i.id).reduce((a, e) => a + (+e.amount_paise || 0), 0);
             const last = ((l && l.entries) || []).find(e => e.incident_id === i.id);
-            return row(i.title || i.id, React.createElement("span", { style: { fontSize: 12, color: sum ? T.gold : T.ivoryD } }, sum ? paiseText(sum) : i.status === "review" ? "review" : i.status === "overlap_suppressed" ? "₹0 (dup)" : "₹0"), "i" + i.id, (last && last.calc && last.calc.why) || (i.detail && i.detail.why) || i.status);
+            const canDispute = (sum > 0 || i.status === "allowance" || i.status === "review") && i.status !== "disputed";
+            const right = React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
+                React.createElement("span", { style: { fontSize: 12, color: sum ? T.gold : T.ivoryD } }, i.status === "disputed" ? "⏸ dispute" : sum ? paiseText(sum) : i.status === "review" ? "review" : i.status === "allowance" ? "pass" : i.status === "excused" ? "maaf" : i.status === "overlap_suppressed" ? "₹0 (dup)" : "₹0"),
+                canDispute && React.createElement("button", { onClick: () => setDisputing(disputing === i.id ? null : i.id), style: { fontSize: 10.5, padding: "3px 7px", borderRadius: 7, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryD, cursor: "pointer" } }, "Dispute"));
+            return React.createElement(React.Fragment, { key: "i" + i.id },
+                row(i.title || i.id, right, "r" + i.id, (last && last.calc && last.calc.why) || (i.detail && i.detail.why) || i.status),
+                disputing === i.id && React.createElement(DisputeForm, { T: T, incident: i, onDone: () => loadLedger().then(setL), onCancel: () => setDisputing(null) }));
         }),
         React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" } }, btn("Abhi check karo", () => act("run", { action: "run" }), "run"),
             l.policy.mode !== "live" && btn("🔴 Asli paise mode ON", () => {
                 const t = prompt("Ab se lagne wale fines ASLI paise mein " + ((l.payee && l.payee.name) || "charity") + " ko dene honge (tum khud UPI se pay karoge, har Sunday).\nCaps: ₹1,750 per promise · ₹1,000 per din · ₹5,000 per mahina.\nSimulation ke purane fines payable nahi honge, aur pehle stake kiye promises dobara stake karne honge.\n\nPakka? Confirm ke liye LIVE type karo:");
                 if (t === "LIVE") act("live", { action: "go_live", confirm: "LIVE" });
             }, "live")),
-        React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD, marginTop: 8, lineHeight: 1.4 } }, "Amount sirf rules engine tay karta hai. Galat lage toh coach ko bolo — dispute ka button agle update mein aa raha hai."));
+        React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryD, marginTop: 8, lineHeight: 1.4 } }, "Amount sirf rules engine tay karta hai. Koi fine galat lage toh uske saamne \"Dispute\" dabao — tab tak wo ruk jaata hai."));
     if (open) body = React.createElement("div", null, body, React.createElement(PaymentBox, { T: T, l: l, act: act, busy: busy }));
     return React.createElement("div", { style: { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "12px 16px", marginBottom: 16, fontFamily: font } },
         head, body, msg && React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 8 } }, msg));
@@ -9139,6 +9216,7 @@ function JeetOS() {
                 }
                 setCardProofs(up);
                 showToast("Proof saved ✓");
+                recordProof(dateKey, key, dataUrl);
             };
             img.onerror = () => showToast("Couldn't read photo — try again");
             img.src = ev.target.result;

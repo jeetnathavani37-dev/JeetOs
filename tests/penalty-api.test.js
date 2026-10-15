@@ -5,7 +5,7 @@ const DB = { jeetos_penalty_policies: [], jeetos_penalty_incidents: [], jeetos_p
   jeetos_commitments: [
     { id: 'c1', coach: 'fitness', text: 'Send deck', due: '2026-10-20', status: 'open', owner: 'jeet', staked: false },
     { id: 'c2', coach: 'sleep', text: 'Coach checks sleep', due: '2026-10-20', status: 'open', owner: 'coach', staked: false }],
-  jeetos_logs: [], jeetos_streak_marks: [], jeetos_allowance_uses: [] };
+  jeetos_logs: [], jeetos_streak_marks: [], jeetos_allowance_uses: [], jeetos_disputes: [], jeetos_evidence: [] };
 let seq = 1, keysUsed = new Set();
 function filt(rows, qs) {
   return rows.filter(r => [...qs.entries()].every(([k, v]) => {
@@ -19,6 +19,7 @@ global.fetch = async (url, init = {}) => {
   const u = new URL(url), auth = init.headers && init.headers.Authorization;
   const j = (b, st = 200) => ({ ok: st < 300, status: st, json: async () => b, text: async () => JSON.stringify(b) });
   if (u.pathname.endsWith('rpc/jeetos_is_owner')) return j(auth === 'Bearer h.p.owner');
+  if (u.hostname === 'api.anthropic.com') { global.reviewCalls = (global.reviewCalls || []).concat([JSON.parse(init.body)]); return j({ content: [{ type: 'text', text: JSON.stringify(global.nextReview) }] }); }
   if (u.pathname.endsWith('rpc/jeetos_use_allowance') || u.pathname.endsWith('rpc/jeetos_release_allowance')) {
     const a = JSON.parse(init.body); DB.jeetos_allowance_uses = DB.jeetos_allowance_uses || [];
     const U = DB.jeetos_allowance_uses, live = U.filter(x => x.status === 'used');
@@ -180,4 +181,43 @@ const RealNow = Date.now;
   const n = DB.jeetos_penalty_entries.length, uses = DB.jeetos_allowance_uses.filter(x => x.status === 'used').length;
   await call({ method: 'GET', headers: { authorization: 'Bearer cron' } });
   ok('passes: re-run → no extra passes or fines', DB.jeetos_penalty_entries.length === n && DB.jeetos_allowance_uses.filter(x => x.status === 'used').length === uses);
+})();
+
+// ── Phase 3: evidence + disputes through the API ──
+(async () => {
+  await new Promise(r => setTimeout(r, 1200));
+  process.env.ANTHROPIC_API_KEY = 'sk-test';
+  Date.now = () => Date.parse('2026-11-12T12:00:00+05:30');
+  let r = await call({ method: 'POST', headers: owner, body: { action: 'evidence', date: '2026-11-10', proof_key: 'workout', vault_key: 'proof:2026-11-10:workout', sha256: 'a'.repeat(64) } });
+  ok('evidence: proof photo arrival recorded (hash only)', r.c === 200 && DB.jeetos_evidence.length === 1 && DB.jeetos_evidence[0].kind === 'proof_photo' && !('photo' in DB.jeetos_evidence[0]));
+  const fined = DB.jeetos_penalty_incidents.find(i => i.id === 'gym:2026-11-10');
+  const before = DB.jeetos_penalty_entries.filter(e => e.incident_id === fined.id).length;
+  r = await call({ method: 'POST', headers: owner, body: { action: 'dispute', incident_id: fined.id, category: 'did_it', reason: 'short' } });
+  ok('dispute: needs a real explanation', r.c === 400);
+  global.nextReview = { recommendation: 'reject', why: 'koi workout log ya proof nahi hai us din' };
+  r = await call({ method: 'POST', headers: owner, body: { action: 'dispute', incident_id: fined.id, category: 'did_it', reason: 'gym gaya tha shaam 7 baje, tick karna bhool gaya' } });
+  ok('dispute 1 rejected → back to resolved, fine stays', r.b.outcome === 'rejected' && fined.status === 'resolved' && DB.jeetos_penalty_entries.filter(e => e.incident_id === fined.id).length === before);
+  ok('dispute: reviewer saw the proof photos list and his words', /proof_photos_that_day/.test(JSON.stringify(global.reviewCalls.slice(-1)[0])) && /bhool gaya/.test(JSON.stringify(global.reviewCalls.slice(-1)[0])));
+  global.nextReview = { recommendation: 'uphold', why: 'gym ki photo 7:40 PM ki hai, us din ka workout dikhta hai' };
+  r = await call({ method: 'POST', headers: owner, body: { action: 'dispute', incident_id: fined.id, category: 'did_it', reason: 'ye rahi gym ki photo, 7:40 baje ki', photo: 'data:image/jpeg;base64,/9j/AAAA' } });
+  const ents = DB.jeetos_penalty_entries.filter(e => e.incident_id === fined.id);
+  ok('dispute 2 upheld → reversal row added, original kept, excused', r.b.outcome === 'upheld' && fined.status === 'excused' && ents.length === before + 1 && ents.some(e => e.kind === 'reversal' && e.amount_paise === -25000));
+  ok('dispute: photo went to the reviewer as an image', global.reviewCalls.slice(-1)[0].messages[0].content.some(c => c.type === 'image'));
+  r = await call({ method: 'POST', headers: owner, body: { action: 'dispute', incident_id: fined.id, category: 'other', reason: 'ek aur baar try karte hain' } });
+  ok('dispute: max 2 per entry', r.c === 409);
+  // a pass-covered day disputed as illness → pass comes back
+  const passInc = DB.jeetos_penalty_incidents.find(i => i.id === 'gym:2026-11-02');
+  global.nextReview = { recommendation: 'uphold', why: 'bukhaar tha — agli baar recovery mark karna' };
+  r = await call({ method: 'POST', headers: owner, body: { action: 'dispute', incident_id: passInc.id, category: 'ill', reason: 'us din 102 bukhaar tha, bed par tha' } });
+  ok('dispute: illness on a pass day → pass released', r.b.outcome === 'upheld' && DB.jeetos_allowance_uses.find(u => u.incident_id === passInc.id).status === 'released');
+  // reviewer down → fine paused and excluded from dues
+  global.nextReview = 'not json';
+  const live = DB.jeetos_penalty_incidents.find(i => i.id === 'promise:c9');
+  const owedBefore = (await call({ method: 'POST', headers: owner, body: { action: 'dues' } })).b.dues_paise;
+  r = await call({ method: 'POST', headers: owner, body: { action: 'dispute', incident_id: live.id, category: 'tech_issue', reason: 'app ne promise ka done save nahi kiya' } });
+  const owedAfter = (await call({ method: 'POST', headers: owner, body: { action: 'dues' } })).b.dues_paise;
+  ok('dispute: no review → stays open, fine paused, not owed', r.b.outcome === 'open' && live.status === 'disputed' && owedAfter <= owedBefore, [owedBefore, owedAfter]);
+  ok('dispute: audit trail written', DB.jeetos_audit_events.filter(a => a.entity === 'dispute').length >= 6);
+  await call({ method: 'GET', headers: { authorization: 'Bearer cron' } });
+  ok('engine does not touch disputed/excused incidents', live.status === 'disputed' && fined.status === 'excused');
 })();
