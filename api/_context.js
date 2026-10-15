@@ -15,6 +15,7 @@
 //  - Old facts carry their date, so stale info isn't presented as current.
 //  - Each purpose has a size budget; low-priority lines are trimmed first.
 const { POLICY_V1, istAt, addDays, weightTrend, WEIGHT_RULES } = require("./_penalty");
+const { visibleTo, label, KIND_LABEL } = require("./_memory");
 
 const SUPABASE_URL = "https://qzripzgbstvxkfobzhyv.supabase.co";
 const PUBLIC_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
@@ -67,14 +68,19 @@ function planDay(now) {
 // ── Loading ────────────────────────────────────────────────────────────
 // Server key first (owner-only tables need it after the lockdown); an old or
 // rotated key answers 401, then fall back to the public key.
-function makeDb(env) {
+// With the owner's login token (a chat request) owner-only tables are readable
+// even before the server key is configured.
+function makeDb(env, ownerToken) {
   env = env || process.env;
-  const keys = [...new Set([env.SUPABASE_SERVICE_ROLE_KEY, env.SUPABASE_SECRET_KEY, env.SUPABASE_ANON_KEY, PUBLIC_KEY].filter(Boolean).map(k => k.trim()))];
+  const svc = [env.SUPABASE_SERVICE_ROLE_KEY, env.SUPABASE_SECRET_KEY].filter(Boolean).map(k => k.trim());
+  const auths = [...new Set(svc)].map(k => ({ apikey: k, Authorization: "Bearer " + k }));
+  if (ownerToken) auths.push({ apikey: PUBLIC_KEY, Authorization: "Bearer " + ownerToken });
+  [...new Set([env.SUPABASE_ANON_KEY, PUBLIC_KEY].filter(Boolean).map(k => k.trim()))].forEach(k => auths.push({ apikey: k, Authorization: "Bearer " + k }));
   return async function q(path) {
     try {
       let r;
-      for (const key of keys) {
-        r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: { apikey: key, Authorization: "Bearer " + key } });
+      for (const h of auths) {
+        r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: h });
         if (r.status !== 401) break;
       }
       if (!r.ok) return null;
@@ -88,7 +94,7 @@ async function loadContextData(q, now) {
   now = now || Date.now();
   const day = planDay(now), prev = addDays(day, -1), week = addDays(day, -6), month = day.slice(0, 7);
   const since4 = new Date(now - 4 * 864e5).toISOString(), since7 = new Date(now - 7 * 864e5).toISOString();
-  const keys = ["logs", "checkins", "marks", "openPromises", "closedPromises", "goals", "goalState", "weightGoal", "weighins", "memory", "profile", "notes", "inbox", "passes", "incidents", "disputes", "decisions"];
+  const keys = ["logs", "checkins", "marks", "openPromises", "closedPromises", "goals", "goalState", "weightGoal", "weighins", "memory", "profile", "notes", "inbox", "passes", "incidents", "disputes", "decisions", "memories"];
   const rows = await Promise.all([
     q(`jeetos_logs?day=in.(${day},${prev})&select=*`),
     q(`jeetos_anchor_checkins?day=in.(${day},${prev})&select=anchor,day,at,verified`),
@@ -107,6 +113,7 @@ async function loadContextData(q, now) {
     q(`jeetos_penalty_incidents?updated_at=gte.${encodeURIComponent(since7)}&select=id,category,title,status,updated_at&order=updated_at.desc&limit=30`),
     q("jeetos_disputes?status=eq.open&select=id,incident_id,category&limit=10"),
     q("jeetos_decisions?status=eq.approved&select=coach,area,change,decided_at&order=decided_at.desc&limit=6"),
+    q("jeetos_memories?status=in.(active,unconfirmed)&select=id,kind,text,scope,source_type,coach,confidence,status,pending,observed_at,review_after&order=observed_at.desc&limit=80"),
   ]);
   const raw = { failed: [] };
   keys.forEach((k, i) => { if (!Array.isArray(rows[i])) raw.failed.push(k); raw[k] = Array.isArray(rows[i]) ? rows[i] : []; });
@@ -304,16 +311,22 @@ function buildPacket(raw, opts) {
     add("last", "LAST PING", [`(${ago(last.created_on, today)}, ${last.slot}) "${String(last.text).slice(0, 200)}"${worked}`], 9);
   }
 
-  // Memory: newest first, each with its date and source.
-  const prof = raw.profile && raw.profile.data;
+  // Memory: newest first, each with its date, source and confidence. Memory v2
+  // (jeetos_memories) when it has rows; the older team memory + profile otherwise.
   const memLines = [];
-  if (prof) {
-    for (const sec of ["goals", "routine", "struggles", "preferences", "style", "about", "life", "wins"]) {
-      (Array.isArray(prof[sec]) ? prof[sec] : []).slice(-6).forEach(x => memLines.push(`[${sec}] ${x.t} (${x.d ? ago(x.d, today) : "date unknown"}${x.src ? ", from " + x.src : ""})`));
+  const mems = (raw.memories || []).filter(m => visibleTo(m, coach));
+  if ((raw.memories || []).length) {
+    mems.forEach(m => memLines.push(`[${KIND_LABEL[m.kind] || m.kind}] ${m.text} (${ago(String(m.observed_at).slice(0, 10), today)}; ${label(m, today)}${m.scope === "private:mind" ? "; PRIVATE to you" : ""})`));
+  } else {
+    const prof = raw.profile && raw.profile.data;
+    if (prof) {
+      for (const sec of ["goals", "routine", "struggles", "preferences", "style", "about", "life", "wins"]) {
+        (Array.isArray(prof[sec]) ? prof[sec] : []).slice(-6).forEach(x => memLines.push(`[${sec}] ${x.t} (${x.d ? ago(x.d, today) : "date unknown"}${x.src ? ", from " + x.src : ""})`));
+      }
     }
+    (raw.memory || []).forEach(m => memLines.push(`${m.fact} (${ago(m.created_on, today)}, noted by ${COACH_NAMES[m.from_coach] || m.from_coach || "team"})`));
   }
-  (raw.memory || []).forEach(m => memLines.push(`${m.fact} (${ago(m.created_on, today)}, noted by ${COACH_NAMES[m.from_coach] || m.from_coach || "team"})`));
-  add("memory", "WHAT THE TEAM KNOWS (older items may be out of date — confirm before relying on them)", memLines, 10);
+  add("memory", "WHAT THE TEAM KNOWS (dated; older or unconfirmed items — confirm before relying on them)", memLines, 10);
 
   // Unknowns + next action.
   const na = nextAction(raw, anchors, now, today);
@@ -351,7 +364,7 @@ function render(header, sections, budget) {
 async function contextFor(opts, deps) {
   deps = deps || {};
   const now = opts.now || Date.now();
-  const raw = await loadContextData(deps.q || makeDb(), now);
+  const raw = await loadContextData(deps.q || makeDb(process.env, deps.ownerToken), now);
   return buildPacket(raw, Object.assign({}, opts, { now }));
 }
 

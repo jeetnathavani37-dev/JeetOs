@@ -6,9 +6,9 @@ const ok = (n, c, e) => console.log((c ? 'PASS ' : 'FAIL ') + n + (e !== undefin
 const JWT = 'h.p.s';
 
 function call(req, { owner = true, dbDown = false } = {}) {
-  let sent = null; const asked = [];
+  let sent = null; const asked = [], auths = [];
   global.fetch = async (url, init = {}) => {
-    const u = decodeURIComponent(String(url)); asked.push(u);
+    const u = decodeURIComponent(String(url)); asked.push(u); if (u.includes('/rest/v1/jeetos_')) auths.push((init.headers || {}).Authorization);
     const j = (b, st = 200) => ({ ok: st < 300, status: st, json: async () => b, text: async () => JSON.stringify(b) });
     if (u.includes('rpc/jeetos_is_owner')) return j(owner);
     if (u.includes('api.anthropic.com')) { sent = JSON.parse(init.body); return j({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'theek hai' }] }); }
@@ -20,7 +20,7 @@ function call(req, { owner = true, dbDown = false } = {}) {
   delete require.cache[path]; delete require.cache[require.resolve('../api/_auth.js')];
   const h = require(path);
   return new Promise(res => {
-    const out = { status: c => ({ json: b => res({ code: c, body: b, sent, asked }) }) };
+    const out = { status: c => ({ json: b => res({ code: c, body: b, sent, asked, auths }) }) };
     h(Object.assign({ headers: { authorization: 'Bearer ' + JWT } }, req), out);
   });
 }
@@ -53,6 +53,12 @@ const sysText = s => Array.isArray(s) ? s.map(b => b.text).join('\n') : String(s
 
   r = await call({ method: 'POST', body: Object.assign({}, body, { context: { coach: '../../etc' } }) });
   ok('11 bad coach id ignored safely', r.code === 200 && !/TEAM CONTEXT/.test(sysText(r.sent.system)));
+  r = await call({ method: 'POST', body });
+  ok('13 without a server key, context reads use the owner\'s login token (owner-only tables readable)', r.auths.length > 10 && r.auths.every(a => a === 'Bearer ' + JWT), [...new Set(r.auths)]);
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'svc-key';
+  r = await call({ method: 'POST', body });
+  ok('14 with a server key, that is used first', r.auths.every(a => a === 'Bearer svc-key'));
+  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
   r = await call({ method: 'POST', body }, { owner: false });
   ok('12 POST still owner-only', r.code === 401 && !r.sent);
 })();
