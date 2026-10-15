@@ -20,6 +20,7 @@ const { graphHealth } = require("./_goals");
 const { planToday } = require("./_planner");
 const { overlayLog } = require("./_checkin");
 const { habitReport, habitLines } = require("./_habits");
+const { insightReport, insightLines } = require("./_insights");
 
 const SUPABASE_URL = "https://qzripzgbstvxkfobzhyv.supabase.co";
 const PUBLIC_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
@@ -116,7 +117,7 @@ async function loadContextData(q, now) {
     q(`jeetos_allowance_uses?month=eq.${month}&status=neq.released&select=category,day,kind`),
     q(`jeetos_penalty_incidents?updated_at=gte.${encodeURIComponent(since7)}&select=id,category,title,status,updated_at&order=updated_at.desc&limit=30`),
     q("jeetos_disputes?status=eq.open&select=id,incident_id,category&limit=10"),
-    q("jeetos_decisions?status=eq.approved&select=coach,area,change,decided_at&order=decided_at.desc&limit=6"),
+    q("jeetos_decisions?status=eq.approved&select=id,coach,area,change,status,decided_at,review_on,verdict,expected_outcome,alternatives&order=decided_at.desc&limit=30"),
     q("jeetos_memories?status=in.(active,unconfirmed)&select=id,kind,text,scope,source_type,coach,confidence,status,pending,observed_at,review_after&order=observed_at.desc&limit=80"),
     q("jeetos_goals?status=eq.active&select=id,kind,parent_id,title,owner_coach,metric,target,status,approved_at"),
     q(`jeetos_daily_checkins?day=gte.${since}&select=day,kind,answers,updated_at&order=day.desc&limit=70`),
@@ -229,6 +230,8 @@ function nextAction(raw, anchors, now, today) {
 }
 
 // ── Packet ─────────────────────────────────────────────────────────────
+// When a decision should be reviewed: his own date, else 14 days after it was approved.
+function reviewDay(x) { return x.review_on ? String(x.review_on).slice(0, 10) : x.decided_at ? addDays(String(x.decided_at).slice(0, 10), 14) : null; }
 function morningPriority(raw, day) {
   const m = (raw.dailyCheckins || []).find(c => String(c.day).slice(0, 10) === day && c.kind === "morning");
   return m && m.answers && m.answers.priority ? { text: m.answers.priority, done: false, from: "check-in" } : null;
@@ -378,6 +381,9 @@ function buildPacket(raw, opts) {
   else unknowns.push("no morning check-in yet");
   if (ev) { const a = ev.answers || {}; cLines.push(`last evening check-in (${ago(String(ev.day).slice(0, 10), today)}): done ${(a.done || []).join("; ") || "nothing ticked"}; not done ${(a.not_done || []).join("; ") || "—"}${a.blocker ? `; why: ${a.blocker}${a.blocker_note ? " — " + a.blocker_note : ""}` : ""}${a.tomorrow ? `; he'll change: "${a.tomorrow}"` : ""}`); }
   add("checkins", "CHECK-INS (his own words — use them, don't re-ask)", cLines, 4);
+  add("insights", "PATTERNS IN HIS DATA (with sample sizes — correlation, never cause; don't over-claim)", insightLines(insightReport(raw, today)), 7);
+  const dueReview = (raw.decisions || []).filter(x => !x.verdict && reviewDay(x) && reviewDay(x) <= today).slice(0, 3);
+  add("reviews", "DECISIONS DUE FOR REVIEW (ask him: did it work?)", dueReview.map(x => `"${x.change}" (decided ${String(x.decided_at).slice(0, 10)}${x.expected_outcome ? `, expected: ${x.expected_outcome}` : ""})`), 5);
   add("habits", "HABIT CONSISTENCY (% of days with data; missing days are unknown, not misses)", habitLines(habitReport(raw, today)), 6);
   const plan = todayPlan(raw, now, anchors);
   add("plan", "TODAY'S PLAN (computed — don't invent other time slots)", plan.top3.map((t, i) => `${i + 1}. ${t.title} — ${t.why}`).concat(plan.changes.map(c => "changed: " + c.text)), 2);
@@ -420,4 +426,4 @@ async function contextFor(opts, deps) {
   return buildPacket(raw, Object.assign({}, opts, { now }));
 }
 
-module.exports = { buildPacket, loadContextData, contextFor, makeDb, anchorStatus, planDay, nextAction, todayPlan, ACCESS, BUDGET, COACH_IDS };
+module.exports = { reviewDay, buildPacket, loadContextData, contextFor, makeDb, anchorStatus, planDay, nextAction, todayPlan, ACCESS, BUDGET, COACH_IDS };

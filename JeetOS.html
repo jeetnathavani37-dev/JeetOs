@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.16-85";
+const APP_BUILD = "2026.10.16-86";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -10583,7 +10583,7 @@ function JeetOS() {
             React.createElement("div", { style: { padding: "12px 20px" } },
                 React.createElement(GroupEntryCard, { T: T, CH: CH, onOpen: () => setScreen("group") }),
                 React.createElement(PushCard, { T: T }),
-                React.createElement(AccountCard, null), React.createElement(TeamContextPeek, null), React.createElement(MemoryCard, null), React.createElement(NotifyCard, null),
+                React.createElement(AccountCard, null), React.createElement(TeamContextPeek, null), React.createElement(MemoryCard, null), React.createElement(NotifyCard, null), React.createElement(InsightsCard, null), React.createElement(JournalCard, null),
                 React.createElement(MasterPlanCard, { T: T, onOpen: () => setPlanOpen(true) }),
                 planOpen && React.createElement(MasterPlanSheet, { T: T, onClose: () => setPlanOpen(false) }),
                 React.createElement(FocusBoardCard, { T: T, onOpen: () => setFocusOpen(true) }),
@@ -11446,6 +11446,56 @@ function HabitsCard() {
         Array.isArray(b.reasons) && b.reasons.length > 0 && React.createElement("div", { style: { fontSize: 11, color: T.ivoryM, marginTop: 6 } },
             "Miss hone ki wajah (tumhare shaam ke jawab): " + b.reasons.map(r => r.what + " ×" + r.times).join(", ")),
         React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 4 } }, "Jis din data nahi, wo miss nahi gina jaata. Sick days maaf."));
+}
+// Patterns in his own data — always with sample sizes, never as causes.
+function InsightsCard() {
+    const [open, setOpen] = React.useState(false);
+    const [d, setD] = React.useState(null);
+    React.useEffect(() => { if (open) fetch("/api/os?action=insights").then(r => r.ok ? r.json() : null).then(setD).catch(() => { }); }, [open]);
+    const box = { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "10px 16px", marginBottom: 16, fontFamily: "Inter,system-ui,sans-serif" };
+    if (!open) return React.createElement("button", { onClick: () => setOpen(true), style: Object.assign({}, box, { width: "100%", textAlign: "left", color: T.ivoryM, fontSize: 12, cursor: "pointer" }) }, "🔍 Mere data mein kya patterns hain?");
+    const list = (arr, color) => (Array.isArray(arr) ? arr : []).map((x, i) => React.createElement("div", { key: i, style: { fontSize: 12, color, padding: "4px 0", borderTop: "1px solid " + T.border } }, x.text));
+    return React.createElement("div", { style: box, "data-testid": "insights-card" },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between" } },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, "🔍 Patterns"),
+            React.createElement("button", { onClick: () => setOpen(false), style: { background: "transparent", border: "none", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Band karo")),
+        !d ? React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 6 } }, "Load ho raha hai…") : React.createElement(React.Fragment, null,
+            (d.insights || []).length ? list(d.insights, T.ivory) : React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 6 } }, "Abhi koi pakka pattern nahi."),
+            (d.steady || []).length > 0 && React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold, marginTop: 8 } }, "KOI KHAAS FARAK NAHI"),
+            list(d.steady, T.ivoryM),
+            (d.waiting || []).length > 0 && React.createElement("div", { style: { fontSize: 11, color: T.ivoryM, marginTop: 8 } }, "Data aa raha hai: " + d.waiting.length + " cheezon ke liye abhi kam data hai."),
+            React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 6 } }, "Ye sirf patterns hain — ek cheez doosri ki wajah hai, ye saabit nahi hota. n = kitne din ka data.")));
+}
+// Decision journal — big decisions, alternatives, what he expects, and later: did it work?
+function JournalCard() {
+    const [open, setOpen] = React.useState(false);
+    const [d, setD] = React.useState(null);
+    const [f, setF] = React.useState({ change: "", alternatives: "", expected: "", review_on: "" });
+    const [msg, setMsg] = React.useState("");
+    const load = () => fetch("/api/os?action=journal").then(r => r.ok ? r.json() : null).then(setD).catch(() => { });
+    React.useEffect(() => { if (authSession()) load(); }, []);
+    const post = body => fetch("/api/os", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json().then(x => { setMsg(r.ok ? "Saved ✓" : (x.error || "error")); if (r.ok) load(); return r.ok; })).catch(() => setMsg("offline"));
+    const due = d && Array.isArray(d.decisions) ? d.decisions.filter(x => x.due) : [];
+    const box = { background: T.card, border: "1px solid " + (due.length ? T.gold : T.border), borderRadius: 14, padding: "10px 16px", marginBottom: 16, fontFamily: "Inter,system-ui,sans-serif" };
+    if (!open) return React.createElement("button", { onClick: () => setOpen(true), style: Object.assign({}, box, { width: "100%", textAlign: "left", color: due.length ? T.gold : T.ivoryM, fontSize: 12, cursor: "pointer" }) }, "📓 Decision Journal" + (due.length ? " · " + due.length + " review baaki" : ""));
+    const inp = (k, ph, type) => React.createElement("input", { "aria-label": k, placeholder: ph, type: type || "text", value: f[k], onChange: e => setF(Object.assign({}, f, { [k]: e.target.value })), style: { width: "100%", marginTop: 5, background: T.ink, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "5px 8px", fontSize: 12 } });
+    const vbtn = (x, v, label) => React.createElement("button", { key: v, onClick: () => post({ action: "journal.outcome", id: x.id, verdict: v, actual: prompt("Kya hua? (optional, ek line)", "") || null }), style: { padding: "3px 9px", marginRight: 6, marginTop: 4, borderRadius: 8, border: "1px solid " + T.border2, background: "transparent", color: T.ivory, fontSize: 11, cursor: "pointer" } }, label);
+    const VERDICT = { worked: "✓ kaam kiya", didnt: "✗ nahi chala", unclear: "? pata nahi" };
+    return React.createElement("div", { style: box, "data-testid": "journal-card" },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between" } },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, "📓 Decision Journal"),
+            React.createElement("button", { onClick: () => setOpen(false), style: { background: "transparent", border: "none", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Band karo")),
+        due.length > 0 && React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold, marginTop: 8 } }, "REVIEW KARO — KAAM KIYA?"),
+        due.map(x => React.createElement("div", { key: x.id, "data-testid": "due-" + x.id, style: { padding: "5px 0", borderTop: "1px solid " + T.border } },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, x.change),
+            x.expected_outcome && React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryM } }, "Socha tha: " + x.expected_outcome),
+            React.createElement("div", null, vbtn(x, "worked", "✓ Haan"), vbtn(x, "didnt", "✗ Nahi"), vbtn(x, "unclear", "? Pata nahi")))),
+        React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold, marginTop: 10 } }, "NAYA FAISLA LIKHO"),
+        inp("change", "Faisla (e.g. Exams mein gym shaam ko)"), inp("alternatives", "Aur kya options the?"), inp("expected", "Kya hona chahiye? (kaise pata chalega kaam kiya)"), inp("review_on", "", "date"),
+        React.createElement("button", { onClick: () => post(Object.assign({ action: "journal.add" }, f, { review_on: f.review_on || null })).then(okd => { if (okd) setF({ change: "", alternatives: "", expected: "", review_on: "" }); }), style: { marginTop: 8, padding: "5px 12px", borderRadius: 8, border: "none", background: T.gold, color: T.ink, fontSize: 12, cursor: "pointer" } }, "Save"),
+        msg && React.createElement("span", { style: { fontSize: 11, color: T.ivoryM, marginLeft: 8 } }, msg),
+        d && Array.isArray(d.decisions) && d.decisions.filter(x => !x.due).slice(0, 8).map(x => React.createElement("div", { key: x.id, style: { fontSize: 11.5, color: T.ivoryM, padding: "4px 0", borderTop: "1px solid " + T.border, marginTop: 4 } },
+            String(x.decided_at).slice(0, 10) + " · " + x.change + (x.verdict ? " — " + VERDICT[x.verdict] + (x.actual_outcome ? " (" + x.actual_outcome + ")" : "") : x.review_day ? " — review " + x.review_day : ""))));
 }
 // Shows the app only to the logged-in owner. Offline with a saved session → the app still opens.
 function AuthGate() {

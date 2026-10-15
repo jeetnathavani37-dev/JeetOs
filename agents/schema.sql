@@ -422,3 +422,9 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 -- Owner RLS select/insert/update, no deletes. Questions + validation in api/_checkin.js;
 -- morning answers fill gaps in that day's log for goal health and the planner (never
 -- overwrite his log); evening answers (done / not_done / blocker / tomorrow) go to coaches.
+
+-- ── Decision journal (2026-10-16) ──────────────────────────────────────
+-- jeetos_decisions gains: alternatives, expected_outcome, review_on, actual_outcome,
+-- verdict (worked|didnt|unclear), outcome_at. Jeet's own entries: coach 'jeet',
+-- source 'journal', status 'approved'. Review is due on review_on, else 14 days after
+-- approval. Patterns (api/_insights.js) compare the related habit 14 days before/after.
