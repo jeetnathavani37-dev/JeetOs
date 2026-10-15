@@ -19,10 +19,7 @@ const POLICY_V1 = {
     amount_paise: 10000,        // ₹100 per missing required entry
     grace_min: 120,
     entries: {
-      breakfast: { deadline: "11:00", label: "Breakfast log" },
-      lunch: { deadline: "16:00", label: "Lunch log" },
-      dinner: { deadline: "22:00", label: "Dinner log" },
-      sleep: { deadline: "12:00", label: "Sleep log (last night)" },
+      sleep: { deadline: "12:00", label: "Sleep log (last night)" },   // meals are timed anchors now
     },
   },
   // Monthly passes (IST calendar month, no rollover). A miss first uses a pass; only
@@ -31,8 +28,25 @@ const POLICY_V1 = {
   exceptions: {
     gym: { label: "Gym day missed", days: [1, 2, 3, 4, 5, 6], deadline: "23:59", grace_min: 120, monthly_allowance: 7, after_paise: 25000, habit: "move" },
     diet: { label: "Diet exception", deadline: "23:59", grace_min: 120, monthly_allowance: 4, after_paise: 10000, cal_limit: 2100, habit: "food" },
-    sleep: { label: "Sleep exception", deadline: "12:00", grace_min: 120, monthly_allowance: 4, after_paise: 10000, min_hours: 6, latest_bed: "00:30", habit: "sleep" },
+    sleep: { label: "Sleep exception", deadline: "12:00", grace_min: 120, monthly_allowance: 4, after_paise: 10000, min_hours: 6, latest_bed: null, habit: "sleep" }, // bedtime is the "sleep" anchor
     recovery_review_after: 3,   // more than 3 recovery days in 7 → review (and a doctor nudge), not auto-excused
+  },
+  // His day, as he set it. On time = no cost. Inside the extension window = one of that anchor's
+  // 5 monthly passes. After the window, or with no passes left = ₹100. A recovery (sick) mark
+  // excuses the whole day. Meals are checked from the meal log's server time; the rest from check-ins.
+  anchors: {
+    passes: 5, after_paise: 10000,
+    list: {
+      wake: { label: "Wake up", time: "08:00", ext_min: 60, kind: "checkin" },
+      gym: { label: "Gym reporting", time: "09:30", ext_min: 30, kind: "checkin", place: "gym", days: [1, 2, 3, 4, 5, 6] },
+      breakfast: { label: "Breakfast", time: "11:30", ext_min: 30, kind: "meal" },
+      work: { label: "Library / work", time: "12:30", ext_min: 30, kind: "checkin", place: "work", days: [1, 2, 3, 4, 5, 6] },
+      lunch: { label: "Lunch", time: "15:00", ext_min: 30, kind: "meal" },
+      snack: { label: "Black coffee + snacks", time: "17:30", ext_min: 30, kind: "checkin" },
+      leave: { label: "Leave library / office", time: "22:00", ext_min: 30, kind: "checkin", days: [1, 2, 3, 4, 5, 6] },
+      dinner: { label: "Dinner", time: "23:00", ext_min: 30, kind: "meal" },
+      sleep: { label: "Sleep", time: "00:30", ext_min: 30, kind: "checkin", next_day: true },
+    },
   },
   caps: { incident_paise: 175000, day_paise: 100000, month_paise: 500000 },
   overlap: "suppress",          // one underlying omission → one fine
@@ -125,7 +139,7 @@ function exceptionCandidates({ policy, logs, marks, uses, now }) {
         const hrs = row && row.sleep_hours != null ? +row.sleep_hours : null, bed = bedMinutes(row && row.bedtime);
         const latest = bedMinutes(R.latest_bed);
         if (hrs != null && hrs < R.min_hours) { bad = true; why = hrs + "h sleep logged (minimum " + R.min_hours + "h)"; }
-        else if (bed != null && bed > latest && bed < 6 * 60) { bad = true; why = "bedtime " + row.bedtime + " logged (after " + R.latest_bed + " AM)"; }
+        else if (latest != null && bed != null && bed > latest && bed < 6 * 60) { bad = true; why = "bedtime " + row.bedtime + " logged (after " + R.latest_bed + " AM)"; }
       }
       if (review) { out.push(Object.assign(base, { state: "review", why })); continue; }
       if (!bad) { out.push(Object.assign(base, { state: "ok" })); continue; }
@@ -142,6 +156,63 @@ function exceptionCandidates({ policy, logs, marks, uses, now }) {
       out.push(Object.assign(base, { state: "needs_allowance", why }));
     }
   }
+  return out;
+}
+
+// Timed anchors per day. State: ok | pending | excused | review | needs_allowance | missed | skip.
+function anchorCandidates({ policy, checkins, logs, marks, now }) {
+  const AN = policy.anchors;
+  if (!AN) return [];
+  const from = policy.effective_from ? istDate(policy.effective_from) : istDate(now);
+  const out = [];
+  for (let date = from; date <= istDate(now); date = addDays(date, 1)) {
+    const row = (logs || []).find(r => r.day === date || r.date === date) || null;
+    const weekday = new Date(date + "T12:00:00Z").getUTCDay();
+    const sick = (marks || []).some(m => String(m.date).slice(0, 10) === date && m.kind === "recovery");
+    for (const key of Object.keys(AN.list)) {
+      const A = AN.list[key];
+      if (A.days && !A.days.includes(weekday)) continue;
+      const target = istAt(A.next_day ? addDays(date, 1) : date, A.time), deadline = target + A.ext_min * 60000;
+      if (policy.effective_from && target <= Date.parse(policy.effective_from)) continue;
+      const base = { key, date, label: A.label, target, deadline, checkpoint: deadline, root_key: key === "gym" ? "gym:" + date : "anchor:" + key + ":" + date };
+      let t = null, client = null;
+      if (A.kind === "meal") {
+        t = row && row.entries_seen && row.entries_seen[key] ? Date.parse(row.entries_seen[key]) : null;
+        client = row && row.entries && row.entries[key] ? Date.parse(row.entries[key]) : null;
+      } else {
+        const c = (checkins || []).filter(x => x.anchor === key && String(x.day).slice(0, 10) === date && x.verified !== false).sort((a, b) => Date.parse(a.at) - Date.parse(b.at))[0];
+        if (c) { t = Date.parse(c.at); client = c.client_at ? Date.parse(c.client_at) : null; }
+      }
+      if (t != null && t <= target) { out.push(Object.assign(base, { state: "ok", at: t })); continue; }
+      if (deadline > now) { out.push(Object.assign(base, { state: "pending" })); continue; }
+      if (sick) { out.push(Object.assign(base, { state: "excused", why: A.label + " — recovery (sick) day" })); continue; }
+      if (key === "gym" && t == null) {
+        const trained = row && (row.gym_done || (row.entries_seen && row.entries_seen.workout));
+        if (!trained) { out.push(Object.assign(base, { state: "skip" })); continue; }   // a skipped gym day is the gym rule's job, not a second fine
+      }
+      const hm = ms => new Date(ms + 330 * 60000).toISOString().slice(11, 16);
+      if (t != null && t <= deadline) { out.push(Object.assign(base, { state: "needs_allowance", at: t, why: A.label + " at " + hm(t) + " (target " + A.time + ", " + A.ext_min + " min extension)" })); continue; }
+      if (client != null && client <= deadline) { out.push(Object.assign(base, { state: "review", why: A.label + " recorded on the phone at " + hm(client) + " but reached the server late" })); continue; }
+      out.push(Object.assign(base, { state: "missed", why: t == null ? A.label + " — no " + (A.kind === "meal" ? "meal logged" : "check-in") + " by " + hm(deadline) : A.label + " at " + hm(t) + " — after the " + A.ext_min + " min extension (" + hm(deadline) + ")" }));
+    }
+  }
+  return out;
+}
+function anchorExtras(policy, cands, decided) {
+  const AN = policy.anchors, out = [];
+  cands.forEach((c, i) => {
+    if (["ok", "pending", "skip"].includes(c.state)) return;
+    const id = "anchor:" + c.key + ":" + c.date;
+    const inc = { id, source_key: id, commitment_id: null, category: "anchor", root_key: c.root_key, policy_version: policy.version, title: c.label + " — " + c.date, overlap_of: null, detail: { date: c.date, anchor: c.key, why: c.why || null } };
+    const fine = why => out.push({ incident: Object.assign(inc, { status: "resolved" }), want: { incident_id: id, kind: "assessment", day_n: 1, local_date: c.date, raw: AN.after_paise, checkpoint: c.checkpoint, why } });
+    if (c.state === "excused") { inc.status = "excused"; out.push({ incident: inc }); return; }
+    if (c.state === "review") { inc.status = "review"; out.push({ incident: inc }); return; }
+    if (c.state === "missed") return fine(c.why);
+    const a = decided && decided[i] && decided[i].allowance;
+    if (!a) return;
+    if (a.ok) { inc.status = "allowance"; inc.detail.pass = (a.used || "?") + "/" + AN.passes; out.push({ incident: inc }); return; }
+    fine(c.why + " — all " + AN.passes + " extensions used this month");
+  });
   return out;
 }
 
@@ -207,7 +278,7 @@ function plan({ policy, commitments, logs, entries, incidents, now, extra }) {
     if (amount < w.raw) inc.status = "capped";
     if (amount <= 0) continue;
     added.push({ incident_id: w.incident_id, kind: w.kind, day_n: w.day_n, local_date: w.local_date, amount_paise: amount, policy_version: ver, created_by: "engine",
-      calc: { formula: w.kind === "escalation" || w.day_n > 1 ? "base × 2^(n-1)" : inc.category === "log" ? "flat per missing entry" : inc.category === "promise" ? "base" : "flat, after the month's passes ran out", raw_paise: w.raw, trimmed_by_cap: amount < w.raw,
+      calc: { formula: w.kind === "escalation" || w.day_n > 1 ? "base × 2^(n-1)" : inc.category === "log" ? "flat per missing entry" : inc.category === "promise" ? "base" : inc.category === "anchor" ? "flat per late / missed anchor" : inc.category === "milestone" ? "milestone consequence (after the 48 h review window)" : "flat, after the month's passes ran out", raw_paise: w.raw, trimmed_by_cap: amount < w.raw,
         sums_before: sums, caps, checkpoint: new Date(w.checkpoint).toISOString(), why: w.why, mode: policy.mode } });
   }
   // An incident that has used its whole per-incident cap stays capped.
@@ -359,4 +430,4 @@ function weightPlan({ goal, weighins, logs, entries, now, version }) {
   return out;
 }
 
-module.exports = { POLICY_V1, plan, disputeOutcome, WEIGHT_RULES, weightPlan, meanWindow, baselineOf, weightTrend, adherence, promiseDue, logStatus, capTrim, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, bedMinutes };
+module.exports = { POLICY_V1, plan, disputeOutcome, anchorCandidates, anchorExtras, WEIGHT_RULES, weightPlan, meanWindow, baselineOf, weightTrend, adherence, promiseDue, logStatus, capTrim, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, bedMinutes };

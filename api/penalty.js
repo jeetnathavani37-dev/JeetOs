@@ -9,13 +9,14 @@
 //   POST { action: "plan_rest" | "cancel_rest", date } → plan a gym rest day (monthly pass) ahead
 //   POST { action: "evidence", date, proof_key, vault_key, sha256 } → record a proof photo's arrival
 //   POST { action: "weighin", kg, fasted, morning, supersedes? } / { action: "goal_start" | "goal_cancel" } → weight milestone
+//   POST { action: "checkin", anchor, client_at, lat?, lng?, acc? } / { action: "set_place", place, lat, lng, acc } → daily anchors
 //   POST { action: "dispute", incident_id, category, reason, photo? } → pause the fine, AI review, rules decide
 //   POST { action: "set_payee" | "pay_test_start" | "pay_report" | "pay_cancel" } → manual UPI
 //        (₹1 test to the charity; he pays in his own UPI app; status is self-reported)
 // The client can only read the ledger; every write happens here with the
 // server key, and amounts come only from api/_penalty.js.
 const { requireOwner, SUPABASE_URL } = require("./_auth");
-const { POLICY_V1, plan, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, disputeOutcome, WEIGHT_RULES, weightPlan } = require("./_penalty");
+const { POLICY_V1, plan, istDate, istAt, addDays, rupees, exceptionCandidates, exceptionExtras, disputeOutcome, WEIGHT_RULES, weightPlan, anchorCandidates, anchorExtras } = require("./_penalty");
 const crypto = require("crypto");
 const { sendToAll } = require("./_push");
 
@@ -113,7 +114,19 @@ async function runEngine(now = Date.now()) {
       }
       weightExtras = wp.extras.filter(x => !lockedIds.has(x.incident.id));
     }
-    const out = plan({ policy, commitments, logs, entries, incidents, now, extra: exceptionExtras(policy, cands, decided).concat(weightExtras) });
+    // Timed anchors: late inside the extension → that anchor's monthly pass; after it → ₹100.
+    let anchorX = [];
+    if (policy.anchors) {
+      const checkins = await db(`jeetos_anchor_checkins?day=gte.${from}&select=anchor,day,at,client_at,verified&order=at.asc`);
+      const ac = anchorCandidates({ policy, checkins, logs, marks, now }).filter(c => !lockedIds.has("anchor:" + c.key + ":" + c.date));
+      const adec = [];
+      for (let i = 0; i < ac.length; i++) {
+        if (ac[i].state !== "needs_allowance") continue;
+        adec[i] = { allowance: await db("rpc/jeetos_use_allowance", { method: "POST", body: JSON.stringify({ p_category: "a_" + ac[i].key, p_day: ac[i].date, p_kind: "auto", p_incident: "anchor:" + ac[i].key + ":" + ac[i].date, p_limit: policy.anchors.passes }) }) };
+      }
+      anchorX = anchorExtras(policy, ac, adec);
+    }
+    const out = plan({ policy, commitments, logs, entries, incidents, now, extra: exceptionExtras(policy, cands, decided).concat(weightExtras, anchorX) });
     // Review / dispute outcomes are never overwritten by the engine.
     const locked = new Set(incidents.filter(i => ["disputed", "excused"].includes(i.status)).map(i => i.id));
     const incRows = out.incidents.filter(i => !locked.has(i.id)).map(i => Object.assign({}, i, { updated_at: new Date(now).toISOString() }));
@@ -219,6 +232,41 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
     if (action === "dues") return res.status(200).json(await dues());
+
+    // ── Daily anchors: check-ins (server time) + saved gym / library location ──
+    if (action === "set_place") {
+      const { place, lat, lng, acc } = req.body || {};
+      if (!["gym", "work"].includes(place) || !isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return res.status(400).json({ error: "Location nahi mili" });
+      if (isFinite(acc) && acc > 200) return res.status(400).json({ error: "Location accurate nahi hai (" + Math.round(acc) + " m) — bahar/khidki ke paas try karo" });
+      await db("jeetos_places?on_conflict=id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify({ id: place, lat: +lat, lng: +lng, accuracy_m: isFinite(acc) ? +acc : null, set_at: new Date(now).toISOString() }) });
+      await audit("place", place, "set", { accuracy_m: acc }, "owner");
+      return res.status(200).json({ ok: true });
+    }
+    if (action === "checkin") {
+      const { anchor, client_at, lat, lng, acc } = req.body || {};
+      const pol = await activePolicy(), AN = (pol && pol.anchors) || POLICY_V1.anchors, A = AN && AN.list[anchor];
+      if (!A || A.kind !== "checkin") return res.status(400).json({ error: "Ye check-in nahi hai" });
+      const istHour = new Date(now + 330 * 60000).getUTCHours();
+      const day = A.next_day && istHour < 12 ? istDate(now - 864e5) : istDate(now);
+      const todays = await db(`jeetos_anchor_checkins?day=eq.${day}&anchor=eq.${anchor}&select=id`);
+      if (todays.length >= 3) return res.status(429).json({ error: "Aaj ye check-in ho chuka" });
+      let distance = null, verified = null;
+      if (A.place) {
+        const [pl] = await db(`jeetos_places?id=eq.${A.place}&select=lat,lng`) || [];
+        if (pl && isFinite(lat) && isFinite(lng)) {
+          const R = 6371000, dLat = (lat - pl.lat) * Math.PI / 180, dLng = (lng - pl.lng) * Math.PI / 180;
+          const h = Math.sin(dLat / 2) ** 2 + Math.cos(pl.lat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+          distance = Math.round(2 * R * Math.asin(Math.sqrt(h)));
+          verified = distance <= 400 + Math.min(isFinite(acc) ? +acc : 0, 200);
+          if (!verified) return res.status(409).json({ error: (A.place === "gym" ? "Gym" : "Library") + " se " + (distance >= 1000 ? (distance / 1000).toFixed(1) + " km" : distance + " m") + " door ho — wahan pahunch ke check-in karo", distance_m: distance });
+        }
+      }
+      const c = client_at && Math.abs(Date.parse(client_at) - now) < 3 * 864e5 ? new Date(Date.parse(client_at)).toISOString() : null;
+      const row = { id: "ck_" + now.toString(36) + crypto.randomBytes(2).toString("hex"), anchor, day, client_at: c, lat: isFinite(lat) ? +lat : null, lng: isFinite(lng) ? +lng : null,
+        accuracy_m: isFinite(acc) ? +acc : null, distance_m: distance, verified };
+      await db("jeetos_anchor_checkins", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(row) });
+      return res.status(200).json({ ok: true, checkin: Object.assign({ at: new Date(now).toISOString() }, row) });
+    }
 
     // ── Weight: weigh-ins (server time, append-only) and the 12-week goal ──
     if (action === "weighin") {
