@@ -28,6 +28,8 @@
 //   GET  /api/os?action=docs[&q=search][&id=<id>]   knowledge vault (search includes his private docs)
 //   POST /api/os { action: "docs.add", title, body, tags?, url?, scope? }  /  { action: "docs.update", id, ... }  /  { action: "docs.archive", id }
 //   GET  /api/os?action=approvals           Approval Centre: everything waiting on his yes/no, most consequential first
+//   GET  /api/os?action=focus               running focus session + today/7-day focus stats (closes stale ones as "expired")
+//   POST /api/os { action: "focus.start", task, minutes }  /  { action: "focus.end", id, outcome: done|abandoned, note? }
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -49,6 +51,7 @@ const EXPT = require("./_experiments");
 const { buildTimeline, KINDS: TL_KINDS } = require("./_timeline");
 const vault = require("./_vault");
 const approvals = require("./_approvals");
+const focus = require("./_focus");
 const { addDays: planDayAdd } = require("./_penalty");
 const { callClaude } = require("./_claude");
 
@@ -307,6 +310,32 @@ module.exports = async function handler(req, res) {
         pendingDecisions: pending || [], memories: mems || [], journal: raw.decisions,
       }, today);
       return res.status(200).json(Object.assign(out, { today, unreadable }));
+    }
+    if ((req.method === "GET" && q.action === "focus") || (req.method === "POST" && /^focus\./.test((req.body || {}).action || ""))) {
+      const now = Date.now(), today = planDay(now);
+      const since = planDayAdd(today, -7);
+      const list = await db(`jeetos_focus_sessions?or=(status.eq.active,day.gte.${since})&select=*&order=started_at.desc&limit=60`);
+      if (!list.ok) return res.status(502).json({ error: "couldn't read focus sessions (" + list.status + ")" });
+      for (const x of focus.expirePatches(list.body, now)) {
+        const r = await db(`jeetos_focus_sessions?id=eq.${encodeURIComponent(x.id)}&status=eq.active`, { method: "PATCH", body: JSON.stringify(x.patch) });
+        if (r.ok) Object.assign(list.body.find(s => s.id === x.id), x.patch);
+      }
+      if (req.method === "GET") return res.status(200).json({ active: focus.activeOf(list.body, now), stats: focus.stats(list.body, today), recent: list.body.filter(s => s.status !== "active").slice(0, 8), limits: [focus.MIN, focus.MAX] });
+      const b = req.body;
+      if (b.action === "focus.start") {
+        const out = focus.start({ task: b.task, minutes: b.minutes }, list.body, now);
+        if (out.error) return res.status(400).json(out);
+        const r = await db("jeetos_focus_sessions", { method: "POST", body: JSON.stringify(out.row) });
+        if (!r.ok) return res.status(r.status === 409 ? 409 : 502).json({ error: r.status === 409 ? "a focus session is already running" : "couldn't save (" + r.status + ")" });
+        return res.status(200).json({ ok: true, session: out.row });
+      }
+      if (b.action !== "focus.end") return res.status(400).json({ error: "unknown action" });
+      const cur = focus.activeOf(list.body, now);
+      if (!cur || cur.id !== b.id) return res.status(404).json({ error: "no such running session" });
+      const out = focus.end(cur, b.outcome, b.note, now);
+      if (out.error) return res.status(400).json(out);
+      const r = await db(`jeetos_focus_sessions?id=eq.${encodeURIComponent(cur.id)}&status=eq.active`, { method: "PATCH", body: JSON.stringify(out.patch) });
+      return r.ok ? res.status(200).json({ ok: true, session: Object.assign({}, cur, out.patch) }) : res.status(502).json({ error: "couldn't save (" + r.status + ")" });
     }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });

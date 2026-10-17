@@ -79,11 +79,13 @@ async function logPush(supa, row) {
 async function sendToAll(supa, data) {
   if (!vapidKeys()) return { sent: 0, error: "no VAPID seed configured" };
   const now = Date.now(), day = istDay(now), tag = String((data && data.tag) || "");
-  const [sentToday, settings] = await Promise.all([
+  const [sentToday, settings, focus] = await Promise.all([
     rows(supa, `jeetos_push_log?day=eq.${day}&decision=eq.sent&select=cls,at&limit=50`),
     rows(supa, "jeetos_settings?id=eq.notify&select=data"),
+    rows(supa, "jeetos_focus_sessions?status=eq.active&select=ends_at&limit=1"),
   ]);
-  const d = decide({ tag, now, sentToday, settings: settings && settings[0] && settings[0].data });
+  const focusUntil = focus && focus[0] ? Date.parse(focus[0].ends_at) : null;
+  const d = decide({ tag, now, sentToday, settings: settings && settings[0] && settings[0].data, focusUntil });
   if (!d.ok) {
     await logPush(supa, { day, tag: tag.slice(0, 80), cls: d.cls, decision: "held", reason: d.reason.slice(0, 120) });
     return { sent: 0, held: d.reason };

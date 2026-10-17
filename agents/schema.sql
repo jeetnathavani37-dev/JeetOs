@@ -485,3 +485,11 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 -- their review date), most consequential first. Mind-coach private facts are left out. Each item
 -- carries the exact existing action that applies it (allow-listed); coach plan changes are decided in
 -- the app so the master plan stays in sync. GET /api/os?action=approvals; Today tab card.
+
+-- ── Focus Mode (2026-10-17) ────────────────────────────────────────────
+-- jeetos_focus_sessions(id, task, planned_min 10–180, started_at, ends_at, ended_at, status
+--   active|done|abandoned|expired, actual_min, note, day IST plan day). Partial unique index: one active.
+--   Owner select/insert/update RLS; no delete.
+-- While a session runs: _notify.decide holds "nudge" pushes (alarms + deadlines still go), coach-nudge
+-- skips Telegram for held nudges (message stays in the app inbox), and the context packet starts with
+-- a FOCUS MODE line. A session not closed within 30 min of its end becomes 'expired' (time unknown).
