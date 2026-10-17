@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.17-92";
+const APP_BUILD = "2026.10.17-93";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -10134,6 +10134,7 @@ function JeetOS() {
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, background: "rgba(91,141,239,.08)", border: "1px solid rgba(91,141,239,.22)", borderRadius: 12, padding: "10px 12px" } },
                     React.createElement("span", { style: { fontSize: 14 } }, "📷"),
                     React.createElement("span", { style: { fontSize: 10, color: "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, lineHeight: 1.5 } }, "Every task needs one photo as proof — finish the steps, then add a photo inside the card to mark it complete."))),
+            React.createElement(ApprovalCard, null),
             React.createElement(WeeklyReviewCard, null),
             React.createElement(CommandCentreCard, null),
             React.createElement(CheckinCard, null),
@@ -11638,6 +11639,48 @@ function VaultCard() {
         body,
         msg && React.createElement("div", { "data-testid": "vault-msg", style: { fontSize: 11, color: /✓/.test(msg) ? T.green : T.red, marginTop: 5 } }, msg),
         React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 6 } }, "Coaches sirf matching notes dekhte hain aur [title, date] se cite karte hain. Encrypted photos search nahi hote."));
+}
+// Approval Centre — everything waiting on his yes/no, in one place; each button uses the same action as before.
+function ApprovalCard() {
+    const [d, setD] = React.useState(null);
+    const [all, setAll] = React.useState(false);
+    const [busy, setBusy] = React.useState("");
+    const [msg, setMsg] = React.useState("");
+    const load = () => fetch("/api/os?action=approvals").then(r => r.ok ? r.json() : null).then(x => setD(x || { items: [], unreadable: ["approvals"] })).catch(() => setD({ items: [], unreadable: ["approvals"] }));
+    React.useEffect(() => { if (authSession()) load(); }, []);
+    if (!d) return null;
+    // Coach plan changes live in the app's decision list (master plan); use it as the source for those.
+    const local = loadDecisions().filter(x => x.status === "pending").map(x => ({ key: "plan_change:" + x.id, type: "plan_change", id: x.id, title: personaName(x.coach) + ": " + x.change, detail: [x.reason && "why: " + x.reason, x.evidence && "evidence: " + x.evidence].filter(Boolean).join(" · ") || null, age_days: Math.round((Date.now() - x.at) / 864e5),
+        actions: [{ label: "Approve", op: { client: "decide", id: x.id, approve: true } }, { label: "No", op: { client: "decide", id: x.id, approve: false } }] }));
+    const items = (d.items || []).filter(i => i.type !== "plan_change" || !local.some(l => l.id === i.id)).concat(local);
+    const RANK = { goal_plan: 1, schedule: 2, plan_change: 3, memory_retract: 4, memory_confirm: 5, journal_review: 6, memory_stale: 7 };
+    items.sort((a, b) => (RANK[a.type] || 9) - (RANK[b.type] || 9) || (b.age_days || 0) - (a.age_days || 0));
+    if (!items.length && !(d.unreadable || []).length) return null;
+    const act = (it, op) => {
+        setBusy(it.key); setMsg("");
+        if (op.client === "decide") {
+            // The app's decision list may not have this proposal yet — sync once, then decide; never hide it unless it was decided.
+            (async () => { let done = decide(op.id, op.approve); if (!done) { await syncDecisions(); done = decide(op.id, op.approve); }
+                setBusy(""); if (done) setD(Object.assign({}, d, { items: (d.items || []).filter(i => i.key !== it.key) })); else setMsg("Ye proposal abhi load nahi hua — thodi der mein try karo."); })();
+            return;
+        }
+        const body = Object.assign({}, op); if (body.action === "journal.outcome") body.actual = prompt("Kya hua? (optional, ek line)", "") || null;
+        fetch("/api/os", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json().then(x => { if (!r.ok) setMsg(x.error || "error"); else load(); })).catch(() => setMsg("offline")).finally(() => setBusy(""));
+    };
+    const TAG = { goal_plan: "🎯 Goal", schedule: "⏰ Schedule", plan_change: "📋 Plan", memory_retract: "🧠 Fact", memory_confirm: "🧠 Fact", journal_review: "📓 Review", memory_stale: "🧠 Fact" };
+    const shown = all ? items : items.slice(0, 4);
+    const box = { background: T.card, border: "1px solid " + (items.length ? T.gold : T.border), borderRadius: 16, padding: "12px 16px", marginBottom: 14, fontFamily: "Inter,system-ui,sans-serif" };
+    return React.createElement("div", { style: box, "data-testid": "approval-card" },
+        React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold, marginBottom: 4 } }, "⏳ TUMHARI APPROVAL · " + items.length),
+        shown.map(it => React.createElement("div", { key: it.key, "data-testid": "appr-" + it.key, style: { padding: "7px 0", borderTop: "1px solid " + T.border, opacity: busy === it.key ? .5 : 1 } },
+            React.createElement("div", { style: { fontSize: 10, color: T.ivoryM } }, (TAG[it.type] || it.type) + (it.age_days ? " · " + it.age_days + " din se" : "")),
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, it.title),
+            it.detail && React.createElement("div", { style: { fontSize: 11, color: T.ivoryM } }, it.detail),
+            React.createElement("div", null, it.actions.map((a, i) => React.createElement("button", { key: i, disabled: !!busy, onClick: () => act(it, a.op), style: { padding: "3px 10px", marginRight: 6, marginTop: 5, borderRadius: 8, border: "1px solid " + (i === 0 ? T.gold : T.border2), background: "transparent", color: i === 0 ? T.gold : T.ivory, fontSize: 11.5, cursor: "pointer" } }, a.label))))),
+        items.length > 4 && React.createElement("button", { onClick: () => setAll(!all), style: { background: "transparent", border: "none", color: T.ivoryM, fontSize: 11.5, cursor: "pointer", marginTop: 4, padding: 0 } }, all ? "Kam dikhao" : "Aur " + (items.length - 4) + " dekho"),
+        msg && React.createElement("div", { style: { fontSize: 11, color: T.red, marginTop: 4 } }, msg),
+        (d.unreadable || []).length > 0 && React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 6 } }, "Padh nahi paaye: " + d.unreadable.join(", ") + " — list adhuri ho sakti hai."),
+        React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 6 } }, "Bina tumhari haan ke kuch nahi badalta."));
 }
 // Patterns in his own data — always with sample sizes, never as causes.
 function InsightsCard() {
