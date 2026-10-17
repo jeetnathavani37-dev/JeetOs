@@ -24,6 +24,7 @@
 //   GET  /api/os?action=experiments         measured experiments (+ the active one's progress; finishes it when due)
 //   POST /api/os { action: "experiment.start", metric, direction, min_change, days, action_text }
 //   POST /api/os { action: "experiment.stop", id }
+//   GET  /api/os?action=timeline[&kind=goal,decision,...][&before=ISO]   evolution timeline (read-only)
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -42,6 +43,7 @@ const repair = require("./_repair");
 const { ensureHuddle } = require("./_huddle");
 const { ensureReview, reviewWeek } = require("./_review");
 const EXPT = require("./_experiments");
+const { buildTimeline, KINDS: TL_KINDS } = require("./_timeline");
 const { addDays: planDayAdd } = require("./_penalty");
 const { callClaude } = require("./_claude");
 
@@ -229,6 +231,28 @@ module.exports = async function handler(req, res) {
       const r = await db("jeetos_experiments", { method: "POST", body: JSON.stringify(out.row) });
       if (!r.ok) return res.status(r.status === 409 ? 409 : 502).json({ error: r.status === 409 ? "one experiment at a time" : "couldn't save (" + r.status + ")" });
       return res.status(200).json({ ok: true, experiment: out.row });
+    }
+    if (req.method === "GET" && q.action === "timeline") {
+      const g = async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; };
+      const names = ["goalEvents", "goals", "decisions", "memoryEvents", "experiments", "reviews", "weightGoals", "schedule"];
+      const rows = await Promise.all([
+        g("jeetos_goal_events?select=id,goal_id,action,detail,at&order=at.desc&limit=100"),
+        g("jeetos_goals?select=id,title"),
+        g("jeetos_decisions?status=eq.approved&select=id,coach,change,expected_outcome,decided_at,verdict,actual_outcome,outcome_at,status&order=decided_at.desc&limit=100"),
+        g("jeetos_memory_events?action=in.(supersede,retract)&select=id,memory_id,action,detail,at&order=at.desc&limit=100"),
+        g("jeetos_experiments?select=id,kind,action,target,baseline,criterion,status,outcome,created_at,updated_at,decided_at&order=created_at.desc&limit=60"),
+        g("jeetos_weekly_reviews?select=week_start,week_end,data&order=week_end.desc&limit=26"),
+        g("jeetos_weight_goals?select=id,status,requested_at,baseline_kg,baseline_day,target_loss_kg,weeks,updated_at&order=requested_at.desc&limit=10"),
+        g("jeetos_settings?id=eq.schedule&select=data"),
+      ]);
+      const src = { failed: names.filter((n, i) => !rows[i]) };
+      names.forEach((n, i) => { src[n] = rows[i] || []; });
+      src.schedule = (src.schedule[0] && src.schedule[0].data) || {};
+      const ids = [...new Set(src.memoryEvents.map(e => e.memory_id))].filter(x => /^[a-z0-9]+$/i.test(x)).slice(0, 100);
+      src.memories = ids.length ? (await g(`jeetos_memories?id=in.(${ids.join(",")})&select=id,text`)) || [] : [];
+      const kinds = String(q.kind || "").split(",").filter(k => TL_KINDS.includes(k));
+      const before = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(q.before || "") ? q.before : null;
+      return res.status(200).json({ entries: buildTimeline(src, { kinds, before, limit: 60 }), kinds: TL_KINDS, unreadable: src.failed });
     }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
