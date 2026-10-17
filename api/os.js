@@ -27,6 +27,7 @@
 //   GET  /api/os?action=timeline[&kind=goal,decision,...][&before=ISO]   evolution timeline (read-only)
 //   GET  /api/os?action=docs[&q=search][&id=<id>]   knowledge vault (search includes his private docs)
 //   POST /api/os { action: "docs.add", title, body, tags?, url?, scope? }  /  { action: "docs.update", id, ... }  /  { action: "docs.archive", id }
+//   GET  /api/os?action=approvals           Approval Centre: everything waiting on his yes/no, most consequential first
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -47,6 +48,7 @@ const { ensureReview, reviewWeek } = require("./_review");
 const EXPT = require("./_experiments");
 const { buildTimeline, KINDS: TL_KINDS } = require("./_timeline");
 const vault = require("./_vault");
+const approvals = require("./_approvals");
 const { addDays: planDayAdd } = require("./_penalty");
 const { callClaude } = require("./_claude");
 
@@ -288,6 +290,23 @@ module.exports = async function handler(req, res) {
       else return res.status(400).json({ error: "unknown action" });
       const r = await db(`jeetos_docs?id=eq.${id}`, { method: "PATCH", body: JSON.stringify(Object.assign(patch, { updated_at: nowIso })) });
       return r.ok ? res.status(200).json({ ok: true }) : res.status(502).json({ error: "couldn't save (" + r.status + ")" });
+    }
+    if (req.method === "GET" && q.action === "approvals") {
+      const qq = async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; };
+      const [raw, pending, mems] = await Promise.all([
+        loadContextData(qq),
+        qq("jeetos_decisions?status=eq.pending&select=id,coach,change,reason,evidence,created_at&order=created_at.asc&limit=20"),
+        qq(`jeetos_memories?${LIVE}&select=id,text,scope,coach,status,pending,pending_reason,observed_at,review_after,updated_at&order=observed_at.desc&limit=200`),
+      ]);
+      const today = planDay(Date.now());
+      const hasPrimary = (raw.graph || []).some(g => g.kind === "primary" && g.status === "active");
+      const unreadable = [].concat(raw.failed.filter(k => ["schedule", "decisions", "graph"].includes(k)), pending ? [] : ["pendingDecisions"], mems ? [] : ["memories"]);
+      const out = approvals.collect({
+        goalProposal: !raw.failed.includes("graph") && !hasPrimary ? PLAN : null,
+        repairs: raw.failed.includes("schedule") ? [] : repair.proposals(raw, today),
+        pendingDecisions: pending || [], memories: mems || [], journal: raw.decisions,
+      }, today);
+      return res.status(200).json(Object.assign(out, { today, unreadable }));
     }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });

@@ -478,3 +478,10 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 --   security invoker (RLS applies); execute for authenticated/service_role only.
 -- Coach chats (api/ai.js) search team docs only with keywords from his last message and add up to 3
 -- matches as "[title, date] snippet"; private docs never reach a coach. Encrypted vault photos are not searchable.
+
+-- ── Approval Centre (2026-10-17) ───────────────────────────────────────
+-- No new table. api/_approvals.js lists everything waiting on Jeet (goal plan, schedule shifts,
+-- coach plan changes, facts flagged "no longer true", guessed facts, journal reviews due, facts past
+-- their review date), most consequential first. Mind-coach private facts are left out. Each item
+-- carries the exact existing action that applies it (allow-listed); coach plan changes are decided in
+-- the app so the master plan stays in sync. GET /api/os?action=approvals; Today tab card.

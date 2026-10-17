@@ -20,6 +20,7 @@ node tests/review.test.js        # weekly CEO review: week window, unknown ≠ m
 node tests/experiments.test.js   # experiments: frozen baseline, bar set up front, verdict by code, one at a time
 node tests/timeline.test.js      # evolution timeline: only stored records, sources cited, filters
 node tests/vault.test.js         # knowledge vault: clean docs, search, private never to coaches, chat citations
+node tests/approvals.test.js     # approval centre: order, exact actions, private facts out, unreadable reported
 node tests/goals.test.js         # goal graph: health maths, roll-up, approval, target limits, endpoint, packet
 ```
 
