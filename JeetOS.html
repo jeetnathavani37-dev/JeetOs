@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.17-94";
+const APP_BUILD = "2026.10.17-95";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -10141,6 +10141,7 @@ function JeetOS() {
             React.createElement(CheckinCard, null),
             React.createElement(RepairCard, null),
             React.createElement(GoalGraphCard, null),
+            React.createElement(WhatIfCard, null),
             React.createElement(HabitsCard, null),
             React.createElement(ExperimentCard, null),
             React.createElement(PrimaryGoalCard, { T: T, onChange: () => setStreakTick(t => t + 1) }),
@@ -11717,6 +11718,45 @@ function FocusCard() {
         React.createElement("div", { style: { marginTop: 6 } }, [25, 50, 90].map(m => React.createElement("button", { key: m, onClick: () => setMins(m), style: { padding: "3px 10px", marginRight: 6, borderRadius: 10, border: "1px solid " + (mins === m ? T.gold : T.border2), background: "transparent", color: mins === m ? T.gold : T.ivoryM, fontSize: 11.5, cursor: "pointer" } }, m + " min")),
             React.createElement("button", { onClick: () => post({ action: "focus.start", task, minutes: mins }), style: { padding: "4px 12px", borderRadius: 8, border: "1px solid " + T.gold, background: "transparent", color: T.gold, fontSize: 12, cursor: "pointer" } }, "Shuru")),
         msg && React.createElement("div", { "data-testid": "focus-msg", style: { fontSize: 11, color: T.red, marginTop: 4 } }, msg), statLine);
+}
+// What-if simulator — projections from his own data, as ranges, with every assumption shown. Saves nothing.
+function WhatIfCard() {
+    const [open, setOpen] = React.useState(false);
+    const [kind, setKind] = React.useState("weight");
+    const [f, setF] = React.useState({ kcal: 2000, gym_days: 4, maintenance: "", target_kg: "", bed: "00:15", wake: "07:45" });
+    const [res, setRes] = React.useState(null);
+    const [busy, setBusy] = React.useState(false);
+    const box = { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "10px 16px", marginBottom: 14, fontFamily: "Inter,system-ui,sans-serif" };
+    if (!open) return React.createElement("button", { onClick: () => setOpen(true), "data-testid": "whatif-card", style: Object.assign({}, box, { width: "100%", textAlign: "left", color: T.ivoryM, fontSize: 12, cursor: "pointer" }) }, "🔮 What if… (calories, gym, neend)");
+    const run = () => { setBusy(true); setRes(null);
+        const body = kind === "weight" ? { action: "whatif", kind, kcal: +f.kcal, gym_days: +f.gym_days, maintenance: f.maintenance === "" ? undefined : +f.maintenance, target_kg: f.target_kg === "" ? undefined : +f.target_kg } : { action: "whatif", kind, bed: f.bed, wake: f.wake };
+        fetch("/api/os", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json()).then(setRes).catch(() => setRes({ error: "offline" })).finally(() => setBusy(false)); };
+    const inp = (k, label, type, w) => React.createElement("label", { style: { display: "inline-block", fontSize: 11, color: T.ivoryM, marginRight: 8, marginTop: 6 } }, label,
+        React.createElement("input", { "aria-label": k, type: type || "number", value: f[k], onChange: e => setF(Object.assign({}, f, { [k]: e.target.value })), style: { display: "block", width: w || 90, marginTop: 2, background: T.ink, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "5px 8px", fontSize: 12 } }));
+    const tab = (k, label) => React.createElement("button", { onClick: () => { setKind(k); setRes(null); }, style: { padding: "3px 10px", marginRight: 6, borderRadius: 10, border: "1px solid " + (kind === k ? T.gold : T.border2), background: "transparent", color: kind === k ? T.gold : T.ivoryM, fontSize: 11.5, cursor: "pointer" } }, label);
+    const list = (arr, color, pre) => (arr || []).map((x, i) => React.createElement("div", { key: i, style: { fontSize: 11, color, marginTop: 2 } }, (pre || "• ") + x));
+    return React.createElement("div", { style: box, "data-testid": "whatif-card" },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between" } },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, "🔮 What if…"),
+            React.createElement("button", { onClick: () => setOpen(false), style: { background: "transparent", border: "none", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Band karo")),
+        React.createElement("div", { style: { marginTop: 6 } }, tab("weight", "⚖️ Weight"), tab("sleep", "😴 Neend")),
+        kind === "weight" ? React.createElement("div", null,
+            inp("kcal", "Roz kcal"),
+            React.createElement("div", { style: { fontSize: 11, color: T.ivoryM, marginTop: 6 } }, "Gym din / hafta"),
+            React.createElement("div", null, [0, 1, 2, 3, 4, 5, 6].map(n => React.createElement("button", { key: n, onClick: () => setF(Object.assign({}, f, { gym_days: n })), style: { width: 28, padding: "3px 0", marginRight: 4, marginTop: 3, borderRadius: 8, border: "1px solid " + (+f.gym_days === n ? T.gold : T.border2), background: "transparent", color: +f.gym_days === n ? T.gold : T.ivoryM, fontSize: 11.5, cursor: "pointer" } }, n))),
+            inp("target_kg", "Target kg (optional)"), inp("maintenance", "Maintenance kcal (optional)", "number", 120))
+            : React.createElement("div", null, inp("bed", "Sona", "time", 110), inp("wake", "Uthna", "time", 110)),
+        React.createElement("button", { onClick: run, disabled: busy, style: { marginTop: 8, padding: "5px 14px", borderRadius: 8, border: "1px solid " + T.gold, background: "transparent", color: T.gold, fontSize: 12, cursor: "pointer" } }, busy ? "Calculate ho raha hai…" : "Dekho"),
+        res && React.createElement("div", { "data-testid": "whatif-result", style: { marginTop: 8, borderTop: "1px solid " + T.border, paddingTop: 6 } },
+            res.error ? React.createElement("div", { style: { fontSize: 12, color: T.red } }, res.error)
+                : React.createElement(React.Fragment, null,
+                    React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, res.text),
+                    res.checks && res.checks.map((c, i) => React.createElement("div", { key: i, style: { fontSize: 11.5, color: c.ok ? T.green : T.red } }, (c.ok ? "✓ " : "✗ ") + c.rule + " — " + c.detail)),
+                    list(res.flags, T.red, "⚠ "),
+                    res.need && list(res.need, T.ivoryM),
+                    (res.assumptions || []).length > 0 && React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold, marginTop: 6 } }, "MAANI HUI BAATEIN"),
+                    list(res.assumptions, T.ivoryM))),
+        React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 6 } }, "Sirf andaaza, tumhare data se — kuch save ya change nahi hota. Range isliye ki body exact nahi chalti."));
 }
 // Patterns in his own data — always with sample sizes, never as causes.
 function InsightsCard() {

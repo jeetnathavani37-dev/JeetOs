@@ -493,3 +493,11 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 -- While a session runs: _notify.decide holds "nudge" pushes (alarms + deadlines still go), coach-nudge
 -- skips Telegram for held nudges (message stays in the app inbox), and the context packet starts with
 -- a FOCUS MODE line. A session not closed within 30 min of its end becomes 'expired' (time unknown).
+
+-- ── What-if simulator (2026-10-17) ─────────────────────────────────────
+-- No new table, nothing saved. api/_whatif.js: weight (kcal/day + gym days/week → kg/week range,
+-- weeks + dates range, verdict vs the 12-week deadline) using maintenance from his last 4 weeks of
+-- calorie logs + weight trend (needs 14+ logged days and 2+ fasted weigh-ins at each end; else
+-- "unknown" with what's missing, or his own maintenance number). Gym change = ±250–400 kcal per
+-- session. Flags < 1,500 kcal and pace above WEIGHT_RULES.fast_loss_pct_week. Sleep: bed/wake vs
+-- his rules. POST /api/os { action: "whatif", kind: weight|sleep, ... }.
