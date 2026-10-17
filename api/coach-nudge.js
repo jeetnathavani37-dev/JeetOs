@@ -13,6 +13,7 @@ const { sendToAll } = require("./_push");
 const { POLICY_V1, anchorsOn, istAt, addDays } = require("./_penalty");
 const { buildPacket, loadContextData } = require("./_context");
 const { ensureHuddle } = require("./_huddle");
+const { ensureReview } = require("./_review");
 const { callClaude: claudeText } = require("./_claude");
 // Which coach nudges him when an anchor of his day slips.
 const ANCHOR_COACH = { wake: "sleep", gym: "fitness", breakfast: "nutrition", work: "ronaldo", lunch: "nutrition", snack: "nutrition", leave: "ronaldo", dinner: "nutrition", sleep: "sleep" };
@@ -226,6 +227,8 @@ module.exports = async function handler(req, res) {
     }
     // Sunday review: every coach with an active goal sends a 2-line weekly review.
     if (slot === "review") {
+      // The Weekly CEO Review is stored first (fixed numbers; the app shows it), then the coaches' 2-liners.
+      const ceo = await ensureReview({ q: supaJson, write: async (p, body, headers) => { const r = await supa(p, { method: "POST", headers, body: JSON.stringify(body) }); let b = null; try { b = await r.json(); } catch (_) { } return { ok: r.ok, status: r.status, body: b }; }, callClaude: claudeText, source: "cron" }).catch(e => ({ error: e.message }));
       const days = Array.from({ length: 7 }, (_, i) => istDateString(new Date(istNow().getTime() - i * 86400000)));
       const week = await supaJson(`jeetos_logs?date=in.(${days.map(d => encodeURIComponent(`"${d}"`)).join(",")})&select=*`);
       const weekText = week.length ? week.map(l => `${l.date}: ${logLine(l)}`).join("\n") : "barely anything logged this week";
@@ -236,7 +239,7 @@ module.exports = async function handler(req, res) {
         results.push(await writeAndSend(c, "review",
           `It's Sunday — you're sending Jeet your weekly review, like a coach who watched his whole week. Write exactly 2 short lines: what went well (specific), and the one thing to focus on next week. If you have a goal with him, say where he stands on it vs the start. End by telling him to do his weekly photo check-in in the app (face, hair, body, outfit) so the whole team can review his week properly.\n\nHis week:\n${weekText}`, shared));
       }
-      return res.status(200).json({ slot, results });
+      return res.status(200).json({ slot, ceo: ceo.error ? { error: ceo.error } : { created: ceo.created, week_end: ceo.review && ceo.review.week_end }, results });
     }
 
     const log = logs[0] || null;
