@@ -443,3 +443,12 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 -- priority only if it's in today's plan (or his morning priority) and resolves conflicts
 -- with a fixed ladder (safety > primary goal > sleep > commitments > preferences; a tie
 -- goes to Jeet). Notes go to jeetos_coach_notes from 'head'. Cron 07:40 IST, else the app on open.
+
+-- ── Weekly CEO Review (2026-10-17) ─────────────────────────────────────
+-- jeetos_weekly_reviews: one row per week (week_end = Saturday pk, week_start, data jsonb,
+--   narrative, ai, source cron|app). Owner read/insert RLS; no updates or deletes.
+-- Built by api/_review.js from stored data only (last finished Sun–Sat week): anchors on
+-- time, plan items done (evening check-ins), habits vs the week before, weight 7-day means,
+-- promises, ledger entries, recurring blockers, plans that keep failing, decisions waiting,
+-- next week's top 3. Claude writes a 4-line narrative from the fact lines; a narrative with a
+-- number (with its unit) that isn't in the facts is dropped. Sunday review cron, else the app.

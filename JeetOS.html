@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.16-88";
+const APP_BUILD = "2026.10.17-89";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -10134,6 +10134,7 @@ function JeetOS() {
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, background: "rgba(91,141,239,.08)", border: "1px solid rgba(91,141,239,.22)", borderRadius: 12, padding: "10px 12px" } },
                     React.createElement("span", { style: { fontSize: 14 } }, "📷"),
                     React.createElement("span", { style: { fontSize: 10, color: "#B9C9FF", fontFamily: "Inter,system-ui,sans-serif", fontWeight: 500, lineHeight: 1.5 } }, "Every task needs one photo as proof — finish the steps, then add a photo inside the card to mark it complete."))),
+            React.createElement(WeeklyReviewCard, null),
             React.createElement(CommandCentreCard, null),
             React.createElement(CheckinCard, null),
             React.createElement(RepairCard, null),
@@ -11478,6 +11479,48 @@ function HabitsCard() {
         Array.isArray(b.reasons) && b.reasons.length > 0 && React.createElement("div", { style: { fontSize: 11, color: T.ivoryM, marginTop: 6 } },
             "Miss hone ki wajah (tumhare shaam ke jawab): " + b.reasons.map(r => r.what + " ×" + r.times).join(", ")),
         React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 4 } }, "Jis din data nahi, wo miss nahi gina jaata. Sick days maaf."));
+}
+// Weekly CEO Review — the numbers are computed on the server; the Head Coach only narrates them.
+function WeeklyReviewCard() {
+    const [d, setD] = React.useState(null);
+    const [open, setOpen] = React.useState(false);
+    const [busy, setBusy] = React.useState(false);
+    const [msg, setMsg] = React.useState("");
+    const load = () => fetch("/api/os?action=review").then(r => r.ok ? r.json() : null).then(x => { setD(x); const dow = new Date(Date.now() + 330 * 60000).getUTCDay(); if (x && x.latest && !x.missing && (dow === 0 || dow === 1)) setOpen(true); }).catch(() => { });
+    React.useEffect(() => { if (authSession()) load(); }, []);
+    if (!d) return null;
+    const box = { background: T.card, border: "1px solid " + T.border, borderRadius: 16, padding: "12px 16px", marginBottom: 14, fontFamily: "Inter,system-ui,sans-serif" };
+    const run = () => { setBusy(true); setMsg(""); fetch("/api/os", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "review.run" }) }).then(r => r.json().then(x => { if (!r.ok) setMsg(x.error || "error"); else { setOpen(true); load(); } })).catch(() => setMsg("offline")).finally(() => setBusy(false)); };
+    const R = d.latest && d.latest.data;
+    if (!open || !R) return React.createElement("div", { style: Object.assign({}, box, { display: "flex", justifyContent: "space-between", alignItems: "center" }), "data-testid": "review-card" },
+        React.createElement("button", { onClick: () => R ? setOpen(true) : null, style: { background: "transparent", border: "none", color: R ? T.ivory : T.ivoryM, fontSize: 12.5, cursor: R ? "pointer" : "default", padding: 0, textAlign: "left" } }, "🧾 Weekly CEO Review" + (R ? " · " + R.week_start.slice(5) + " → " + R.week_end.slice(5) : "")),
+        d.missing && React.createElement("button", { onClick: run, disabled: busy, style: { padding: "4px 10px", borderRadius: 8, border: "1px solid " + T.gold, background: "transparent", color: T.gold, fontSize: 11.5, cursor: "pointer" } }, busy ? "Ban raha hai…" : "Pichhle hafte ka banao"),
+        msg && React.createElement("span", { style: { fontSize: 11, color: T.red } }, msg));
+    const h = (t) => React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold, marginTop: 10, marginBottom: 3 } }, t);
+    const line = (t, i, c) => React.createElement("div", { key: i, style: { fontSize: 12, color: c || T.ivory, padding: "2px 0" } }, t);
+    const stat = (label, val) => React.createElement("div", { style: { flex: "1 1 45%", background: T.ink, borderRadius: 10, padding: "6px 8px" } },
+        React.createElement("div", { style: { fontSize: 10, color: T.ivoryM } }, label),
+        React.createElement("div", { style: { fontSize: 14, color: T.ivory, fontWeight: 600 } }, val));
+    const a = R.anchors || {}, e = R.evening || {}, w = R.weight || {}, p = R.promises || {};
+    return React.createElement("div", { style: box, "data-testid": "review-card" },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between" } },
+            React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold } }, "🧾 WEEKLY CEO REVIEW · " + R.week_start.slice(5) + " → " + R.week_end.slice(5)),
+            React.createElement("button", { onClick: () => setOpen(false), style: { background: "transparent", border: "none", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Band karo")),
+        d.latest.narrative && React.createElement("div", { "data-testid": "review-narrative", style: { fontSize: 12.5, color: T.ivory, whiteSpace: "pre-wrap", margin: "8px 0", lineHeight: 1.5 } }, d.latest.narrative),
+        React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 } },
+            stat("Anchors on time", a.scheduled ? a.on_time + "/" + a.scheduled + " (" + a.pct_on_time + "%)" : "data nahi"),
+            stat("Plan done (shaam ke jawab)", e.planned ? e.done + "/" + e.planned + " (" + e.pct_done + "%)" : "data nahi"),
+            stat("Weight (7-din avg)", w.avg_kg == null ? "data nahi" : w.avg_kg + " kg" + (w.change_kg != null ? " (" + (w.change_kg > 0 ? "+" : "") + w.change_kg + ")" : "")),
+            stat("Promises", p.done + " kept · " + p.missed + " missed")),
+        (R.habits || []).length > 0 && h("HABITS (PICHHLA HAFTA)"),
+        (R.habits || []).map((x, i) => line(x.label + ": " + (x.pct == null ? "data kam (n=" + x.n + ")" : x.pct + "%") + (x.prev_pct != null ? "  ← " + x.prev_pct + "%" : ""), i, x.pct == null ? T.ivoryM : null)),
+        (R.wins || []).length > 0 && h("WINS"), (R.wins || []).map((x, i) => line("✓ " + x, i, T.green)),
+        (R.unrealistic || []).length > 0 && h("BAAR BAAR TOOT RAHA HAI"), (R.unrealistic || []).map((x, i) => line(x.what + " — " + x.why + (x.fix ? " → " + x.fix : ""), i)),
+        (R.evening && (R.evening.blockers || []).length > 0) && line("Wajah: " + R.evening.blockers.map(b => b.what + " ×" + b.times).join(", "), "bl", T.ivoryM),
+        (R.next_top3 || []).length > 0 && h("AGLE HAFTE KE TOP 3"), (R.next_top3 || []).map((x, i) => React.createElement("div", { key: i, "data-testid": "review-top-" + i, style: { fontSize: 12, color: T.ivory, padding: "3px 0" } }, (i + 1) + ". " + x.title, React.createElement("span", { style: { color: T.ivoryM, fontSize: 11 } }, " — " + x.why))),
+        (R.pending || []).length > 0 && line("⏳ " + R.pending.length + " coach proposal tumhari approval ka wait kar rahe hain", "pd", T.gold),
+        (R.journal_due || []).length > 0 && line("📓 " + R.journal_due.length + " decision review ke liye due", "jd", T.gold),
+        React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 8 } }, "Saare numbers tumhare data se code ne nikale hain; Head Coach sirf samjhaata hai." + ((R.unknown || []).length ? " Padh nahi paaye: " + R.unknown.join(", ") + "." : "") + " Jis din data nahi, wo miss nahi gina."));
 }
 // Patterns in his own data — always with sample sizes, never as causes.
 function InsightsCard() {

@@ -16,6 +16,7 @@ node tests/habits.test.js        # habit consistency: 7/30-day %, unknown ≠ mi
 node tests/insights.test.js      # patterns with sample sizes (sleep→gym, wake→gym, energy→plan, weekdays, before/after) + decision journal
 node tests/repair.test.js        # plan repair: slip detection, approve from tomorrow, engine/context/planner/alarm honour it, endpoint
 node tests/huddle.test.js        # server huddle: conflict ladder, priority only from the plan, once a day, packet/planner/endpoint
+node tests/review.test.js        # weekly CEO review: week window, unknown ≠ miss, numbers guard, once a week
 node tests/goals.test.js         # goal graph: health maths, roll-up, approval, target limits, endpoint, packet
 ```
 

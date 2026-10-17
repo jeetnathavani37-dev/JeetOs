@@ -19,6 +19,8 @@
 //   POST /api/os { action: "repair.approve" | "repair.reject", id }  /  { action: "repair.revert", anchor }
 //   GET  /api/os?action=huddle              today's Head Coach huddle (null if not run yet)
 //   POST /api/os { action: "huddle.run" }   run it now if today's doesn't exist (idempotent)
+//   GET  /api/os?action=review              latest Weekly CEO Review (+ whether last week's is missing)
+//   POST /api/os { action: "review.run" }   build last week's review if it doesn't exist (idempotent)
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -35,6 +37,7 @@ const { habitReport } = require("./_habits");
 const { insightReport } = require("./_insights");
 const repair = require("./_repair");
 const { ensureHuddle } = require("./_huddle");
+const { ensureReview, reviewWeek } = require("./_review");
 const { callClaude } = require("./_claude");
 
 // The server key when configured; otherwise act as the logged-in owner (RLS allows the owner).
@@ -164,6 +167,16 @@ module.exports = async function handler(req, res) {
       const out = await ensureHuddle({ q: qq, write: (p, body, headers) => db(p, { method: "POST", headers, body: JSON.stringify(body) }), callClaude, source: "app" });
       if (out.error) return res.status(502).json(out);
       return res.status(200).json(out);
+    }
+    if ((req.method === "GET" && q.action === "review") || (req.method === "POST" && (req.body || {}).action === "review.run")) {
+      const qq = async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; };
+      if (req.method === "GET") {
+        const want = reviewWeek(planDay(Date.now())).end, rows = await qq("jeetos_weekly_reviews?select=*&order=week_end.desc&limit=4");
+        if (!rows) return res.status(502).json({ error: "couldn't read reviews" });
+        return res.status(200).json({ latest: rows[0] || null, older: rows.slice(1).map(r => ({ week_end: r.week_end, week_start: r.week_start })), missing: !rows.some(r => String(r.week_end).slice(0, 10) === want), week_end: want });
+      }
+      const out = await ensureReview({ q: qq, write: (p, body, headers) => db(p, { method: "POST", headers, body: JSON.stringify(body) }), callClaude, source: "app" });
+      return res.status(out.error ? 502 : 200).json(out);
     }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
