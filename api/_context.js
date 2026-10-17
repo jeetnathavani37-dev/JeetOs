@@ -21,6 +21,7 @@ const { planToday } = require("./_planner");
 const { overlayLog } = require("./_checkin");
 const { habitReport, habitLines } = require("./_habits");
 const { insightReport, insightLines } = require("./_insights");
+const { activeOf, focusLine } = require("./_focus");
 
 const SUPABASE_URL = "https://qzripzgbstvxkfobzhyv.supabase.co";
 const PUBLIC_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
@@ -99,7 +100,7 @@ async function loadContextData(q, now) {
   now = now || Date.now();
   const day = planDay(now), since = addDays(day, -31), month = day.slice(0, 7);   // 31 days: habits need a month
   const since4 = new Date(now - 4 * 864e5).toISOString(), since7 = new Date(now - 7 * 864e5).toISOString();
-  const keys = ["logs", "checkins", "marks", "openPromises", "closedPromises", "goals", "goalState", "weightGoal", "weighins", "memory", "profile", "notes", "inbox", "passes", "incidents", "disputes", "decisions", "memories", "graph", "dailyCheckins", "schedule", "huddle", "experiments"];
+  const keys = ["logs", "checkins", "marks", "openPromises", "closedPromises", "goals", "goalState", "weightGoal", "weighins", "memory", "profile", "notes", "inbox", "passes", "incidents", "disputes", "decisions", "memories", "graph", "dailyCheckins", "schedule", "huddle", "experiments", "focus"];
   const rows = await Promise.all([
     q(`jeetos_logs?day=gte.${since}&select=*&order=day.desc&limit=35`),
     q(`jeetos_anchor_checkins?day=gte.${since}&select=anchor,day,at,verified&order=day.desc&limit=320`),
@@ -124,6 +125,7 @@ async function loadContextData(q, now) {
     q("jeetos_settings?id=eq.schedule&select=data"),
     q(`jeetos_huddles?day=eq.${day}&select=day,focus,priority,conflicts`),
     q("jeetos_experiments?kind=eq.measured&status=eq.active&select=action,target,baseline,criterion,test_to&limit=1"),
+    q("jeetos_focus_sessions?status=eq.active&select=task,started_at,ends_at,status&limit=1"),
   ]);
   const raw = { failed: [] };
   keys.forEach((k, i) => { if (!Array.isArray(rows[i])) raw.failed.push(k); raw[k] = Array.isArray(rows[i]) ? rows[i] : []; });
@@ -271,6 +273,8 @@ function buildPacket(raw, opts) {
   const sections = [], unknowns = [];
   const add = (key, title, lines, prio) => { lines = lines.filter(Boolean); if (lines.length) sections.push({ key, title, lines, prio }); };
 
+  const fl = focusLine(activeOf(raw.focus, now), now);
+  if (fl) add("focus", "FOCUS MODE", [fl], 0);
   add("now", "NOW", [`${P.label}, ${hm12(P.h * 60 + P.m)} IST${today !== P.date ? ` (still counts as ${today} — he may not have slept yet)` : ""}`], 0);
 
   // Primary goal + department goals.

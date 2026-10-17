@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.17-93";
+const APP_BUILD = "2026.10.17-94";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -10137,6 +10137,7 @@ function JeetOS() {
             React.createElement(ApprovalCard, null),
             React.createElement(WeeklyReviewCard, null),
             React.createElement(CommandCentreCard, null),
+            React.createElement(FocusCard, null),
             React.createElement(CheckinCard, null),
             React.createElement(RepairCard, null),
             React.createElement(GoalGraphCard, null),
@@ -11681,6 +11682,41 @@ function ApprovalCard() {
         msg && React.createElement("div", { style: { fontSize: 11, color: T.red, marginTop: 4 } }, msg),
         (d.unreadable || []).length > 0 && React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 6 } }, "Padh nahi paaye: " + d.unreadable.join(", ") + " — list adhuri ho sakti hai."),
         React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 6 } }, "Bina tumhari haan ke kuch nahi badalta."));
+}
+// Focus Mode — one task, a timer; coach nudges wait until it's over (his own alarms still ring).
+function FocusCard() {
+    const [d, setD] = React.useState(null);
+    const [task, setTask] = React.useState("");
+    const [mins, setMins] = React.useState(50);
+    const [msg, setMsg] = React.useState("");
+    const [, tick] = React.useState(0);
+    const load = () => fetch("/api/os?action=focus").then(r => r.ok ? r.json() : null).then(x => { if (x) setD(x); }).catch(() => { });
+    React.useEffect(() => { if (authSession()) load(); }, []);
+    React.useEffect(() => { if (!(d && d.active)) return; const t = setInterval(() => tick(n => n + 1), 15000); return () => clearInterval(t); }, [d && d.active && d.active.id]);
+    if (!d) return null;
+    const post = body => fetch("/api/os", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json().then(x => { setMsg(r.ok ? "" : (x.error || "error")); if (r.ok) { setTask(""); load(); } })).catch(() => setMsg("offline"));
+    const a = d.active, st = d.stats || {};
+    const box = { background: a ? "rgba(91,141,239,.10)" : T.card, border: "1px solid " + (a ? "rgba(91,141,239,.45)" : T.border), borderRadius: 16, padding: "12px 16px", marginBottom: 14, fontFamily: "Inter,system-ui,sans-serif" };
+    const statLine = React.createElement("div", { style: { fontSize: 10.5, color: T.ivoryM, marginTop: 6 } }, "Aaj " + (st.today_min || 0) + " min · 7 din " + (st.week_min || 0) + " min" + (st.week_done_pct != null ? " · " + st.week_done_pct + "% sessions poore (n=" + st.week_judged + ")" : ""));
+    if (a) {
+        const left = Math.max(0, Math.round((Date.parse(a.ends_at) - Date.now()) / 60000));
+        const end = new Date(Date.parse(a.ends_at)).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
+        return React.createElement("div", { style: box, "data-testid": "focus-card" },
+            React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: "#B9C9FF" } }, "🎧 FOCUS MODE · " + end + " tak"),
+            React.createElement("div", { style: { fontSize: 15, color: T.ivory, fontWeight: 600, marginTop: 4 } }, a.task),
+            React.createElement("div", { "data-testid": "focus-left", style: { fontSize: 26, color: T.ivory, fontWeight: 700, marginTop: 2 } }, left > 0 ? left + " min" : "Time ho gaya"),
+            React.createElement("div", { style: { fontSize: 11, color: T.ivoryM } }, "Coach nudges abhi ruke hue hain — tumhare schedule alarms aate rahenge."),
+            React.createElement("div", { style: { marginTop: 8 } },
+                React.createElement("button", { onClick: () => post({ action: "focus.end", id: a.id, outcome: "done" }), style: { padding: "5px 12px", marginRight: 8, borderRadius: 8, border: "1px solid " + T.green, background: "transparent", color: T.green, fontSize: 12, cursor: "pointer" } }, "Ho gaya ✓"),
+                React.createElement("button", { onClick: () => post({ action: "focus.end", id: a.id, outcome: "abandoned", note: prompt("Kya roka? (optional)", "") || null }), style: { padding: "5px 12px", borderRadius: 8, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Chhod diya")),
+            msg && React.createElement("div", { style: { fontSize: 11, color: T.red, marginTop: 4 } }, msg), statLine);
+    }
+    return React.createElement("div", { style: box, "data-testid": "focus-card" },
+        React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold } }, "🎧 FOCUS MODE"),
+        React.createElement("input", { "aria-label": "focus-task", placeholder: "Kis cheez pe focus? (ek kaam)", value: task, onChange: e => setTask(e.target.value), style: { width: "100%", marginTop: 6, background: T.ink, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "6px 8px", fontSize: 12 } }),
+        React.createElement("div", { style: { marginTop: 6 } }, [25, 50, 90].map(m => React.createElement("button", { key: m, onClick: () => setMins(m), style: { padding: "3px 10px", marginRight: 6, borderRadius: 10, border: "1px solid " + (mins === m ? T.gold : T.border2), background: "transparent", color: mins === m ? T.gold : T.ivoryM, fontSize: 11.5, cursor: "pointer" } }, m + " min")),
+            React.createElement("button", { onClick: () => post({ action: "focus.start", task, minutes: mins }), style: { padding: "4px 12px", borderRadius: 8, border: "1px solid " + T.gold, background: "transparent", color: T.gold, fontSize: 12, cursor: "pointer" } }, "Shuru")),
+        msg && React.createElement("div", { "data-testid": "focus-msg", style: { fontSize: 11, color: T.red, marginTop: 4 } }, msg), statLine);
 }
 // Patterns in his own data — always with sample sizes, never as causes.
 function InsightsCard() {

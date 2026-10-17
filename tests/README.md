@@ -21,6 +21,7 @@ node tests/experiments.test.js   # experiments: frozen baseline, bar set up fron
 node tests/timeline.test.js      # evolution timeline: only stored records, sources cited, filters
 node tests/vault.test.js         # knowledge vault: clean docs, search, private never to coaches, chat citations
 node tests/approvals.test.js     # approval centre: order, exact actions, private facts out, unreadable reported
+node tests/focus.test.js         # focus mode: one at a time, nudges held / alarms pass, expired ≠ done
 node tests/goals.test.js         # goal graph: health maths, roll-up, approval, target limits, endpoint, packet
 ```
 

@@ -169,6 +169,8 @@ Your last few texts to him (don't repeat these): ${recent.map(r => r.text).join(
   }
   // iPhone push: the coach's text lands on his lock screen; tapping opens that chat.
   const push = await sendToAll(supa, { title: (COACHES[coachId] && COACHES[coachId].name) || "JeetOS", body: text.replace(/\s+/g, " ").slice(0, 180), url: "/?chat=" + coachId, tag: coachId + "-" + slot }).catch(e => ({ error: e.message }));
+  // In Focus Mode the nudge waits in the app inbox — no Telegram ping either.
+  if (push && /^focus mode/.test(push.held || "")) return { coach: coachId, slot, text, telegram: "held (focus mode)", push };
   return { coach: coachId, slot, text, telegram: await sendTelegram(coachId, text), push };
 }
 

@@ -6,6 +6,7 @@
 //  - nudge    coach check-ins, streak rescue, reviews — only while under the daily
 //             cap, never in quiet hours, and not within an hour of another nudge
 //  - test     the "Test bhejo" button — always
+// While he's in Focus Mode (focusUntil), nudges are held; alarms and deadlines still go.
 // If the day's log can't be read, the cap fails open (better a ping than a missed
 // alarm) but quiet hours still hold.
 const DEFAULTS = { daily_cap: 8, quiet_from: "00:45", quiet_to: "07:45", nudge_gap_min: 60 };
@@ -34,10 +35,11 @@ function settingsOf(raw) {
   return s;
 }
 // sentToday: rows of { cls, at } already SENT today (IST), or null if unknown.
-function decide({ tag, now, sentToday, settings }) {
+function decide({ tag, now, sentToday, settings, focusUntil }) {
   const s = settingsOf(settings), cls = classOf(tag);
   const ist = new Date(now + 330 * 60000), nowMin = ist.getUTCHours() * 60 + ist.getUTCMinutes();
   if (cls === "test") return { ok: true, cls };
+  if (cls === "nudge" && focusUntil && now < focusUntil) return { ok: false, cls, reason: "focus mode until " + new Date(focusUntil + 330 * 60000).toISOString().slice(11, 16) + " IST" };
   if (cls !== "alarm" && inQuiet(nowMin, s.quiet_from, s.quiet_to)) return { ok: false, cls, reason: `quiet hours ${s.quiet_from}–${s.quiet_to}` };
   if (!Array.isArray(sentToday)) return { ok: true, cls, reason: "budget unknown (log unreadable) — sent" };
   const n = sentToday.length;
