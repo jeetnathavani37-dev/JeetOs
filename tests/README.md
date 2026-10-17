@@ -19,6 +19,7 @@ node tests/huddle.test.js        # server huddle: conflict ladder, priority only
 node tests/review.test.js        # weekly CEO review: week window, unknown ≠ miss, numbers guard, once a week
 node tests/experiments.test.js   # experiments: frozen baseline, bar set up front, verdict by code, one at a time
 node tests/timeline.test.js      # evolution timeline: only stored records, sources cited, filters
+node tests/vault.test.js         # knowledge vault: clean docs, search, private never to coaches, chat citations
 node tests/goals.test.js         # goal graph: health maths, roll-up, approval, target limits, endpoint, packet
 ```
 

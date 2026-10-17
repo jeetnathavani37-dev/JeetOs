@@ -468,3 +468,13 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 -- approved decisions + their reviews, replaced/removed facts (memory events), experiments
 -- (measured start + verdict; coach ones once judged), weekly reviews, weight goals, approved
 -- schedule changes. Each entry carries { table, id } of its source. GET /api/os?action=timeline.
+
+-- ── Knowledge vault (2026-10-17) ───────────────────────────────────────
+-- jeetos_docs(id, title ≤160, body ≤20k, tags text[], source note|link|pasted, url, scope team|private,
+--   status active|archived, created_at, updated_at, tsv generated: title+tags weight A, body weight B,
+--   'simple' config for Hinglish; GIN index). Owner select/insert/update RLS; no delete (archive).
+-- jeetos_tags_text(text[]) immutable helper for the generated column.
+-- jeetos_search_docs(q, include_private, lim): websearch_to_tsquery + ts_rank + ts_headline snippet;
+--   security invoker (RLS applies); execute for authenticated/service_role only.
+-- Coach chats (api/ai.js) search team docs only with keywords from his last message and add up to 3
+-- matches as "[title, date] snippet"; private docs never reach a coach. Encrypted vault photos are not searchable.

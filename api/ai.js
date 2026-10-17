@@ -149,6 +149,21 @@ function redact(msg) {
 
 const { isOwner, requireOwner, serverKeyStatus, bearer } = require("./_auth");
 const { contextFor, COACH_IDS } = require("./_context");
+const { queryFrom, searchVault, vaultLines, VAULT_TITLE } = require("./_vault");
+const { SUPABASE_URL: VAULT_URL, PUBLIC_KEY: VAULT_KEY } = require("./_auth");
+
+// The few vault notes that match what he just asked (team docs only), as the owner.
+async function vaultFor(ctx, messages, req) {
+  if (!ctx || !COACH_IDS.includes(ctx.coach) || ctx.purpose === "huddle") return null;
+  const last = [...messages].reverse().find(m => m && m.role === "user");
+  const q = queryFrom(last && last.content);
+  if (!q) return null;
+  const svc = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "").trim(), token = bearer(req);
+  const h = svc ? { apikey: svc, Authorization: "Bearer " + svc } : { apikey: VAULT_KEY, Authorization: "Bearer " + token };
+  const rpc = async (name, body) => { const r = await fetch(`${VAULT_URL}/rest/v1/rpc/${name}`, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, h), body: JSON.stringify(body) }); return r.ok ? r.json() : null; };
+  const lines = vaultLines(await searchVault(rpc, q, { limit: 3 }));
+  return lines.length ? `[${VAULT_TITLE}]\n` + lines.map(l => "- " + l).join("\n") : null;
+}
 
 // The shared team context for a coach (api/_context.js). Appended to the live
 // part of the system prompt, so chat and cron coaches work from the same facts.
@@ -210,6 +225,8 @@ module.exports = async function handler(req, res) {
   // (the live, uncached part). If it can't be built the chat still works.
   const pk = await teamContext(context, req);
   if (pk) system = String(system) + "\n\n" + pk.text + "\n(This team context is the shared record every coach uses. If it disagrees with the app data above, the app may not have synced yet — go with what he tells you now, and don't accuse him over a gap.)";
+  const vault = pk ? await vaultFor(context, messages, req).catch(() => null) : null;
+  if (vault) system += "\n\n" + vault;
   // Coaches can send several texts in a row (and text first), so the chat can
   // hold consecutive assistant messages — fold same-role runs into one turn.
   // Only the newest user message may carry photos: one in chat, up to 6 in
