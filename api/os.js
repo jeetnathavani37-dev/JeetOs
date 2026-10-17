@@ -30,6 +30,8 @@
 //   GET  /api/os?action=approvals           Approval Centre: everything waiting on his yes/no, most consequential first
 //   GET  /api/os?action=focus               running focus session + today/7-day focus stats (closes stale ones as "expired")
 //   POST /api/os { action: "focus.start", task, minutes }  /  { action: "focus.end", id, outcome: done|abandoned, note? }
+//   POST /api/os { action: "whatif", kind: "weight", kcal, gym_days, maintenance?, target_kg? }  /  { kind: "sleep", bed, wake }
+//        (read-only: projections from his own data with the assumptions listed; nothing is saved)
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -52,6 +54,7 @@ const { buildTimeline, KINDS: TL_KINDS } = require("./_timeline");
 const vault = require("./_vault");
 const approvals = require("./_approvals");
 const focus = require("./_focus");
+const whatif = require("./_whatif");
 const { addDays: planDayAdd } = require("./_penalty");
 const { callClaude } = require("./_claude");
 
@@ -336,6 +339,16 @@ module.exports = async function handler(req, res) {
       if (out.error) return res.status(400).json(out);
       const r = await db(`jeetos_focus_sessions?id=eq.${encodeURIComponent(cur.id)}&status=eq.active`, { method: "PATCH", body: JSON.stringify(out.patch) });
       return r.ok ? res.status(200).json({ ok: true, session: Object.assign({}, cur, out.patch) }) : res.status(502).json({ error: "couldn't save (" + r.status + ")" });
+    }
+    if (req.method === "POST" && (req.body || {}).action === "whatif") {
+      const b = req.body;
+      if (b.kind === "sleep") { const out = whatif.sleepWhatIf(b); return res.status(out.error ? 400 : 200).json(out); }
+      if (b.kind !== "weight") return res.status(400).json({ error: "kind must be weight or sleep" });
+      const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
+      const missing = raw.failed.filter(k => ["logs", "weighins", "checkins"].includes(k));
+      if (missing.length) return res.status(502).json({ error: "couldn't read " + missing.join(", ") + " — no projection without the data" });
+      const out = whatif.weightWhatIf(b, raw, planDay(Date.now()));
+      return res.status(out.error ? 400 : 200).json(out);
     }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
