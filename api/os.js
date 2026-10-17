@@ -25,6 +25,8 @@
 //   POST /api/os { action: "experiment.start", metric, direction, min_change, days, action_text }
 //   POST /api/os { action: "experiment.stop", id }
 //   GET  /api/os?action=timeline[&kind=goal,decision,...][&before=ISO]   evolution timeline (read-only)
+//   GET  /api/os?action=docs[&q=search][&id=<id>]   knowledge vault (search includes his private docs)
+//   POST /api/os { action: "docs.add", title, body, tags?, url?, scope? }  /  { action: "docs.update", id, ... }  /  { action: "docs.archive", id }
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -44,6 +46,7 @@ const { ensureHuddle } = require("./_huddle");
 const { ensureReview, reviewWeek } = require("./_review");
 const EXPT = require("./_experiments");
 const { buildTimeline, KINDS: TL_KINDS } = require("./_timeline");
+const vault = require("./_vault");
 const { addDays: planDayAdd } = require("./_penalty");
 const { callClaude } = require("./_claude");
 
@@ -253,6 +256,38 @@ module.exports = async function handler(req, res) {
       const kinds = String(q.kind || "").split(",").filter(k => TL_KINDS.includes(k));
       const before = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(q.before || "") ? q.before : null;
       return res.status(200).json({ entries: buildTimeline(src, { kinds, before, limit: 60 }), kinds: TL_KINDS, unreadable: src.failed });
+    }
+    if ((req.method === "GET" && q.action === "docs") || (req.method === "POST" && /^docs\./.test((req.body || {}).action || ""))) {
+      const COLS_D = "id,title,body,tags,url,scope,source,status,created_at,updated_at";
+      if (req.method === "GET") {
+        if (q.id) { const r = await db(`jeetos_docs?id=eq.${encodeURIComponent(String(q.id).replace(/[^a-z0-9]/gi, "").slice(0, 40))}&select=${COLS_D}`); return r.ok ? res.status(200).json({ doc: (r.body || [])[0] || null }) : res.status(502).json({ error: "couldn't read (" + r.status + ")" }); }
+        if (q.q) {
+          const text = String(q.q).slice(0, 200);
+          const hits = await vault.searchVault(async (name, body) => { const r = await db("rpc/" + name, { method: "POST", body: JSON.stringify(body) }); return r.ok ? r.body : null; }, text, { includePrivate: true, limit: 20 });
+          if (!hits) return res.status(502).json({ error: "search failed" });
+          return res.status(200).json({ q: text, hits });
+        }
+        const r = await db(`jeetos_docs?status=eq.active&select=${COLS_D}&order=updated_at.desc&limit=30`);
+        return r.ok ? res.status(200).json({ docs: r.body }) : res.status(502).json({ error: "couldn't read (" + r.status + ")" });
+      }
+      const b = req.body, nowIso = new Date().toISOString();
+      if (b.action === "docs.add") {
+        const c = vault.cleanDoc(b);
+        if (c.error) return res.status(400).json(c);
+        const row = Object.assign({ id: "v" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), status: "active", created_at: nowIso, updated_at: nowIso }, c.row);
+        const r = await db("jeetos_docs", { method: "POST", body: JSON.stringify(row) });
+        return r.ok ? res.status(200).json({ ok: true, doc: (r.body || [])[0] || row }) : res.status(502).json({ error: "couldn't save (" + r.status + ")" });
+      }
+      const id = String(b.id || "").replace(/[^a-z0-9]/gi, "").slice(0, 40);
+      const cur = await db(`jeetos_docs?id=eq.${id}&select=${COLS_D}`);
+      const doc = cur.ok && (cur.body || [])[0];
+      if (!doc) return res.status(404).json({ error: "not found" });
+      let patch;
+      if (b.action === "docs.archive") patch = { status: "archived" };
+      else if (b.action === "docs.update") { const c = vault.cleanDoc(b, doc); if (c.error) return res.status(400).json(c); patch = c.row; }
+      else return res.status(400).json({ error: "unknown action" });
+      const r = await db(`jeetos_docs?id=eq.${id}`, { method: "PATCH", body: JSON.stringify(Object.assign(patch, { updated_at: nowIso })) });
+      return r.ok ? res.status(200).json({ ok: true }) : res.status(502).json({ error: "couldn't save (" + r.status + ")" });
     }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });

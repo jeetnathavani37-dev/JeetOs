@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.17-91";
+const APP_BUILD = "2026.10.17-92";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -10617,7 +10617,7 @@ function JeetOS() {
             React.createElement("div", { style: { padding: "12px 20px" } },
                 React.createElement(GroupEntryCard, { T: T, CH: CH, onOpen: () => setScreen("group") }),
                 React.createElement(PushCard, { T: T }),
-                React.createElement(AccountCard, null), React.createElement(TeamContextPeek, null), React.createElement(MemoryCard, null), React.createElement(NotifyCard, null), React.createElement(InsightsCard, null), React.createElement(JournalCard, null), React.createElement(TimelineCard, null),
+                React.createElement(AccountCard, null), React.createElement(TeamContextPeek, null), React.createElement(MemoryCard, null), React.createElement(NotifyCard, null), React.createElement(InsightsCard, null), React.createElement(JournalCard, null), React.createElement(VaultCard, null), React.createElement(TimelineCard, null),
                 React.createElement(MasterPlanCard, { T: T, onOpen: () => setPlanOpen(true) }),
                 planOpen && React.createElement(MasterPlanSheet, { T: T, onClose: () => setPlanOpen(false) }),
                 React.createElement(FocusBoardCard, { T: T, onOpen: () => setFocusOpen(true) }),
@@ -11588,6 +11588,56 @@ function TimelineCard() {
                         React.createElement("div", { style: { fontSize: 10, color: T.ivoryM } }, e.day)))))),
         d && (d.unreadable || []).length > 0 && React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 6 } }, "Padh nahi paaye: " + d.unreadable.join(", ") + " (ye entries missing ho sakti hain)."),
         React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 6 } }, "Sirf jo record hua wahi — kuch andaza nahi lagaya."));
+}
+// Knowledge vault — his saved notes/plans, full-text searchable; coaches cite matches (private ones stay with him).
+function VaultCard() {
+    const [open, setOpen] = React.useState(false);
+    const [list, setList] = React.useState(null);
+    const [q, setQ] = React.useState("");
+    const [hits, setHits] = React.useState(null);
+    const [view, setView] = React.useState(null);
+    const [f, setF] = React.useState(null);
+    const [msg, setMsg] = React.useState("");
+    const load = () => fetch("/api/os?action=docs").then(r => r.ok ? r.json() : null).then(x => setList(x && Array.isArray(x.docs) ? x.docs : [])).catch(() => setList([]));
+    React.useEffect(() => { if (open) load(); }, [open]);
+    const box = { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "10px 16px", marginBottom: 16, fontFamily: "Inter,system-ui,sans-serif" };
+    if (!open) return React.createElement("button", { onClick: () => setOpen(true), "data-testid": "vault-card", style: Object.assign({}, box, { width: "100%", textAlign: "left", color: T.ivoryM, fontSize: 12, cursor: "pointer" }) }, "📚 Knowledge Vault — mere notes, plans, docs");
+    const inp = { width: "100%", marginTop: 5, background: T.ink, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "6px 8px", fontSize: 12 };
+    const btn = (label, on, gold) => React.createElement("button", { onClick: on, style: { padding: "4px 10px", marginRight: 6, marginTop: 6, borderRadius: 8, border: "1px solid " + (gold ? T.gold : T.border2), background: "transparent", color: gold ? T.gold : T.ivory, fontSize: 11.5, cursor: "pointer" } }, label);
+    const post = body => fetch("/api/os", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json().then(x => { setMsg(r.ok ? "Saved ✓" : (x.error || "error")); if (r.ok) { setF(null); setView(null); setHits(null); load(); } return r.ok; })).catch(() => setMsg("offline"));
+    const search = () => { if (!q.trim()) { setHits(null); return; } fetch("/api/os?action=docs&q=" + encodeURIComponent(q.trim())).then(r => r.ok ? r.json() : null).then(x => setHits(x && Array.isArray(x.hits) ? x.hits : [])).catch(() => setHits([])); };
+    const row = (d, snippet) => React.createElement("div", { key: d.id, "data-testid": "doc-" + d.id, onClick: () => fetch("/api/os?action=docs&id=" + d.id).then(r => r.json()).then(x => setView(x.doc)).catch(() => { }), style: { padding: "6px 0", borderTop: "1px solid " + T.border, cursor: "pointer" } },
+        React.createElement("div", { style: { fontSize: 12, color: T.ivory } }, (d.scope === "private" ? "🔒 " : "") + d.title),
+        snippet && React.createElement("div", { style: { fontSize: 11, color: T.ivoryM } }, String(snippet).replace(/[«»]/g, "")),
+        React.createElement("div", { style: { fontSize: 10, color: T.ivoryM } }, String(d.updated_at || d.created_at).slice(0, 10) + ((d.tags || []).length ? " · #" + d.tags.join(" #") : "")));
+    let body;
+    if (f) body = React.createElement("div", { "data-testid": "vault-form" },
+        React.createElement("input", { "aria-label": "doc-title", placeholder: "Title (jaise: Derma plan Oct)", value: f.title, onChange: e => setF(Object.assign({}, f, { title: e.target.value })), style: inp }),
+        React.createElement("textarea", { "aria-label": "doc-body", placeholder: "Note / plan / paste karo (max 20,000 characters)", value: f.body, rows: 6, onChange: e => setF(Object.assign({}, f, { body: e.target.value })), style: inp }),
+        React.createElement("input", { "aria-label": "doc-tags", placeholder: "Tags: skin, gym…", value: f.tags, onChange: e => setF(Object.assign({}, f, { tags: e.target.value })), style: inp }),
+        React.createElement("input", { "aria-label": "doc-url", placeholder: "Link (optional)", value: f.url, onChange: e => setF(Object.assign({}, f, { url: e.target.value })), style: inp }),
+        React.createElement("label", { style: { display: "block", fontSize: 11.5, color: T.ivoryM, marginTop: 6 } }, React.createElement("input", { type: "checkbox", "aria-label": "doc-private", checked: f.scope === "private", onChange: e => setF(Object.assign({}, f, { scope: e.target.checked ? "private" : "team" })) }), " 🔒 Private — sirf main dekh/search kar sakta hoon, coaches ko nahi jaayega"),
+        btn("Save", () => post(Object.assign({ action: f.id ? "docs.update" : "docs.add" }, f, { url: f.url || undefined })), true), btn("Cancel", () => setF(null)));
+    else if (view) body = React.createElement("div", { "data-testid": "vault-view" },
+        React.createElement("div", { style: { fontSize: 13, color: T.ivory, fontWeight: 600, marginTop: 6 } }, (view.scope === "private" ? "🔒 " : "") + view.title),
+        React.createElement("div", { style: { fontSize: 10, color: T.ivoryM } }, "Updated " + String(view.updated_at).slice(0, 10) + (view.url ? " · " : ""), view.url && React.createElement("a", { href: view.url, target: "_blank", rel: "noopener noreferrer", style: { color: T.gold } }, "link")),
+        React.createElement("div", { style: { fontSize: 12, color: T.ivory, whiteSpace: "pre-wrap", marginTop: 6, maxHeight: 260, overflow: "auto" } }, view.body),
+        btn("Edit", () => setF({ id: view.id, title: view.title, body: view.body, tags: (view.tags || []).join(", "), url: view.url || "", scope: view.scope })), btn("Archive", () => { if (confirm("Archive karein? (delete nahi hoga)")) post({ action: "docs.archive", id: view.id }); }), btn("← Wapas", () => setView(null)));
+    else body = React.createElement("div", null,
+        React.createElement("div", { style: { display: "flex", gap: 6 } },
+            React.createElement("input", { "aria-label": "vault-search", placeholder: "Search karo (jaise: tretinoin, protein)", value: q, onChange: e => setQ(e.target.value), onKeyDown: e => { if (e.key === "Enter") search(); }, style: inp }),
+            btn("🔍", search, true)),
+        btn("+ Naya note", () => setF({ title: "", body: "", tags: "", url: "", scope: "team" })),
+        hits ? (hits.length ? hits.map(h => row(h, h.snippet)) : React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 8 } }, "Vault mein ye nahi mila."))
+            : list == null ? React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 8 } }, "Load ho raha hai…")
+            : list.length ? list.map(d => row(d)) : React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 8 } }, "Abhi koi note nahi. Derma plan, diet chart, doctor ki advice — yahan save karo, coaches unhe cite karenge."));
+    return React.createElement("div", { style: box, "data-testid": "vault-card" },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between" } },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, "📚 Knowledge Vault"),
+            React.createElement("button", { onClick: () => setOpen(false), style: { background: "transparent", border: "none", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Band karo")),
+        body,
+        msg && React.createElement("div", { "data-testid": "vault-msg", style: { fontSize: 11, color: /✓/.test(msg) ? T.green : T.red, marginTop: 5 } }, msg),
+        React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 6 } }, "Coaches sirf matching notes dekhte hain aur [title, date] se cite karte hain. Encrypted photos search nahi hote."));
 }
 // Patterns in his own data — always with sample sizes, never as causes.
 function InsightsCard() {
