@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.17-89";
+const APP_BUILD = "2026.10.17-90";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -10140,6 +10140,7 @@ function JeetOS() {
             React.createElement(RepairCard, null),
             React.createElement(GoalGraphCard, null),
             React.createElement(HabitsCard, null),
+            React.createElement(ExperimentCard, null),
             React.createElement(PrimaryGoalCard, { T: T, onChange: () => setStreakTick(t => t + 1) }),
             React.createElement(StreakCard, { T: T, W: W, L: L, checks: checks, onChange: () => setStreakTick(t => t + 1) }),
             React.createElement(AnchorsCard, { T: T }),
@@ -11521,6 +11522,42 @@ function WeeklyReviewCard() {
         (R.pending || []).length > 0 && line("⏳ " + R.pending.length + " coach proposal tumhari approval ka wait kar rahe hain", "pd", T.gold),
         (R.journal_due || []).length > 0 && line("📓 " + R.journal_due.length + " decision review ke liye due", "jd", T.gold),
         React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 8 } }, "Saare numbers tumhare data se code ne nikale hain; Head Coach sirf samjhaata hai." + ((R.unknown || []).length ? " Padh nahi paaye: " + R.unknown.join(", ") + "." : "") + " Jis din data nahi, wo miss nahi gina."));
+}
+// Personal experiments — one at a time, baseline frozen at the start, the bar set up front, verdict by code.
+function ExperimentCard() {
+    const [d, setD] = React.useState(null);
+    const [open, setOpen] = React.useState(false);
+    const [f, setF] = React.useState({ metric: "sleep_hours", direction: "up", min_change: "", days: 14, action_text: "" });
+    const [msg, setMsg] = React.useState("");
+    const load = () => fetch("/api/os?action=experiments").then(r => r.ok ? r.json() : r.json().then(x => { setMsg(x.error || ""); return null; })).then(x => { if (x) setD(x); }).catch(() => { });
+    React.useEffect(() => { if (authSession()) load(); }, []);
+    if (!d || !d.metrics) return null;
+    const post = body => fetch("/api/os", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json().then(x => { setMsg(r.ok ? "Saved ✓" : (x.error || "error")); if (r.ok) load(); return r.ok; })).catch(() => setMsg("offline"));
+    const box = { background: T.card, border: "1px solid " + (d.active ? T.gold : T.border), borderRadius: 14, padding: "10px 16px", marginBottom: 14, fontFamily: "Inter,system-ui,sans-serif" };
+    const M = d.metrics, a = d.active, p = d.progress, last = (d.past || [])[0];
+    const VERD = { worked: "✓ kaam kiya", failed: "✗ nahi chala", unclear: "? data kam", stopped: "■ beech mein roka" };
+    if (!open && !a) return React.createElement("button", { onClick: () => setOpen(true), "data-testid": "exp-card", style: Object.assign({}, box, { width: "100%", textAlign: "left", color: T.ivoryM, fontSize: 12, cursor: "pointer" }) }, "🧪 Experiment try karo" + (last ? " · pichhla: " + (VERD[last.status] || last.status) : ""));
+    const sel = (k, opts) => React.createElement("select", { "aria-label": k, value: f[k], onChange: e => setF(Object.assign({}, f, { [k]: e.target.value })), style: { background: T.ink, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "5px 6px", fontSize: 12, marginRight: 6, marginTop: 5 } }, opts.map(o => React.createElement("option", { key: o[0], value: o[0] }, o[1])));
+    const m = M[f.metric] || {}, unitWord = m.unit === "%" ? "points" : m.unit;
+    return React.createElement("div", { style: box, "data-testid": "exp-card" },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between" } },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, "🧪 Experiment"),
+            !a && React.createElement("button", { onClick: () => setOpen(false), style: { background: "transparent", border: "none", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Band karo")),
+        a ? React.createElement("div", { "data-testid": "exp-active", style: { fontSize: 12, color: T.ivory, marginTop: 6 } },
+            React.createElement("div", { style: { fontWeight: 600 } }, a.action),
+            React.createElement("div", { style: { color: T.ivoryM, marginTop: 3 } }, a.target + " · pehle: " + a.baseline + " (n=" + (a.base_stats && a.base_stats.n) + ") · kaam kiya = " + a.criterion),
+            p && React.createElement("div", { style: { marginTop: 4 } }, p.text + (p.test && p.test.mean != null ? " Abhi tak: " + p.test.mean + (M[a.metric] && M[a.metric].unit === "%" ? "%" : "") : "")),
+            React.createElement("div", { style: { color: T.ivoryM, fontSize: 11, marginTop: 3 } }, "Khatam: " + String(a.test_to).slice(0, 10) + " · verdict code dega, coach nahi."),
+            React.createElement("button", { onClick: () => { if (confirm("Experiment rok dein? Iska koi verdict nahi aayega.")) post({ action: "experiment.stop", id: a.id }); }, style: { marginTop: 6, padding: "3px 10px", borderRadius: 8, border: "1px solid " + T.border2, background: "transparent", color: T.ivoryM, fontSize: 11, cursor: "pointer" } }, "Roko"))
+        : React.createElement("div", { "data-testid": "exp-form", style: { marginTop: 4 } },
+            React.createElement("input", { "aria-label": "action_text", placeholder: "Kya badloge? (jaise: charger bedroom ke bahar)", value: f.action_text, onChange: e => setF(Object.assign({}, f, { action_text: e.target.value })), style: { width: "100%", marginTop: 5, background: T.ink, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "5px 8px", fontSize: 12 } }),
+            sel("metric", Object.keys(M).map(k => [k, M[k].label])), sel("direction", [["up", "badhna chahiye"], ["down", "ghatna chahiye"]]), sel("days", [[7, "7 din"], [14, "14 din"], [21, "21 din"], [28, "28 din"]]),
+            React.createElement("div", { style: { fontSize: 11.5, color: T.ivoryM, marginTop: 6 } }, "Kitna farak = 'kaam kiya'? (" + m.step[0] + "–" + m.step[1] + " " + unitWord + ") — abhi tay karo, baad mein nahi badlega."),
+            React.createElement("input", { "aria-label": "min_change", type: "number", step: "any", value: f.min_change, onChange: e => setF(Object.assign({}, f, { min_change: e.target.value })), style: { width: 90, marginTop: 4, background: T.ink, color: T.ivory, border: "1px solid " + T.border2, borderRadius: 8, padding: "5px 8px", fontSize: 12 } }),
+            React.createElement("button", { onClick: () => post({ action: "experiment.start", metric: f.metric, direction: f.direction, min_change: +f.min_change, days: +f.days, action_text: f.action_text }), style: { marginLeft: 8, padding: "5px 12px", borderRadius: 8, border: "1px solid " + T.gold, background: "transparent", color: T.gold, fontSize: 12, cursor: "pointer" } }, "Shuru karo")),
+        msg && React.createElement("div", { "data-testid": "exp-msg", style: { fontSize: 11, color: /✓/.test(msg) ? T.green : T.red, marginTop: 5 } }, msg),
+        (d.past || []).length > 0 && React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold, marginTop: 10 } }, "PICHHLE EXPERIMENTS"),
+        (d.past || []).slice(0, 5).map(x => React.createElement("div", { key: x.id, style: { fontSize: 11.5, color: T.ivory, padding: "4px 0", borderTop: "1px solid " + T.border } }, (VERD[x.status] || x.status) + " — " + x.action, x.outcome && React.createElement("div", { style: { color: T.ivoryM, fontSize: 11 } }, x.outcome))));
 }
 // Patterns in his own data — always with sample sizes, never as causes.
 function InsightsCard() {

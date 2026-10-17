@@ -452,3 +452,13 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 -- promises, ledger entries, recurring blockers, plans that keep failing, decisions waiting,
 -- next week's top 3. Claude writes a 4-line narrative from the fact lines; a narrative with a
 -- number (with its unit) that isn't in the facts is dropped. Sunday review cron, else the app.
+
+-- ── Personal experiments (2026-10-17) ──────────────────────────────────
+-- jeetos_experiments += kind ('coach' text experiments from chat tags | 'measured'), metric, direction,
+--   min_change, base_from/base_to, test_from/test_to, base_stats jsonb, result jsonb, decided_at.
+--   Partial unique index: at most one kind='measured' with status='active'.
+-- api/_experiments.js: baseline = the same number of days just before the start, frozen at start
+-- (refused if too little data); the bar ("worked" = change ≥ min_change in the chosen direction) is set
+-- up front. At the end the code compares windows (recovery days left out, missing days unknown):
+-- worked | failed (didn't) | unclear (too few days). Stopping early = 'stopped', no verdict.
+-- The running one is shown to coaches in the context packet.

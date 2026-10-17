@@ -17,6 +17,7 @@ node tests/insights.test.js      # patterns with sample sizes (sleep→gym, wake
 node tests/repair.test.js        # plan repair: slip detection, approve from tomorrow, engine/context/planner/alarm honour it, endpoint
 node tests/huddle.test.js        # server huddle: conflict ladder, priority only from the plan, once a day, packet/planner/endpoint
 node tests/review.test.js        # weekly CEO review: week window, unknown ≠ miss, numbers guard, once a week
+node tests/experiments.test.js   # experiments: frozen baseline, bar set up front, verdict by code, one at a time
 node tests/goals.test.js         # goal graph: health maths, roll-up, approval, target limits, endpoint, packet
 ```
 

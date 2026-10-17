@@ -21,6 +21,9 @@
 //   POST /api/os { action: "huddle.run" }   run it now if today's doesn't exist (idempotent)
 //   GET  /api/os?action=review              latest Weekly CEO Review (+ whether last week's is missing)
 //   POST /api/os { action: "review.run" }   build last week's review if it doesn't exist (idempotent)
+//   GET  /api/os?action=experiments         measured experiments (+ the active one's progress; finishes it when due)
+//   POST /api/os { action: "experiment.start", metric, direction, min_change, days, action_text }
+//   POST /api/os { action: "experiment.stop", id }
 //   GET  /api/os?action=goals               goal graph + live health (+ the proposal if none yet)
 //   POST /api/os { action: "goals.approve" }                 create the proposed graph
 //   POST /api/os { action: "goals.target", id, target: {..} } tune a goal's numbers
@@ -38,6 +41,8 @@ const { insightReport } = require("./_insights");
 const repair = require("./_repair");
 const { ensureHuddle } = require("./_huddle");
 const { ensureReview, reviewWeek } = require("./_review");
+const EXPT = require("./_experiments");
+const { addDays: planDayAdd } = require("./_penalty");
 const { callClaude } = require("./_claude");
 
 // The server key when configured; otherwise act as the logged-in owner (RLS allows the owner).
@@ -177,6 +182,53 @@ module.exports = async function handler(req, res) {
       }
       const out = await ensureReview({ q: qq, write: (p, body, headers) => db(p, { method: "POST", headers, body: JSON.stringify(body) }), callClaude, source: "app" });
       return res.status(out.error ? 502 : 200).json(out);
+    }
+    if ((req.method === "GET" && q.action === "experiments") || (req.method === "POST" && /^experiment\./.test((req.body || {}).action || ""))) {
+      const today = planDay(Date.now()), nowIso = new Date().toISOString();
+      // Just the rows an experiment needs, for any window (baseline + test can go back 56 days).
+      const rawFor = async (from, to) => {
+        const g = async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; };
+        const [logs, checkins, marks, dailyCheckins] = await Promise.all([
+          g(`jeetos_logs?day=gte.${from}&day=lte.${to}&select=*&limit=70`),
+          g(`jeetos_anchor_checkins?day=gte.${from}&day=lte.${to}&select=anchor,day,at&limit=700`),
+          g(`jeetos_streak_marks?date=gte.${from}&date=lte.${to}&select=date,habit,kind&limit=200`),
+          g(`jeetos_daily_checkins?day=gte.${from}&day=lte.${to}&select=day,kind,answers&limit=140`),
+        ]);
+        const failed = [["logs", logs], ["checkins", checkins], ["marks", marks], ["dailyCheckins", dailyCheckins]].filter(x => !x[1]).map(x => x[0]);
+        return { logs: logs || [], checkins: checkins || [], marks: marks || [], dailyCheckins: dailyCheckins || [], failed };
+      };
+      const list = await db("jeetos_experiments?kind=eq.measured&select=*&order=created_at.desc&limit=12");
+      if (!list.ok) return res.status(502).json({ error: "couldn't read experiments (" + list.status + ")" });
+      let active = list.body.find(x => x.status === "active") || null;
+      if (req.method === "GET") {
+        let progress = null;
+        if (active) {
+          const raw = await rawFor(String(active.base_from).slice(0, 10), today);
+          if (raw.failed.length) return res.status(502).json({ error: "couldn't read " + raw.failed.join(", ") + " — no verdict without the data" });
+          progress = EXPT.evaluate(active, raw, today);
+          if (progress.final) {
+            const r = await db(`jeetos_experiments?id=eq.${encodeURIComponent(active.id)}&status=eq.active`, { method: "PATCH", body: JSON.stringify(EXPT.finalPatch(progress, nowIso)) });
+            if (r.ok && Array.isArray(r.body) && r.body[0]) { Object.assign(active, r.body[0]); active = null; }
+          }
+        }
+        const metrics = Object.fromEntries(Object.entries(EXPT.METRICS).map(([k, m]) => [k, { label: m.label, unit: m.unit, kind: m.kind, step: m.step }]));
+        return res.status(200).json({ active, progress, past: list.body.filter(x => x.status !== "active"), metrics, days: EXPT.DAYS });
+      }
+      const b = req.body;
+      if (b.action === "experiment.stop") {
+        if (!active || active.id !== b.id) return res.status(404).json({ error: "no such active experiment" });
+        const r = await db(`jeetos_experiments?id=eq.${encodeURIComponent(active.id)}&status=eq.active`, { method: "PATCH", body: JSON.stringify({ status: "stopped", outcome: "stopped early by Jeet — no verdict", decided_at: nowIso, updated_at: nowIso }) });
+        return r.ok ? res.status(200).json({ ok: true }) : res.status(502).json({ error: "couldn't save (" + r.status + ")" });
+      }
+      if (b.action !== "experiment.start") return res.status(400).json({ error: "unknown action" });
+      const days = Math.round(+b.days || 14);
+      const raw = await rawFor(planDayAdd(today, -Math.min(Math.max(days, 1), EXPT.DAYS[1])), today);
+      if (raw.failed.length) return res.status(502).json({ error: "couldn't read " + raw.failed.join(", ") });
+      const out = EXPT.start({ metric: b.metric, direction: b.direction, min_change: b.min_change, days, action: b.action_text, coach: b.coach }, raw, today, active, nowIso);
+      if (out.error) return res.status(400).json(out);
+      const r = await db("jeetos_experiments", { method: "POST", body: JSON.stringify(out.row) });
+      if (!r.ok) return res.status(r.status === 409 ? 409 : 502).json({ error: r.status === 409 ? "one experiment at a time" : "couldn't save (" + r.status + ")" });
+      return res.status(200).json({ ok: true, experiment: out.row });
     }
     if (req.method === "GET" && q.action === "goals") {
       const raw = await loadContextData(async p => { const r = await db(p); return r.ok && Array.isArray(r.body) ? r.body : null; });
