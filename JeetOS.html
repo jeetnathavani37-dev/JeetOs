@@ -717,7 +717,7 @@ const T = {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TODAY = DAYS[new Date().getDay()];
 // Bump on every release: the app compares it with the live page to offer an update.
-const APP_BUILD = "2026.10.17-90";
+const APP_BUILD = "2026.10.17-91";
 const store = { get: (k) => { try {
         const v = localStorage.getItem(k);
         return v ? JSON.parse(v) : null;
@@ -10617,7 +10617,7 @@ function JeetOS() {
             React.createElement("div", { style: { padding: "12px 20px" } },
                 React.createElement(GroupEntryCard, { T: T, CH: CH, onOpen: () => setScreen("group") }),
                 React.createElement(PushCard, { T: T }),
-                React.createElement(AccountCard, null), React.createElement(TeamContextPeek, null), React.createElement(MemoryCard, null), React.createElement(NotifyCard, null), React.createElement(InsightsCard, null), React.createElement(JournalCard, null),
+                React.createElement(AccountCard, null), React.createElement(TeamContextPeek, null), React.createElement(MemoryCard, null), React.createElement(NotifyCard, null), React.createElement(InsightsCard, null), React.createElement(JournalCard, null), React.createElement(TimelineCard, null),
                 React.createElement(MasterPlanCard, { T: T, onOpen: () => setPlanOpen(true) }),
                 planOpen && React.createElement(MasterPlanSheet, { T: T, onClose: () => setPlanOpen(false) }),
                 React.createElement(FocusBoardCard, { T: T, onOpen: () => setFocusOpen(true) }),
@@ -11558,6 +11558,36 @@ function ExperimentCard() {
         msg && React.createElement("div", { "data-testid": "exp-msg", style: { fontSize: 11, color: /✓/.test(msg) ? T.green : T.red, marginTop: 5 } }, msg),
         (d.past || []).length > 0 && React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold, marginTop: 10 } }, "PICHHLE EXPERIMENTS"),
         (d.past || []).slice(0, 5).map(x => React.createElement("div", { key: x.id, style: { fontSize: 11.5, color: T.ivory, padding: "4px 0", borderTop: "1px solid " + T.border } }, (VERD[x.status] || x.status) + " — " + x.action, x.outcome && React.createElement("div", { style: { color: T.ivoryM, fontSize: 11 } }, x.outcome))));
+}
+// Evolution timeline — how his system changed, from stored records only.
+function TimelineCard() {
+    const [open, setOpen] = React.useState(false);
+    const [kind, setKind] = React.useState("");
+    const [d, setD] = React.useState(null);
+    React.useEffect(() => { if (open) { setD(null); fetch("/api/os?action=timeline" + (kind ? "&kind=" + kind : "")).then(r => r.ok ? r.json() : null).then(x => setD(x || { entries: [], error: true })).catch(() => setD({ entries: [], error: true })); } }, [open, kind]);
+    const box = { background: T.card, border: "1px solid " + T.border, borderRadius: 14, padding: "10px 16px", marginBottom: 16, fontFamily: "Inter,system-ui,sans-serif" };
+    if (!open) return React.createElement("button", { onClick: () => setOpen(true), "data-testid": "timeline-card", style: Object.assign({}, box, { width: "100%", textAlign: "left", color: T.ivoryM, fontSize: 12, cursor: "pointer" }) }, "🕰️ Mera safar — kya kab badla");
+    const ICON = { goal: "🎯", decision: "⚖️", memory: "🧠", experiment: "🧪", review: "🧾", weight: "📉", schedule: "⏰" };
+    const LABEL = { "": "Sab", goal: "Goals", decision: "Decisions", memory: "Facts", experiment: "Experiments", review: "Weeks", weight: "Weight", schedule: "Schedule" };
+    const months = {}; ((d && d.entries) || []).forEach(e => { const m = e.day.slice(0, 7); (months[m] = months[m] || []).push(e); });
+    const mName = m => new Date(m + "-15T12:00:00Z").toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+    return React.createElement("div", { style: box, "data-testid": "timeline-card" },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between" } },
+            React.createElement("div", { style: { fontSize: 12.5, color: T.ivory } }, "🕰️ Mera safar"),
+            React.createElement("button", { onClick: () => setOpen(false), style: { background: "transparent", border: "none", color: T.ivoryM, fontSize: 12, cursor: "pointer" } }, "Band karo")),
+        React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 } }, Object.keys(LABEL).map(k => React.createElement("button", { key: k || "all", onClick: () => setKind(k), style: { padding: "2px 9px", borderRadius: 10, border: "1px solid " + (kind === k ? T.gold : T.border2), background: "transparent", color: kind === k ? T.gold : T.ivoryM, fontSize: 11, cursor: "pointer" } }, LABEL[k]))),
+        !d ? React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 8 } }, "Load ho raha hai…")
+            : !d.entries.length ? React.createElement("div", { style: { fontSize: 12, color: T.ivoryM, marginTop: 8 } }, d.error ? "Abhi load nahi hua." : "Abhi kuch record nahi hua — jaise goals, decisions, experiments hote jaayenge, yahan dikhenge.")
+            : Object.keys(months).map(m => React.createElement("div", { key: m },
+                React.createElement("div", { style: { fontSize: 10.5, letterSpacing: 1, color: T.gold, marginTop: 10 } }, mName(m).toUpperCase()),
+                months[m].map((e, i) => React.createElement("div", { key: i, "data-testid": "tl-" + e.kind, style: { display: "flex", gap: 8, padding: "5px 0", borderTop: "1px solid " + T.border } },
+                    React.createElement("div", { style: { fontSize: 13, width: 18 } }, ICON[e.kind] || "•"),
+                    React.createElement("div", { style: { flex: 1 } },
+                        React.createElement("div", { style: { fontSize: 12, color: T.ivory } }, e.title),
+                        e.detail && React.createElement("div", { style: { fontSize: 11, color: T.ivoryM } }, e.detail),
+                        React.createElement("div", { style: { fontSize: 10, color: T.ivoryM } }, e.day)))))),
+        d && (d.unreadable || []).length > 0 && React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 6 } }, "Padh nahi paaye: " + d.unreadable.join(", ") + " (ye entries missing ho sakti hain)."),
+        React.createElement("div", { style: { fontSize: 10, color: T.ivoryM, marginTop: 6 } }, "Sirf jo record hua wahi — kuch andaza nahi lagaya."));
 }
 // Patterns in his own data — always with sample sizes, never as causes.
 function InsightsCard() {

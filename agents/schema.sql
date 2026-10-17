@@ -462,3 +462,9 @@ grant execute on function public.jeetos_is_owner() to anon, authenticated;
 -- up front. At the end the code compares windows (recovery days left out, missing days unknown):
 -- worked | failed (didn't) | unclear (too few days). Stopping early = 'stopped', no verdict.
 -- The running one is shown to coaches in the context packet.
+
+-- ── Evolution timeline (2026-10-17) ────────────────────────────────────
+-- No new table. api/_timeline.js builds a read-only list from stored records: goal events,
+-- approved decisions + their reviews, replaced/removed facts (memory events), experiments
+-- (measured start + verdict; coach ones once judged), weekly reviews, weight goals, approved
+-- schedule changes. Each entry carries { table, id } of its source. GET /api/os?action=timeline.
