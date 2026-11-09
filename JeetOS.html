@@ -739,12 +739,19 @@ const SUPABASE_ANON_KEY = "sb_publishable_-EA-q_dacUuWovbrCW5XVw_pPZ2vK_O";
 // our /api routes carries his session token; it's refreshed before it expires.
 const AUTH_KEY = "jos_auth";
 const _rawFetch = typeof window !== "undefined" && window.fetch ? window.fetch.bind(window) : null;
-function authSession() { const s = store.get(AUTH_KEY); return s && s.access_token ? s : null; }
+const AUTH_BAK = "jos_auth_bak";
+// Auto-login: the session is kept in two places so a cleared/evicted key doesn't log him out.
+function authSession() {
+    let s = store.get(AUTH_KEY);
+    if (!(s && s.access_token)) { const b = store.get(AUTH_BAK); if (b && b.access_token && b.refresh_token) { store.set(AUTH_KEY, b); s = b; } }
+    return s && s.access_token ? s : null;
+}
 function saveAuth(d) {
     if (!d || !d.access_token) return null;
     const s = { access_token: d.access_token, refresh_token: d.refresh_token, expires_at: d.expires_at || Math.floor(Date.now() / 1000) + (d.expires_in || 3600),
         user: { id: d.user && d.user.id, email: d.user && d.user.email } };
     store.set(AUTH_KEY, s);
+    store.set(AUTH_BAK, s);
     return s;
 }
 async function authCall(path, body) {
@@ -762,7 +769,7 @@ async function freshToken() {
     if (!s) return null;
     if (s.expires_at - 90 > Date.now() / 1000) return s.access_token;
     if (!_authRefresh) _authRefresh = authCall("token?grant_type=refresh_token", { refresh_token: s.refresh_token }).then(saveAuth)
-        .catch(e => { if (e.status === 400 || e.status === 401) store.set(AUTH_KEY, null); return null; })
+        .catch(e => { if ((e.status === 400 || e.status === 401) && /refresh|invalid|expired|not found|revoked/i.test(e.message)) { store.set(AUTH_KEY, null); store.set(AUTH_BAK, null); } return null; })
         .finally(() => { _authRefresh = null; });
     const n = await _authRefresh;
     // Offline: keep using the old token; Supabase will just refuse it until we're back.
@@ -778,6 +785,7 @@ async function checkOwner() {
 async function signOut() {
     const s = authSession();
     store.set(AUTH_KEY, null);
+    store.set(AUTH_BAK, null);
     try { if (s) await _rawFetch(SUPABASE_URL + "/auth/v1/logout", { method: "POST", headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + s.access_token } }); } catch (_a) { }
     location.reload();
 }
